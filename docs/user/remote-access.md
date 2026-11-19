@@ -144,7 +144,9 @@ To keep other devices on your network off plain HTTP, turn on **Redirect network
 HTTP to HTTPS** in **Settings → Sharing & access**, or on mobile in the
 environment's details under **Settings → Environments**. Browsers move to HTTPS;
 apps and scripts that call the server over plain HTTP get an `https_required`
-error. This machine, Tailscale, and T3 Connect are not affected. The desktop and
+error. Connections from this machine (which carries T3 Connect, Tailscale
+Serve and SSH forwards), from Tailscale addresses, and from anywhere in the
+`100.64.0.0/10` range are not affected. The desktop and
 mobile apps do not accept the self-signed certificate yet, so leave this off while
 they connect over your LAN by IP address.
 
@@ -499,10 +501,11 @@ the main host and every member shows up as an ordinary environment, marked
 without pairing anything with the member. Agents on any member reach the other
 members through the main host.
 
-Cluster is a beta. Turn on **Cluster** in **Settings → Labs** on the main host
-and on each machine you add. With it off, **Invite to cluster** and **Add
-member** are hidden, but **Remove** and **Leave cluster** still work. Manage a
-cluster in **Settings → Environments → Cluster** on web, desktop and mobile.
+Cluster is a beta. Turn on **Cluster** in **Settings → Labs** on the main host;
+with it off there, members cannot be added or reached. A machine you add needs
+it on only to show **Invite to cluster**: `t3 cluster invite` and joining work
+with it off. **Remove** and **Leave cluster** always work. Manage a cluster in
+**Settings → Environments → Cluster** on web, desktop and mobile.
 
 To add a machine over HTTPS:
 

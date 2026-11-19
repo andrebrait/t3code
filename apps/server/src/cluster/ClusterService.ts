@@ -29,7 +29,8 @@ import {
   parseClusterSshTarget,
 } from "@t3tools/contracts";
 import { isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
-import type * as Cause from "effect/Cause";
+import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
@@ -49,6 +50,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
@@ -176,6 +178,12 @@ const LINK_BACKOFF = Schedule.min([
 // Two missed 15 s heartbeats, with slack for a slow edge.
 const LINK_SILENCE = Duration.seconds(40);
 const ROWS_RELOAD_INTERVAL = Duration.seconds(30);
+// A link that drops sooner than this after `ready` is flapping, so it reconnects with backoff.
+const LINK_MIN_LIFE = Duration.seconds(5);
+// Forwarded waits run at most 50 s; a call unanswered this long lost its answer.
+const HOST_CALL_TIMEOUT = Duration.minutes(5);
+// Answers are idempotent (a repeat finds nothing and gets 404), so a lost POST is retried.
+const REPLY_RETRY = { times: 3, schedule: Schedule.exponential("250 millis") };
 
 /** Why a member's control link is not up. */
 interface LinkDown {
@@ -207,6 +215,15 @@ const hostBusy: ClusterHostResult = {
   text: JSON.stringify({
     code: "orchestration_error",
     message: `Cluster host busy: it is already running ${CLUSTER_HOST_MAX_IN_FLIGHT} calls from this environment. Try again when one finishes.`,
+  }),
+};
+
+/** What a member's agent hears when the main host failed to take or run its call. */
+const hostFailed: ClusterHostResult = {
+  isError: true,
+  text: JSON.stringify({
+    code: "orchestration_error",
+    message: "Cluster host could not run this call. Try again.",
   }),
 };
 
@@ -789,6 +806,7 @@ const make = Effect.gen(function* () {
     if (!isCompatible(descriptor)) {
       return yield* Effect.fail<LinkDown>({ status: "incompatible", message: INCOMPATIBLE });
     }
+    return client;
   });
 
   /** One link: succeeds when a link that came up drops, fails when it never came up. */
@@ -803,7 +821,7 @@ const make = Effect.gen(function* () {
     } = yield* connect(memberId).pipe(
       Effect.mapError((error): LinkDown => ({ status: "offline", message: error.message })),
     );
-    yield* preflight(memberId, connection);
+    const api = yield* preflight(memberId, connection);
     const headers = { authorization: `Bearer ${token}` };
     const response = yield* connection.httpClient
       .execute(
@@ -819,22 +837,32 @@ const make = Effect.gen(function* () {
       return yield* Effect.fail<LinkDown>({ status: "offline", message: NOT_ANSWERING });
     }
     // Each body is its own request, so no call's size holds up another or the heartbeats.
-    const api = yield* clientFor(connection);
     const answer = (requestId: string, result: ClusterHostResult) =>
-      api.cluster.hostReply({ headers, payload: { requestId, result } });
+      api.cluster
+        .hostReply({ headers, payload: { requestId, result } })
+        .pipe(Effect.retry({ ...REPLY_RETRY, while: HttpClientError.isHttpClientError }));
     const run = (requestId: string) =>
       api.cluster.hostRequest({ headers, params: { requestId } }).pipe(
         Effect.flatMap((request) => serve(member, request)),
+        // The member's agent waits on this call, so a failure here is still answered.
+        Effect.catchCauseIf(
+          (cause) => !Cause.hasInterruptsOnly(cause),
+          (cause) =>
+            Effect.logWarning("A cluster member's call could not be run", { cause }).pipe(
+              Effect.as(hostFailed),
+            ),
+        ),
         Effect.flatMap((result) => answer(requestId, result)),
       );
     const inFlight = yield* Semaphore.make(CLUSTER_HOST_MAX_IN_FLIGHT);
-    let up = false;
+    let upAt: number | undefined;
     yield* readLinkEvents(response.stream).pipe(
       Stream.runForEach((event) =>
         event._tag === "ready"
-          ? Effect.sync(() => {
-              up = true;
-            }).pipe(Effect.andThen(recordStatus(memberId, "online", null)))
+          ? Clock.currentTimeMillis.pipe(
+              Effect.tap((now) => Effect.sync(() => (upAt = now))),
+              Effect.andThen(recordStatus(memberId, "online", null)),
+            )
           : run(event.requestId).pipe(
               inFlight.withPermitsIfAvailable(1),
               Effect.flatMap(
@@ -850,7 +878,12 @@ const make = Effect.gen(function* () {
       ),
       Effect.ignore,
     );
-    if (!up) return yield* Effect.fail<LinkDown>({ status: "offline", message: NOT_ANSWERING });
+    if (upAt === undefined) {
+      return yield* Effect.fail<LinkDown>({ status: "offline", message: NOT_ANSWERING });
+    }
+    if ((yield* Clock.currentTimeMillis) - upAt < Duration.toMillis(LINK_MIN_LIFE)) {
+      return yield* Effect.fail<LinkDown>({ status: "offline", message: LINK_DROPPED });
+    }
   }, Effect.scoped);
 
   const runLink = (memberId: EnvironmentId, serve: ClusterHostServe) =>
@@ -859,6 +892,8 @@ const make = Effect.gen(function* () {
       Effect.retry(LINK_BACKOFF),
       Effect.andThen(recordStatus(memberId, "offline", LINK_DROPPED)),
       Effect.forever,
+      // Stopped with the server or the cluster turned off: no link, so not online.
+      Effect.onInterrupt(() => recordStatus(memberId, "offline", null)),
     );
 
   const start: ClusterService["Service"]["start"] = Effect.fn("ClusterService.start")(
@@ -902,11 +937,16 @@ const make = Effect.gen(function* () {
         Stream.runForEach(([rows, on]) => reconcile(rows, on)),
         Effect.forkScoped,
       );
-      // `t3 cluster add` beside a running server writes rows only this rereads.
-      yield* reload.pipe(
-        Effect.ignore,
-        Effect.delay(ROWS_RELOAD_INTERVAL),
-        Effect.forever,
+      // `t3 cluster add` beside a running server writes rows only this rereads; only while on.
+      yield* enabledChanges.pipe(
+        Stream.switchMap((on) =>
+          on
+            ? Stream.fromEffect(
+                reload.pipe(Effect.ignore, Effect.delay(ROWS_RELOAD_INTERVAL), Effect.forever),
+              )
+            : Stream.empty,
+        ),
+        Stream.runDrain,
         Effect.forkScoped,
       );
     },
@@ -923,10 +963,11 @@ const make = Effect.gen(function* () {
   /** Fails every call still pending on `closing`; none is fetched or announced again. */
   const closeHostLink = Effect.fn("ClusterService.closeHostLink")(function* (closing: HostLink) {
     if (hostLink === closing) hostLink = undefined;
+    // Ended first, so no call is announced on it while the pending ones fail.
+    yield* Queue.end(closing.events);
     const unreachable = yield* hostUnreachableHere;
     for (const call of closing.pending.values()) yield* Deferred.fail(call.reply, unreachable);
     closing.pending.clear();
-    yield* Queue.end(closing.events);
   });
 
   /** Only the session recorded at join may hold the link or take and answer its calls. */
@@ -1017,6 +1058,10 @@ const make = Effect.gen(function* () {
         return yield* yield* hostUnreachableHere;
       }
       return yield* Deferred.await(reply).pipe(
+        Effect.timeoutOrElse({
+          duration: HOST_CALL_TIMEOUT,
+          orElse: () => Effect.flatMap(hostUnreachableHere, Effect.fail),
+        }),
         Effect.ensuring(Effect.sync(() => link.pending.delete(requestId))),
       );
     },

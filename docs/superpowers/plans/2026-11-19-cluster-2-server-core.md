@@ -4,9 +4,9 @@
 
 **Goal:** A T3 server can invite itself into a cluster, add members over pinned HTTPS or SSH, hold one control link to each member (which gives their status and carries member agents' calls back), forward `/cluster/<memberId>/*` to them with the client's scopes as a cap, and leave or remove members again. Clustered environments take no part in peer links.
 
-**Architecture:** One `ClusterService` (`apps/server/src/cluster/`) owns join, leave, list, the control links and refusals; RPC handlers, the `/api/cluster/*` HTTP group, the proxy route and the CLI are thin transports over it. A small `ClusterRole` service reads the two new tables so `EnvironmentAuth`, `PeerLinks`, `McpOAuth` and `/mcp` can refuse by role without depending on `ClusterService`. Upstream connections go through `ClusterUpstream`: one undici `Agent` per pinned fingerprint (a connector that hands undici the socket only after the SHA-256 matches), or the existing `packages/ssh` loopback forward. The member side trusts a `cluster-host` session and caps it per request from `x-t3-cluster-scopes`; the proxy always overwrites that header with the authenticated client's scopes. The main host keeps one supervised fiber per member that opens the member's `/ws` as its `cluster-host` session and subscribes to `cluster.hostChannel`; the member's `ready` event marks it `online`, a dropped socket marks it `offline` and reconnects with backoff, and a failed preflight marks it `incompatible` or `revoked`. Calls from member agents arrive on that subscription, run through a `serve` function the server passes to `ClusterService.start`, and each answer goes back as its own HTTP request, `POST /api/cluster/host-reply` on the member. The link is one ordered socket, so it carries only small control messages: requests are capped at 256 KiB, and at most 32 per member run at once.
+**Architecture:** One `ClusterService` (`apps/server/src/cluster/`) owns join, leave, list, the control links and refusals; RPC handlers, the `/api/cluster/*` HTTP group, the proxy route and the CLI are thin transports over it. A small `ClusterRole` service reads the two new tables so `EnvironmentAuth`, `PeerLinks`, `McpOAuth` and `/mcp` can refuse by role without depending on `ClusterService`. Upstream connections go through `ClusterUpstream`: one undici `Agent` per pinned fingerprint (a connector that hands undici the socket only after the SHA-256 matches), or the existing `packages/ssh` loopback forward. The member side trusts a `cluster-host` session and caps it per request from `x-t3-cluster-scopes`; the proxy always overwrites that header with the authenticated client's scopes. The main host keeps one supervised fiber per member that holds the member's `GET /api/cluster/events` open as its `cluster-host` session, a server-sent event stream with a heartbeat comment every 15 s; the member's `ready` event marks it `online`, a dropped or 40 s silent stream marks it `offline` and reconnects with backoff, a failed preflight marks it `incompatible`, and `401` marks it `revoked`. The stream carries only doorbells (`request {requestId}`): the main host fetches each call with its own `GET /api/cluster/host-request/<requestId>`, runs it through a `serve` function the server passes to `ClusterService.start`, and answers with its own `POST /api/cluster/host-reply`, so payloads of any size never block each other. At most 32 calls per member run at once.
 
-**Tech Stack:** Effect 4 services (`Context.Service`, `Effect.fn`), `effect/sql` SQLite, `effect/http` + `HttpApi`, `effect/socket`, `effect/rpc` (`RpcClient.makeProtocolSocket`, `RpcServer`), `FiberMap`, npm `undici` (`Agent`, `WebSocket`), `@effect/platform-node/NodeHttpClient.makeUndici`, `@t3tools/ssh/tunnel`, `@effect/vitest`.
+**Tech Stack:** Effect 4 services (`Context.Service`, `Effect.fn`), `effect/sql` SQLite, `effect/http` + `HttpApi`, `effect/encoding/Sse`, `effect/socket` (proxied client sockets), `FiberMap`, npm `undici` (`Agent`, `WebSocket`), `@effect/platform-node/NodeHttpClient.makeUndici`, `@t3tools/ssh/tunnel`, `@effect/vitest`.
 
 **Spec:** `docs/superpowers/specs/2026-11-19-environment-cluster-design.md`
 
@@ -27,11 +27,12 @@ Verbatim from the spec; every task honours them.
 - Member status: "`online | offline | incompatible | revoked`".
 - "member unreachable | proxy `502 {code:"cluster_member_unreachable", memberId}`"; "fingerprint mismatch | hard fail "certificate changed", no fallback; admin re-invites"; "member revoked main host | upstream `401`; member marked `revoked`; row kept until admin removes it"; "protocol version mismatch | checked per upstream connect; member shown `incompatible`"; "SSH failure | existing `packages/ssh` errors surfaced as is".
 - "SSH is only how the main host's server reaches the member. It uses the main host machine's SSH keys or agent; a password or passphrase prompt fails with a clear error. No client is involved, desktop included."
-- "The main host keeps one long-lived WebSocket RPC session to each member (its `cluster-host` session, over pinned HTTPS or the SSH forward), reconnecting with backoff."
-- "Member status comes from the link: connected is `online`, a protocol mismatch on connect is `incompatible`, `401` is `revoked`, otherwise `offline`. No polling loop."
-- "Members never need an address for the main host. Calls from a member to the main host ride the link in reverse: the member exposes a `cluster.hostChannel` subscription carrying requests, and the main host answers each with its own HTTP request, `POST /api/cluster/host-reply` (`cluster-host` credential)."
-- "A WebSocket is one ordered stream, so the link carries only small control messages: requests are capped at 256 KiB and fail clearly beyond that; replies and attachments travel as separate HTTP requests (pooled HTTPS connections or separate SSH channels), so a large reply never delays another. At most 32 requests per member are in flight; beyond that a call fails with "cluster host busy"."
-- "Requests queued while the link is down fail with "cluster host unreachable" and are never delivered twice."
+- "The main host keeps one long-lived SSE stream open on each member, `GET /api/cluster/events` (its `cluster-host` session, over pinned HTTPS or the SSH forward), reconnecting with backoff. The member sends a heartbeat comment every 15 s so idle edges (T3 Connect drops idle requests after about 100 s) keep it open and a dead link is noticed."
+- "Member status comes from the link: stream open after its first `ready` event is `online`, a protocol mismatch on connect is `incompatible`, `401` is `revoked`, otherwise (drop or missed heartbeats) `offline`. No polling loop."
+- "Members never need an address for the main host; every connection is opened by the main host. The stream carries only doorbells, never payloads, because a stream is ordered and one large event would delay every event behind it": "A member agent's call is stored on the member and announced as event `request {requestId}`." "The main host fetches it: `GET /api/cluster/host-request/<requestId>`." "The main host runs it and answers: `POST /api/cluster/host-reply`."
+- "Each fetch and reply is its own HTTP request (pooled HTTPS connections or separate SSH channels), so payloads of any size never block each other."
+- "At most 32 requests per member are in flight on the main host; beyond that a call fails with "cluster host busy"."
+- "Requests pending when the link drops fail with "cluster host unreachable" and are never delivered twice."
 - Tables `cluster_members` (`environment_id` PK, `label`, `transport`, `url` / `ssh_target`, `cert_sha256`, `secret_name`, `joined_at`, `last_reached_at`, `last_error`) and `cluster_membership` ("one row with the main host's `environment_id`, label, and `joined_at`. Its presence means "is a member". Rows in `cluster_members` mean "is a main host".").
 - "new RPCs added to `CLIENT_GUARDED_RPC_SCOPES` (`access:write` for add/remove/invite/leave)."
 - "Labs setting `clusterEnabled`, default false, gating both sides."
@@ -67,10 +68,10 @@ Member `status`, `lastReachedAt` and `lastError` come from the control link (Tas
 - `CLUSTER_SCOPES_HEADER` (`"x-t3-cluster-scopes"`) and its rule: honoured only for `cluster-host` sessions, only narrows.
 - `ClusterService.connect(memberId): Effect<MemberConnection, ClusterError>` with `MemberConnection = { upstream: ClusterUpstream.Upstream; token: string; member: ClusterMember }` and `Upstream = { origin; httpClient; webSocket }` — the way Plan 4 reaches a member's `/mcp` with the `cluster-host` credential.
 - The control link (Task 8):
-  - `@t3tools/contracts`: `ClusterHostRequest = { requestId; tool; arguments; limits: { runtimeMode; interactionMode }; sender? }`, `ClusterHostResult = { isError: boolean; text: string }` (an MCP tool result's joined text, as `/mcp` answers), `ClusterHostChannelEvent` (`{ _tag: "ready" } | { _tag: "request"; request }`), `ClusterHostReplyInput` (`{ requestId; result }`, the body of `POST /api/cluster/host-reply`), `WS_METHODS.clusterHostChannel`, `ClusterLinkRpcs` (that one RPC), `ClusterError.reason` `"too_large"` and `"unknown_request"`. There is no `cluster.hostReply` RPC.
+  - `@t3tools/contracts`: `ClusterHostRequest = { requestId; tool; arguments; limits: { runtimeMode; interactionMode }; sender? }`, `ClusterHostResult = { isError: boolean; text: string }` (an MCP tool result's joined text, as `/mcp` answers), `ClusterLinkEvent` (`{ _tag: "ready" } | { _tag: "request"; requestId }`, the data of each event on `GET /api/cluster/events`), `ClusterHostReplyInput` (`{ requestId; result }`, the body of `POST /api/cluster/host-reply`), the cluster HTTP endpoints `hostRequest` (`GET /api/cluster/host-request/:requestId`) and `hostReply`, `ClusterError.reason` `"unknown_request"`. The link has no RPC.
   - `ClusterService.start(serve: ClusterHostServe): Effect<void, never, Scope>` with `ClusterHostServe = (member: ClusterMember, request: ClusterHostRequest) => Effect<ClusterHostResult>`. `server.ts` passes `ClusterService.refuseHostRequests` here; Plan 4 replaces it with the function that runs the call through `/mcp`'s tools.
-  - `ClusterService.hostCall(call: ClusterHostCall): Effect<ClusterHostResult, ClusterError>` (member side, `ClusterHostCall = Omit<ClusterHostRequest, "requestId">`). It fails at once with `clusterHostTooLarge(bytes)` (reason `"too_large"`) when the call's JSON exceeds `CLUSTER_HOST_REQUEST_MAX_BYTES` (256 KiB), with `clusterHostUnreachable(hostLabel)` (reason `"unreachable"`) while no link is up, and with the same error when the link drops before the answer. When the member already has 32 calls running on the main host, the answer is `isError` with an `orchestration_error` failure, "Cluster host busy: …" (not final: retry later).
-  - `ClusterService.clusterHostUnreachable(hostLabel): ClusterError`, `ClusterService.clusterHostTooLarge(bytes): ClusterError`, `ClusterService.CLUSTER_HOST_REQUEST_MAX_BYTES`.
+  - `ClusterService.hostCall(call: ClusterHostCall): Effect<ClusterHostResult, ClusterError>` (member side, `ClusterHostCall = Omit<ClusterHostRequest, "requestId">`). It fails at once with `clusterHostUnreachable(hostLabel)` (reason `"unreachable"`) while no link is up, and with the same error when the link drops before the answer. It has no size cap: the call's body travels as its own fetch. When the member already has 32 calls running on the main host, the answer is `isError` with an `orchestration_error` failure, "Cluster host busy: …" (not final: retry later).
+  - `ClusterService.clusterHostUnreachable(hostLabel): ClusterError`.
 - `server.ts` builds `ClusterService` inside the `PeerForwarding` provide (`Layer.provideMerge`), so `PeerForwarding` can read it with `Effect.serviceOption`.
 
 ## Review Focus
@@ -82,12 +83,14 @@ Untested failure modes most likely to bite, each with the test that pins it:
 3. **Member removed while client sockets are piped through the proxy.** Sockets must close, not keep forwarding with a forgotten member's credential. Test: Task 9, "forwards a socket to the member with the client's scopes and closes it when the member is removed".
 4. **Leave while the main host is offline.** Leave is local only: it revokes the host session and clears the row, and the member pairs clients again. Test: Task 6, "a member leaves without its main host and is standalone again".
 5. **Scope header forged.** A non-cluster-host caller's header must not change its scopes, and a client must not widen its upstream cap by sending its own header to the main host. Tests: Task 3, "ignores the cluster scope header on any other session"; Task 9, "forwards HTTP to the member under the client's scopes, never the client's header".
-6. **The link drops while a `hostChannel` request is in flight.** The member's agent must hear "cluster host unreachable" at once, not hang, and the main host must stop the work it started for that request instead of answering into a dead socket. Test: Task 8, "the control link carries a member's calls, fails them when it drops, and never sends one twice" (the in-flight call fails; the main host's `serve` is interrupted).
+6. **The link drops while a call is in flight.** The member's agent must hear "cluster host unreachable" at once, not hang, and the main host must stop the work it started for that call instead of answering into a dead link. A call announced but not yet fetched must not be fetchable after the drop (`404`). Tests: Task 8, "a member holds each call until its link fetches it once, and drops them with the link", and "the control link carries a member's calls, fails them when it drops, and never sends one twice" (the in-flight call fails; the main host's `serve` is interrupted).
 7. **The member restarts and replays.** Its pending calls die with the process; its agents and followers call again, and the link must not hand the main host an old request a second time. Retries with the same `clientRequestId` land once at the target (Plan 4). Test: Task 8, same test: after the link comes back, the first request the main host sees is the new one.
-8. **The main host restarts.** Every member's link drops at once; statuses must not stay `online` from before the restart, and links must come back without anyone touching the member. Tests: Task 8, same test (`start` again resets statuses to `offline` and reconnects), and "a member that leaves shows revoked over its link, and only its host opens the channel" (a drop followed by a failed preflight).
-9. **A large answer blocks the link.** A WebSocket is one ordered stream, so a multi-MiB frame holds every frame behind it, including the next small request. Answers therefore never ride the link: each is its own `POST /api/cluster/host-reply` over a pooled HTTPS connection or its own SSH channel. Test: Task 8, "a large reply in flight does not hold back a small one" (ordering of arrival, not time).
-10. **An agent floods its main host, or sends a huge argument.** Requests over 256 KiB fail on the member before they are queued, and a 33rd concurrent call from one member is answered "cluster host busy" at once instead of queueing behind the others. Test: Task 8, "the link carries only small calls, at most 32 at a time".
-11. **A forged or stray reply.** `POST /api/cluster/host-reply` answers only for the session that holds the member's host channel (`403` otherwise); an unknown, finished or already answered `requestId` is `404`, and the waiting call takes the first answer only. Test: Task 8, "a member that leaves shows revoked over its link, and only its host opens the channel".
+8. **The main host restarts.** Every member's link drops at once; statuses must not stay `online` from before the restart, and links must come back without anyone touching the member. Tests: Task 8, same test (`start` again resets statuses to `offline` and reconnects), and "a member that leaves shows revoked over its link, and only its host opens it" (a drop followed by `401` on reconnect).
+9. **A large payload blocks the link.** An event stream is ordered, so one multi-MiB event would hold every event behind it, including heartbeats. Payloads therefore never ride it: the stream carries only `ready` and doorbells, and each call is its own `GET /api/cluster/host-request/<requestId>` and each answer its own `POST /api/cluster/host-reply`, over a pooled HTTPS connection or its own SSH channel. Test: Task 8, "a large request or reply on the control link does not hold back a small one" (ordering of arrival, not time).
+10. **An agent floods its main host.** A 33rd concurrent call from one member is answered "cluster host busy" at once, without being fetched, instead of queueing behind the others. Test: Task 8, "the control link runs at most 32 of a member's calls at a time".
+11. **A forged, stray or repeated fetch or reply.** `GET /api/cluster/host-request/:requestId` and `POST /api/cluster/host-reply` answer only the session that holds the member's link (`403` otherwise). A call is taken on its first fetch, so a retried GET is `404` and the main host never runs it twice; an unknown, finished or already answered `requestId` is `404`, and the waiting call takes the first answer only. Tests: Task 8, "a member holds each call until its link fetches it once, and drops them with the link", "a member that leaves shows revoked over its link, and only its host opens it".
+12. **An edge buffers the event stream.** A reverse proxy, tunnel or compression middleware that buffers `text/event-stream` holds `ready` and the heartbeats until its buffer fills, so the link never comes up or flaps every 40 s. `layerEvents` sends `cache-control: no-cache, no-transform` and `x-accel-buffering: no`, as `guest/http.ts` does for guest streams. No test at this layer: the integrated two-server pass through T3 Connect (Final verification) is the check.
+13. **A long fetch or answer while the stream is quiet.** A 3 MiB fetch or answer over a slow link can outlast 40 s. It must not mark the member offline while the stream itself still delivers heartbeats: the 40 s timeout covers only reads of the event stream's bytes (before SSE decoding, so comments count), and every fetch and answer is its own request in its own fiber, so it never stalls those reads. Undici's default `bodyTimeout` (300 s between body chunks) never fires on a stream with 15 s heartbeats. Tests: Task 8, "the control link lives on heartbeats and ends after 40 s without a byte", and "a large request or reply on the control link does not hold back a small one".
 
 ## File Map
 
@@ -323,8 +326,7 @@ export class ClusterError extends Schema.TaggedError<ClusterError>()(
       "ssh",
       "storage",
       "forbidden",
-      // The control link: a call over its size cap, a host reply nothing waits for.
-      "too_large",
+      // The control link: a fetch or reply for a call nothing waits for.
       "unknown_request",
     ]),
     message: Schema.String,
@@ -3024,32 +3026,29 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
-## Task 8: Control link — status and the host channel
+## Task 8: Control link — status and the doorbell stream
 
 **Files:**
 
-- Modify: `packages/contracts/src/cluster.ts` (host channel schemas)
-- Modify: `packages/contracts/src/rpc.ts:20-28` (imports), `:546-549` (`WS_METHODS`), after `:902-905` (Rpc definitions, `ClusterLinkRpcs`), `:2294-2297` (group)
-- Modify: `packages/contracts/src/environmentHttp.ts` (imports; `hostReply` in the cluster group Task 6 added)
-- Modify: `apps/server/src/auth/RpcAuthorization.ts:95` (scopes)
+- Modify: `packages/contracts/src/cluster.ts` (link schemas)
+- Modify: `packages/contracts/src/environmentHttp.ts` (imports; `hostRequest` and `hostReply` in the cluster group Task 6 added)
 - Modify: `apps/server/src/cluster/ClusterService.ts` (imports, module scope, interface, `make`)
-- Modify: `apps/server/src/cluster/http.ts` (`hostReply` handler)
-- Modify: `apps/server/src/cluster/ClusterService.testkit.ts` (members serve the link's `/ws`; `serveMember` takes a `hostReplyGate`; `awaitStatus`)
-- Modify: `apps/server/src/ws.ts:10` (import), `:1556` (service), `:2693-2701` (handlers), `:3606` and `:3705` (provide)
-- Modify: `apps/server/src/ws.test.ts:845` (mock)
-- Modify: `apps/server/src/server.ts:864-868` (start the links)
+- Modify: `apps/server/src/cluster/http.ts` (`hostRequest` and `hostReply` handlers; `layerEvents`)
+- Modify: `apps/server/src/cluster/ClusterService.testkit.ts` (members serve `layerEvents`; `serveMember` takes `hostRequestGate` and `hostReplyGate`; `awaitStatus`)
+- Modify: `apps/server/src/server.ts:853-858` (route) and `:864-868` (start the links)
 - Test: `apps/server/src/cluster/ClusterService.test.ts`
 
 **Interfaces:**
 
-- Consumes: `ClusterService.connect`, `reload`, `rowsRef`, `enabledChanges`, `clientFor`, `MemberApi`, `isCompatible`, `CERTIFICATE_CHANGED`, `REQUEST_TIMEOUT` (Task 7); `readMembership`, `random` (Tasks 6, 7); the cluster HTTP group and `http.ts` (Task 6); `EnvironmentAuth.authenticateWebSocketUpgrade`, `SessionStore.awaitInvalidation`; `RpcClient.makeProtocolSocket`, `RpcServer.makeProtocolWithHttpEffectWebsocket`, `FiberMap`, `Semaphore.withPermitsIfAvailable`.
+- Consumes: `ClusterService.connect`, `reload`, `rowsRef`, `enabledChanges`, `clientFor`, `MemberApi`, `isCompatible`, `CERTIFICATE_CHANGED`, `REQUEST_TIMEOUT` (Task 7); `readMembership`, `random` (Tasks 6, 7); the cluster HTTP group and `http.ts` (Task 6); `EnvironmentAuth.authenticateHttpRequest`, `SessionStore.awaitInvalidation`; `effect/encoding/Sse` (`encoder`, `decodeDataSchema`); `Stream.timeout`, `FiberMap`, `Semaphore.withPermitsIfAvailable`.
 - Produces:
-  - Contracts: `ClusterHostRequest`, `ClusterHostChannelEvent`, `ClusterHostResult`, `ClusterHostReplyInput`; `WS_METHODS.clusterHostChannel` (`cluster.hostChannel`, stream, `orchestration:operate` on the server and refused by `ClusterService` to any session but the member's current `cluster-host` one); `ClusterLinkRpcs` (the group of that one RPC); HTTP `POST /api/cluster/host-reply` (`EnvironmentHttpApi.groups.cluster` endpoint `hostReply`, body `ClusterHostReplyInput`, `204`; `403` for any session but the one holding the host channel, `404` for a `requestId` nothing waits for).
-  - `ClusterService["Service"]`: `start(serve: ClusterHostServe): Effect<void, never, Scope>`, `hostChannel(session)`, `hostReply(session, input): Effect<void, ClusterError>` (reasons `forbidden`, `unknown_request`), `hostCall(call: ClusterHostCall): Effect<ClusterHostResult, ClusterError>`.
-  - `ClusterService.ts` exports: types `ClusterHostServe`, `ClusterHostCall`; `clusterHostUnreachable(hostLabel)`; `clusterHostTooLarge(bytes)`; `CLUSTER_HOST_REQUEST_MAX_BYTES` (256 KiB); `refuseHostRequests`.
-  - Testkit: members serve `/ws` with the link's RPC; `serveMember(descriptor, { hostReplyGate? })`; `awaitStatus(main, memberId, status)`.
-  - Link behaviour: `start` resets every `online` row to `offline`, then runs one fiber per member while `clusterEnabled` is on. Each attempt runs the preflight (descriptor and `/api/auth/session` with the member's token: wrong environment or no answer is `offline`, another protocol is `incompatible`, unauthenticated is `revoked`), opens `<member>/ws?orchestrationProtocol=<v>` with the token, and subscribes to `cluster.hostChannel`. The member's `ready` event records `online`. A socket that drops records `offline` and reconnects at once; an attempt that never came up records why and retries after 1 s, doubling to at most 30 s. A member's link restarts only when its token, address or pin changes.
-  - Link traffic: the socket carries only `ready` and requests. `hostCall` refuses a call whose JSON is over 256 KiB before queueing it. The main host runs at most 32 of a member's calls at once (`Semaphore.withPermitsIfAvailable` per link, held until the answer is sent); a call beyond that is answered "Cluster host busy" at once. Each answer is its own `POST /api/cluster/host-reply` through `connect(memberId).upstream.httpClient` (pinned undici pool, or the SSH forward, where each connection is its own SSH channel), so a large answer never delays a small one.
+  - Contracts: `ClusterHostRequest`, `ClusterLinkEvent` (`{ _tag: "ready" } | { _tag: "request"; requestId }`, the JSON `data` of each SSE event), `ClusterHostResult`, `ClusterHostReplyInput`; HTTP `GET /api/cluster/host-request/:requestId` (`EnvironmentHttpApi.groups.cluster` endpoint `hostRequest`, success `ClusterHostRequest`; `403` for any session but the one holding the link, `404` for an id that is unknown, already fetched, or was pending when the link dropped) and `POST /api/cluster/host-reply` (endpoint `hostReply`, body `ClusterHostReplyInput`, `204`; `403` and `404` the same way). No RPC.
+  - `ClusterHttp.layerEvents`: `GET /api/cluster/events`, `text/event-stream`, outside `HttpApi` because it streams comments. `401` without a valid session, `403` for any session but the member's current `cluster-host` one; otherwise `ready`, then a `request` doorbell per call, with a `: heartbeat` comment every 15 s, `cache-control: no-cache, no-transform` and `x-accel-buffering: no`. It ends when that session is revoked.
+  - `ClusterService["Service"]`: `start(serve: ClusterHostServe): Effect<void, never, Scope>`, `hostEvents(session): Effect<Stream<ClusterLinkEvent>, ClusterError>` (reason `forbidden`), `hostRequest(session, requestId): Effect<ClusterHostRequest, ClusterError>` and `hostReply(session, input): Effect<void, ClusterError>` (reasons `forbidden`, `unknown_request`), `hostCall(call: ClusterHostCall): Effect<ClusterHostResult, ClusterError>`.
+  - `ClusterService.ts` exports: types `ClusterHostServe`, `ClusterHostCall`; `clusterHostUnreachable(hostLabel)`; `refuseHostRequests`; `readLinkEvents(bytes)`.
+  - Testkit: members serve `layerEvents`; `serveMember(descriptor, { hostRequestGate?, hostReplyGate? })`; `awaitStatus(main, memberId, status)`.
+  - Link behaviour: `start` resets every `online` row to `offline`, then runs one fiber per member while `clusterEnabled` is on. Each attempt runs the preflight (the member's descriptor: wrong environment or no answer is `offline`, another protocol is `incompatible`), then opens `GET <member>/api/cluster/events` with the token over `connect(memberId).upstream.httpClient` (pinned undici pool, or the SSH forward). `401` there is `revoked`; any other status but `200` is `offline`. The `ready` event records `online`. A stream that drops, or delivers no byte for 40 s (two missed heartbeats), records `offline` and reconnects at once; an attempt that never came up records why and retries after 1 s, doubling to at most 30 s. A member's link restarts only when its token, address or pin changes.
+  - Link traffic: the stream carries only `ready` and doorbells. For each doorbell the main host fetches the call with its own `GET /api/cluster/host-request/<requestId>`, runs it, and answers with its own `POST /api/cluster/host-reply`; each is a separate request (a pooled HTTPS connection, or its own SSH channel), in its own fiber, so no payload delays another or the heartbeats. The main host runs at most 32 of a member's calls at once (`Semaphore.withPermitsIfAvailable` per link, held until the answer is sent); a call beyond that is answered "Cluster host busy" at once, without fetching it.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -3058,51 +3057,12 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```ts
 import {
   type ClusterHostReplyInput,
-  ClusterLinkRpcs,
+  type ClusterHostRequest,
   type ClusterMemberStatus,
   type EnvironmentId,
-  WS_METHODS,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
-import * as HttpServerRequest from "effect/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/http/HttpServerResponse";
-import { RpcSerialization, RpcServer } from "effect/rpc";
-import * as SessionStore from "../auth/SessionStore.ts";
-```
-
-Add above `memberRoutes`:
-
-```ts
-/** A member's `/ws` as its main host's control link uses it, ending with the session as `ws.ts` does. */
-const layerLinkSocket = HttpRouter.add(
-  "GET",
-  "/ws",
-  Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const auth = yield* EnvironmentAuth.EnvironmentAuth;
-    const sessions = yield* SessionStore.SessionStore;
-    const cluster = yield* ClusterService.ClusterService;
-    const session = yield* auth.authenticateWebSocketUpgrade(request, "rpc");
-    const { protocol, httpEffect } = yield* RpcServer.makeProtocolWithHttpEffectWebsocket;
-    yield* RpcServer.make(ClusterLinkRpcs).pipe(
-      Effect.provideService(RpcServer.Protocol, protocol),
-      Effect.provide(
-        ClusterLinkRpcs.toLayer({
-          [WS_METHODS.clusterHostChannel]: () => cluster.hostChannel(session),
-        }),
-      ),
-      Effect.forkScoped,
-    );
-    return yield* Effect.raceFirst(
-      httpEffect,
-      sessions.awaitInvalidation(session.sessionId).pipe(Effect.as(HttpServerResponse.empty())),
-    );
-  }).pipe(
-    Effect.provide(RpcSerialization.layerJson),
-    Effect.catch(() => Effect.succeed(HttpServerResponse.empty({ status: 401 }))),
-  ),
-);
 ```
 
 Replace `memberRoutes` with:
@@ -3116,7 +3076,7 @@ const memberRoutes = (context: ClusterEnvironment["context"]) =>
       Layer.provide(ServerHttp.layerServerEnvironmentHttpApi),
       Layer.provide(AuthHttp.layerAuthenticatedAuth),
     ),
-    layerLinkSocket,
+    ClusterHttp.layerEvents,
   ).pipe(Layer.provide(Layer.succeedContext(context)));
 ```
 
@@ -3125,29 +3085,35 @@ Replace `serveMember` with:
 ```ts
 /**
  * A member on a real socket; `serveAgain` serves the same environment at a new address.
- * `hostReplyGate` runs in the member's `POST /api/cluster/host-reply` handler before the answer lands.
+ * `hostRequestGate` runs in its `GET /api/cluster/host-request/:requestId` handler once the call
+ * is taken, and `hostReplyGate` in its `POST /api/cluster/host-reply` handler before the answer
+ * lands, so a test can hold either request open.
  */
 export const serveMember = (
   descriptor: ExecutionEnvironmentDescriptor,
   options: {
+    readonly hostRequestGate?: (request: ClusterHostRequest) => Effect.Effect<void>;
     readonly hostReplyGate?: (input: ClusterHostReplyInput) => Effect.Effect<void>;
   } = {},
 ) =>
   Effect.gen(function* () {
     const environment = yield* makeEnvironment(descriptor);
-    const gate = options.hostReplyGate;
-    const context =
-      gate === undefined
-        ? environment.context
-        : Context.add(
-            environment.context,
-            ClusterService.ClusterService,
-            ClusterService.ClusterService.of({
-              ...environment.cluster,
-              hostReply: (session, input) =>
-                gate(input).pipe(Effect.andThen(environment.cluster.hostReply(session, input))),
-            }),
-          );
+    const { hostRequestGate, hostReplyGate } = options;
+    const context = Context.add(
+      environment.context,
+      ClusterService.ClusterService,
+      ClusterService.ClusterService.of({
+        ...environment.cluster,
+        hostRequest: (session, requestId) =>
+          environment.cluster
+            .hostRequest(session, requestId)
+            .pipe(Effect.tap((request) => hostRequestGate?.(request) ?? Effect.void)),
+        hostReply: (session, input) =>
+          (hostReplyGate?.(input) ?? Effect.void).pipe(
+            Effect.andThen(environment.cluster.hostReply(session, input)),
+          ),
+      }),
+    );
     const serveAgain = serveRoutes(memberRoutes(context));
     return { ...environment, url: yield* serveAgain, serveAgain };
   });
@@ -3170,7 +3136,7 @@ export const awaitStatus = (
   );
 ```
 
-Append to `apps/server/src/cluster/ClusterService.test.ts` (add imports `type ClusterHostRequest` from `@t3tools/contracts`, `* as Deferred from "effect/Deferred"`, `* as Exit from "effect/Exit"`, `* as Fiber from "effect/Fiber"`, `* as Queue from "effect/Queue"`, `* as Scope from "effect/Scope"`, `* as ClusterService from "./ClusterService.ts"`, and `awaitStatus` from the testkit):
+Append to `apps/server/src/cluster/ClusterService.test.ts` (add imports `type ClusterHostRequest, type ClusterLinkEvent` from `@t3tools/contracts`, `* as Deferred from "effect/Deferred"`, `* as Exit from "effect/Exit"`, `* as Fiber from "effect/Fiber"`, `* as Queue from "effect/Queue"`, `* as Scope from "effect/Scope"`, `* as TestClock from "effect/testing/TestClock"`, `* as ClusterService from "./ClusterService.ts"`, and `awaitStatus` from the testkit):
 
 ```ts
 const readCall = {
@@ -3181,6 +3147,12 @@ const readCall = {
 
 const UNREACHABLE =
   'Cluster host unreachable: "Studio" is not connected, so other environments in the cluster cannot be reached. Work here continues.';
+
+/** The session a member recorded for its main host at join. */
+const hostSessionOf = (member: ClusterEnvironment) =>
+  member.sql<{ readonly host_session_id: string }>`
+    SELECT host_session_id FROM cluster_membership
+  `.pipe(Effect.map(([membership]) => ({ sessionId: membership?.host_session_id ?? "" })));
 
 it.effect(
   "the control link carries a member's calls, fails them when it drops, and never sends one twice",
@@ -3225,15 +3197,12 @@ it.effect(
         const answered = yield* Queue.take(served);
         expect(answered).toMatchObject(readCall);
         // A second answer for that call, as a retried POST would bring, finds nothing waiting.
-        const [membership] = yield* member.sql<{ readonly host_session_id: string }>`
-          SELECT host_session_id FROM cluster_membership
-        `;
         expect(
           yield* member.cluster
-            .hostReply(
-              { sessionId: membership?.host_session_id ?? "" },
-              { requestId: answered.requestId, result: { isError: false, text: "again" } },
-            )
+            .hostReply(yield* hostSessionOf(member), {
+              requestId: answered.requestId,
+              result: { isError: false, text: "again" },
+            })
             .pipe(Effect.flip),
         ).toMatchObject({ reason: "unknown_request" });
 
@@ -3257,7 +3226,55 @@ it.effect(
     ),
 );
 
-it.effect("a member that leaves shows revoked over its link, and only its host opens the channel", () =>
+it.effect("a member holds each call until its link fetches it once, and drops them with the link", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const member = yield* serveMember(box);
+      const main = yield* makeEnvironment(studioDescriptor);
+      const invite = yield* member.cluster.invite({ url: member.url });
+      yield* main.cluster.addMember({ target: invite.joinString ?? "" });
+      const host = yield* hostSessionOf(member);
+      // The main host's end of the link, held by hand: nothing fetches unless the test does.
+      const link = yield* Scope.make();
+      const doorbells = yield* Queue.unbounded<ClusterLinkEvent>();
+      yield* member.cluster.hostEvents(host).pipe(
+        Effect.flatMap(Stream.runForEach((event) => Queue.offer(doorbells, event))),
+        Effect.forkScoped,
+        Effect.provideService(Scope.Scope, link),
+      );
+      expect(yield* Queue.take(doorbells)).toEqual({ _tag: "ready" });
+
+      const first = yield* member.cluster.hostCall(readCall).pipe(Effect.forkScoped);
+      const ring = yield* Queue.take(doorbells);
+      if (ring._tag !== "request") return yield* Effect.die("expected a doorbell");
+      // The doorbell names the call; its body stays on the member until it is fetched, once.
+      expect(Object.keys(ring)).toEqual(["_tag", "requestId"]);
+      expect(yield* member.cluster.hostRequest(host, ring.requestId)).toMatchObject(readCall);
+      expect(
+        yield* member.cluster.hostRequest(host, ring.requestId).pipe(Effect.flip),
+      ).toMatchObject({ reason: "unknown_request" });
+      yield* member.cluster.hostReply(host, {
+        requestId: ring.requestId,
+        result: { isError: false, text: "done" },
+      });
+      expect(yield* Fiber.join(first)).toEqual({ isError: false, text: "done" });
+
+      // The link drops before the next call is fetched: it fails, and its id is gone.
+      const second = yield* member.cluster
+        .hostCall(readCall)
+        .pipe(Effect.flip, Effect.forkScoped);
+      const pending = yield* Queue.take(doorbells);
+      if (pending._tag !== "request") return yield* Effect.die("expected a doorbell");
+      yield* Scope.close(link, Exit.void);
+      expect(yield* Fiber.join(second)).toMatchObject({ reason: "unreachable" });
+      expect(
+        yield* member.cluster.hostRequest(host, pending.requestId).pipe(Effect.flip),
+      ).toMatchObject({ reason: "unknown_request" });
+    }),
+  ),
+);
+
+it.effect("a member that leaves shows revoked over its link, and only its host opens it", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const member = yield* serveMember(box);
@@ -3267,17 +3284,19 @@ it.effect("a member that leaves shows revoked over its link, and only its host o
       yield* main.cluster.start(ClusterService.refuseHostRequests);
       yield* awaitStatus(main, box.environmentId, "online");
       expect(yield* member.cluster.hostCall(readCall)).toMatchObject({ isError: true });
+      const someoneElse = { sessionId: "session-someone-else" };
+      expect(yield* member.cluster.hostEvents(someoneElse).pipe(Effect.flip)).toMatchObject({
+        reason: "forbidden",
+      });
       expect(
-        yield* member.cluster
-          .hostChannel({ sessionId: "session-someone-else" })
-          .pipe(Stream.runDrain, Effect.flip),
+        yield* member.cluster.hostRequest(someoneElse, "request-1").pipe(Effect.flip),
       ).toMatchObject({ reason: "forbidden" });
       expect(
         yield* member.cluster
-          .hostReply(
-            { sessionId: "session-someone-else" },
-            { requestId: "request-1", result: { isError: false, text: "{}" } },
-          )
+          .hostReply(someoneElse, {
+            requestId: "request-1",
+            result: { isError: false, text: "{}" },
+          })
           .pipe(Effect.flip),
       ).toMatchObject({ reason: "forbidden" });
 
@@ -3291,7 +3310,7 @@ it.effect("a member that leaves shows revoked over its link, and only its host o
   ),
 );
 
-it.effect("the link carries only small calls, at most 32 at a time", () =>
+it.effect("the control link runs at most 32 of a member's calls at a time", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const member = yield* serveMember(box);
@@ -3303,16 +3322,6 @@ it.effect("the link carries only small calls, at most 32 at a time", () =>
         Queue.offer(served, request).pipe(Effect.andThen(Effect.never)),
       );
       yield* awaitStatus(main, box.environmentId, "online");
-
-      // Over the cap: refused on the member before it is queued.
-      const tooLarge = yield* member.cluster
-        .hostCall({
-          ...readCall,
-          arguments: { message: "x".repeat(ClusterService.CLUSTER_HOST_REQUEST_MAX_BYTES) },
-        })
-        .pipe(Effect.flip);
-      expect(tooLarge).toMatchObject({ reason: "too_large" });
-      expect(tooLarge.message).toContain("at most 256 KiB");
 
       // 32 calls run; the 33rd is answered busy at once and never reaches `serve`.
       yield* Effect.forEach(
@@ -3334,18 +3343,26 @@ it.effect("the link carries only small calls, at most 32 at a time", () =>
   ),
 );
 
-it.effect("a large reply in flight does not hold back a small one", () =>
+it.effect("a large request or reply on the control link does not hold back a small one", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const large = "x".repeat(3 * 1024 * 1024);
+      const largeFetched = yield* Deferred.make<void>();
+      const releaseFetch = yield* Deferred.make<void>();
       const largeAtMember = yield* Deferred.make<void>();
-      const releaseLarge = yield* Deferred.make<void>();
-      // The member holds the 3 MiB answer's request open until the test lets it land.
+      const releaseReply = yield* Deferred.make<void>();
+      // The member holds the 3 MiB call's fetch, then the 3 MiB answer, until the test lets go.
       const member = yield* serveMember(box, {
+        hostRequestGate: (request) =>
+          request.arguments.message === large
+            ? Deferred.succeed(largeFetched, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseFetch)),
+              )
+            : Effect.void,
         hostReplyGate: (input) =>
           input.result.text === large
             ? Deferred.succeed(largeAtMember, undefined).pipe(
-                Effect.andThen(Deferred.await(releaseLarge)),
+                Effect.andThen(Deferred.await(releaseReply)),
               )
             : Effect.void,
       });
@@ -3357,30 +3374,66 @@ it.effect("a large reply in flight does not hold back a small one", () =>
       );
       yield* awaitStatus(main, box.environmentId, "online");
 
-      const largeCall = yield* member.cluster
+      const largeRequest = yield* member.cluster
+        .hostCall({ ...readCall, arguments: { message: large } })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(largeFetched);
+      expect(yield* member.cluster.hostCall(readCall)).toEqual({ isError: false, text: "small" });
+      expect(largeRequest.pollUnsafe()).toBeUndefined();
+      yield* Deferred.succeed(releaseFetch, undefined);
+      expect(yield* Fiber.join(largeRequest)).toEqual({ isError: false, text: "small" });
+
+      const largeReply = yield* member.cluster
         .hostCall({ ...readCall, tool: "large" })
         .pipe(Effect.forkScoped);
       yield* Deferred.await(largeAtMember);
       expect(yield* member.cluster.hostCall(readCall)).toEqual({ isError: false, text: "small" });
-      expect(largeCall.pollUnsafe()).toBeUndefined();
-      yield* Deferred.succeed(releaseLarge, undefined);
-      expect((yield* Fiber.join(largeCall)).text.length).toBe(large.length);
+      expect(largeReply.pollUnsafe()).toBeUndefined();
+      yield* Deferred.succeed(releaseReply, undefined);
+      expect((yield* Fiber.join(largeReply)).text.length).toBe(large.length);
     }),
   ),
 );
+
+it.effect("the control link lives on heartbeats and ends after 40 s without a byte", () =>
+  Effect.gen(function* () {
+    const bytes = yield* Queue.unbounded<string>();
+    const reading = yield* Stream.fromQueue(bytes).pipe(
+      Stream.encodeText,
+      ClusterService.readLinkEvents,
+      Stream.runCollect,
+      Effect.forkScoped({ startImmediately: true }),
+    );
+    yield* Queue.offer(bytes, 'event: ready\ndata: {"_tag":"ready"}\n\n');
+    // Comments only, 15 s apart: a minute with no event, and the link is still up.
+    for (let beat = 0; beat < 4; beat++) {
+      yield* TestClock.adjust("15 seconds");
+      yield* Queue.offer(bytes, ": heartbeat\n\n");
+    }
+    yield* Queue.offer(bytes, 'event: request\ndata: {"_tag":"request","requestId":"r1"}\n\n');
+    expect(reading.pollUnsafe()).toBeUndefined();
+    yield* TestClock.adjust("40 seconds");
+    expect(Array.from(yield* Fiber.join(reading))).toEqual([
+      { _tag: "ready" },
+      { _tag: "request", requestId: "r1" },
+    ]);
+  }),
+);
 ```
+
+`ClusterEnvironment` comes from the testkit import (add it beside `awaitStatus`).
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `vp test run apps/server/src/cluster/ClusterService.test.ts -t "link|reply"`
-Expected: FAIL — `member.cluster.hostCall is not a function`; typecheck reports `ClusterLinkRpcs` and `WS_METHODS.clusterHostChannel` missing from `@t3tools/contracts`, and `hostReply` missing from `EnvironmentHttpApi.groups.cluster`.
+Run: `vp test run apps/server/src/cluster/ClusterService.test.ts -t "link"`
+Expected: FAIL — `member.cluster.hostCall is not a function` and `ClusterService.readLinkEvents is not a function`; typecheck reports `ClusterLinkEvent` missing from `@t3tools/contracts`, `layerEvents` missing from `./http.ts`, and `hostRequest` missing from `EnvironmentHttpApi.groups.cluster`.
 
 - [ ] **Step 3: Implement**
 
 `packages/contracts/src/cluster.ts` — add imports `{ ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts"` and `{ OrchestrationV2LinkedSender } from "./orchestrationV2.ts"`, then append:
 
 ```ts
-/** One call a member's agent makes through its main host, over the control link. */
+/** One call a member's agent makes through its main host, which fetches it by `requestId`. */
 export const ClusterHostRequest = Schema.Struct({
   requestId: TrimmedNonEmptyString,
   /** A T3 MCP tool; `arguments.environmentId` names the target unless it is the main host. */
@@ -3393,12 +3446,12 @@ export const ClusterHostRequest = Schema.Struct({
 });
 export type ClusterHostRequest = typeof ClusterHostRequest.Type;
 
-/** `cluster.hostChannel`: `ready` once the member listens, then each call to run. */
-export const ClusterHostChannelEvent = Schema.Union([
+/** `GET /api/cluster/events`: `ready` once the member listens, then a doorbell per call. */
+export const ClusterLinkEvent = Schema.Union([
   Schema.TaggedStruct("ready", {}),
-  Schema.TaggedStruct("request", { request: ClusterHostRequest }),
+  Schema.TaggedStruct("request", { requestId: TrimmedNonEmptyString }),
 ]);
-export type ClusterHostChannelEvent = typeof ClusterHostChannelEvent.Type;
+export type ClusterLinkEvent = typeof ClusterLinkEvent.Type;
 
 /** A tool's answer as `/mcp` gives it: its joined text, and whether it is a refusal. */
 export const ClusterHostResult = Schema.Struct({ isError: Schema.Boolean, text: Schema.String });
@@ -3412,47 +3465,20 @@ export const ClusterHostReplyInput = Schema.Struct({
 export type ClusterHostReplyInput = typeof ClusterHostReplyInput.Type;
 ```
 
-`packages/contracts/src/rpc.ts` — import `ClusterError`, `ClusterHostChannelEvent` from `./cluster.ts`. In `WS_METHODS` after `peerLinksAnswerRequest`:
-
-```ts
-  clusterHostChannel: "cluster.hostChannel",
-```
-
-After `WsPeerLinksAnswerRequestRpc`:
-
-```ts
-const ClusterRpcError = Schema.Union([ClusterError, EnvironmentAuthorizationError]);
-
-const WsClusterHostChannelRpc = Rpc.make(WS_METHODS.clusterHostChannel, {
-  payload: Schema.Struct({}),
-  success: ClusterHostChannelEvent,
-  stream: true,
-  error: ClusterRpcError,
-});
-
-/** What a main host calls on a member's `/ws`: its control link. Answers go over HTTP. */
-export const ClusterLinkRpcs = RpcGroup.make(WsClusterHostChannelRpc);
-```
-
-and in `WsRpcGroup` after `WsPeerLinksAnswerRequestRpc,`:
-
-```ts
-  WsClusterHostChannelRpc,
-```
-
-`apps/server/src/auth/RpcAuthorization.ts`, after `[WS_METHODS.peerLinksList]`:
-
-```ts
-  // The main host's control link; ClusterService refuses every session but the member's host.
-  [WS_METHODS.clusterHostChannel]: AuthOrchestrationOperateScope,
-```
-
-`packages/contracts/src/environmentHttp.ts` — add `ClusterHostReplyInput` to the `./cluster.ts` import and `import * as HttpApiError from "effect/http-api/HttpApiError";`. In `EnvironmentClusterHttpApi`, after the `leave` endpoint:
+`packages/contracts/src/environmentHttp.ts` — add `ClusterHostReplyInput, ClusterHostRequest` to the `./cluster.ts` import and `import * as HttpApiError from "effect/http-api/HttpApiError";`. In `EnvironmentClusterHttpApi`, after the `leave` endpoint:
 
 ```ts
   .add(
-    // The main host's answer to one call from its control link; a separate request per answer,
-    // so a large one never holds up another on the link's single ordered socket.
+    // The main host fetches each call its control link announced; a call is taken once.
+    HttpApiEndpoint.get("hostRequest", "/api/cluster/host-request/:requestId", {
+      headers: OptionalBearerHeaders,
+      params: Schema.Struct({ requestId: Schema.String }),
+      success: ClusterHostRequest,
+      error: [EnvironmentHttpForbiddenError, HttpApiError.NotFound],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    // The main host's answer to one call: its own request, so no answer waits behind another.
     HttpApiEndpoint.post("hostReply", "/api/cluster/host-reply", {
       headers: OptionalBearerHeaders,
       payload: ClusterHostReplyInput,
@@ -3461,26 +3487,102 @@ and in `WsRpcGroup` after `WsPeerLinksAnswerRequestRpc,`:
   )
 ```
 
-`apps/server/src/cluster/http.ts` — add `import * as HttpApiError from "effect/http-api/HttpApiError";` and, after the `leave` handler:
+`apps/server/src/cluster/http.ts` — add `ClusterError` and `ClusterLinkEvent` to the `@t3tools/contracts` import, and:
 
 ```ts
+import * as Duration from "effect/Duration";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import * as Sse from "effect/encoding/Sse";
+import * as HttpRouter from "effect/http/HttpRouter";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as HttpApiError from "effect/http-api/HttpApiError";
+
+import * as SessionStore from "../auth/SessionStore.ts";
+```
+
+Module scope, above `layer`:
+
+```ts
+/** `unknown_request` is 404; a refusal of any session but the link's is 403. */
+const linkHttpError = (error: ClusterError) =>
+  error.reason === "unknown_request"
+    ? new HttpApiError.NotFound()
+    : new EnvironmentHttpForbiddenError({ message: error.message });
+```
+
+After the `leave` handler:
+
+```ts
+      .handle(
+        "hostRequest",
+        Effect.fn("environment.cluster.hostRequest")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          const principal = yield* EnvironmentAuthenticatedPrincipal;
+          return yield* cluster
+            .hostRequest({ sessionId: principal.sessionId }, args.params.requestId)
+            .pipe(Effect.mapError(linkHttpError));
+        }),
+      )
       .handle(
         "hostReply",
         Effect.fn("environment.cluster.hostReply")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           const principal = yield* EnvironmentAuthenticatedPrincipal;
-          return yield* cluster.hostReply({ sessionId: principal.sessionId }, args.payload).pipe(
-            Effect.mapError((error) =>
-              error.reason === "unknown_request"
-                ? new HttpApiError.NotFound()
-                : new EnvironmentHttpForbiddenError({ message: error.message }),
-            ),
-          );
+          return yield* cluster
+            .hostReply({ sessionId: principal.sessionId }, args.payload)
+            .pipe(Effect.mapError(linkHttpError));
         }),
       )
 ```
 
-`apps/server/src/cluster/ClusterService.ts` — add to the `@t3tools/contracts` import `type ClusterHostChannelEvent`, `type ClusterHostReplyInput`, `type ClusterHostRequest`, `type ClusterHostResult`, `ClusterLinkRpcs`, `ORCHESTRATION_PROTOCOL_QUERY_PARAM`, `WS_METHODS`, and add (`Semaphore` is already imported by Task 6, `Option` by Task 7):
+Append:
+
+```ts
+// Idle edges (T3 Connect drops idle requests after about 100 s) stay open; the main host counts silence.
+const LINK_HEARTBEAT = Duration.seconds(15);
+const encodeLinkEvent = Schema.encodeSync(Schema.fromJsonString(ClusterLinkEvent));
+
+/** A member's control link: the main host holds this open; it carries doorbells, never payloads. */
+export const layerEvents = HttpRouter.add(
+  "GET",
+  "/api/cluster/events",
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const auth = yield* EnvironmentAuth.EnvironmentAuth;
+    const sessions = yield* SessionStore.SessionStore;
+    const cluster = yield* ClusterService.ClusterService;
+    const session = yield* auth.authenticateHttpRequest(request).pipe(Effect.option);
+    if (Option.isNone(session)) return HttpServerResponse.empty({ status: 401 });
+    const events = yield* cluster.hostEvents(session.value).pipe(Effect.option);
+    if (Option.isNone(events)) return HttpServerResponse.empty({ status: 403 });
+    const body = events.value.pipe(
+      Stream.map((event) =>
+        Sse.encoder.write({
+          _tag: "Event",
+          event: event._tag,
+          id: undefined,
+          data: encodeLinkEvent(event),
+        }),
+      ),
+      Stream.merge(Stream.tick(LINK_HEARTBEAT).pipe(Stream.map(() => ": heartbeat\n\n")), {
+        haltStrategy: "left",
+      }),
+      // Leave or a new join revokes the session; the main host's reconnect then hears 401.
+      Stream.interruptWhen(sessions.awaitInvalidation(session.value.sessionId)),
+      Stream.encodeText,
+    );
+    return HttpServerResponse.stream(body, {
+      contentType: "text/event-stream",
+      // no-transform keeps compression from buffering it; x-accel-buffering does the same for proxies.
+      headers: { "cache-control": "no-cache, no-transform", "x-accel-buffering": "no" },
+    });
+  }),
+);
+```
+
+`apps/server/src/cluster/ClusterService.ts` — add to the `@t3tools/contracts` import `type ClusterHostReplyInput`, `type ClusterHostRequest`, `type ClusterHostResult`, `ClusterLinkEvent`, and add (`Semaphore` is already imported by Task 6, `Option` and `Stream` by Task 7):
 
 ```ts
 import type * as Cause from "effect/Cause";
@@ -3489,8 +3591,8 @@ import * as FiberMap from "effect/FiberMap";
 import * as Queue from "effect/Queue";
 import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
-import * as Socket from "effect/socket/Socket";
-import { RpcClient, RpcSerialization } from "effect/rpc";
+import * as Sse from "effect/encoding/Sse";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 ```
 
 Module scope, after `MemberConnection`:
@@ -3505,6 +3607,8 @@ const LINK_BACKOFF = Schedule.min([
   Schedule.exponential("1 second", 2),
   Schedule.spaced("30 seconds"),
 ]);
+// Two missed 15 s heartbeats, with slack for a slow edge.
+const LINK_SILENCE = Duration.seconds(40);
 const ROWS_RELOAD_INTERVAL = Duration.seconds(30);
 
 /** Why a member's control link is not up. */
@@ -3529,15 +3633,7 @@ export const clusterHostUnreachable = (hostLabel: string) =>
     message: `Cluster host unreachable: "${hostLabel}" is not connected, so other environments in the cluster cannot be reached. Work here continues.`,
   });
 
-/** The link is one ordered socket: a big request would hold up every call behind it. */
-export const CLUSTER_HOST_REQUEST_MAX_BYTES = 256 * 1024;
 const CLUSTER_HOST_MAX_IN_FLIGHT = 32;
-
-export const clusterHostTooLarge = (bytes: number) =>
-  new ClusterError({
-    reason: "too_large",
-    message: `Too large for the cluster host: this call is ${Math.ceil(bytes / 1024)} KiB, and a call to another environment in the cluster can be at most 256 KiB. Send less at once.`,
-  });
 
 /** Not final: the member's agent tries again once one of its calls finishes. */
 const hostBusy: ClusterHostResult = {
@@ -3558,11 +3654,30 @@ export const refuseHostRequests: ClusterHostServe = () =>
     }),
   });
 
-/** The main host's subscription on a member, and the calls waiting for its answers. */
-interface HostChannel {
+const unknownRequest = () =>
+  new ClusterError({ reason: "unknown_request", message: "No call here is waiting with that id." });
+
+/** Main side: a member's event stream as events; ends when it drops or is silent for 40 s. */
+export const readLinkEvents = <E>(bytes: Stream.Stream<Uint8Array, E>) =>
+  bytes.pipe(
+    // Per read and before decoding, so heartbeat comments count as life.
+    Stream.timeout(LINK_SILENCE),
+    Stream.decodeText(),
+    Stream.pipeThroughChannel(Sse.decodeDataSchema(ClusterLinkEvent)),
+    Stream.map((event) => event.data),
+  );
+
+/** A call its link announced: its body until the main host fetches it, and its answer. */
+interface PendingCall {
+  request: ClusterHostRequest | undefined;
+  readonly reply: Deferred.Deferred<ClusterHostResult, ClusterError>;
+}
+
+/** The main host's event stream on a member, and the calls announced on it. */
+interface HostLink {
   readonly sessionId: string;
-  readonly events: Queue.Queue<ClusterHostChannelEvent, Cause.Done>;
-  readonly pending: Map<string, Deferred.Deferred<ClusterHostResult, ClusterError>>;
+  readonly events: Queue.Queue<ClusterLinkEvent, Cause.Done>;
+  readonly pending: Map<string, PendingCall>;
 }
 ```
 
@@ -3571,14 +3686,19 @@ Add to the `ClusterService` interface:
 ```ts
     /** Main side: one control link per member while the scope lasts; `serve` runs their agents' calls. */
     readonly start: (serve: ClusterHostServe) => Effect.Effect<void, never, Scope.Scope>;
-    /** Member side: the main host's link subscribes here; any other session is refused. */
-    readonly hostChannel: (session: {
+    /** Member side: the main host's event stream, `ready` then a doorbell per call; others are refused. */
+    readonly hostEvents: (session: {
       readonly sessionId: string;
-    }) => Stream.Stream<ClusterHostChannelEvent, ClusterError>;
+    }) => Effect.Effect<Stream.Stream<ClusterLinkEvent>, ClusterError>;
     /**
-     * Member side: the main host's answer to one call, from `POST /api/cluster/host-reply`.
-     * `forbidden` for any session but the channel's; `unknown_request` when nothing waits for it.
+     * Member side: one announced call, from `GET /api/cluster/host-request/:requestId`; taken on
+     * the first fetch. `forbidden` for any session but the link's; `unknown_request` otherwise.
      */
+    readonly hostRequest: (
+      session: { readonly sessionId: string },
+      requestId: string,
+    ) => Effect.Effect<ClusterHostRequest, ClusterError>;
+    /** Member side: the main host's answer to one call, from `POST /api/cluster/host-reply`. */
     readonly hostReply: (
       session: { readonly sessionId: string },
       input: ClusterHostReplyInput,
@@ -3608,20 +3728,13 @@ In `make`, after `awaitGone`:
       Effect.withSpan("ClusterService.recordStatus"),
     );
 
-  /** The link's connect check: it answers as this member, speaks this protocol, accepts this host. */
+  /** The link's connect check: it answers as this member and speaks this protocol. */
   const preflight = Effect.fn("ClusterService.preflight")(function* (
     memberId: EnvironmentId,
     connection: ClusterUpstream.Upstream,
-    token: string,
   ) {
     const client = yield* clientFor(connection);
-    const [descriptor, session] = yield* Effect.all(
-      [
-        client.metadata.descriptor(),
-        client.auth.session({ headers: { authorization: `Bearer ${token}` } }),
-      ],
-      { concurrency: 2 },
-    ).pipe(
+    const descriptor = yield* client.metadata.descriptor().pipe(
       Effect.timeout(REQUEST_TIMEOUT),
       Effect.mapError(
         (cause): LinkDown => ({
@@ -3639,9 +3752,6 @@ In `make`, after `awaitGone`:
     if (!isCompatible(descriptor)) {
       return yield* Effect.fail<LinkDown>({ status: "incompatible", message: INCOMPATIBLE });
     }
-    if (!session.authenticated) {
-      return yield* Effect.fail<LinkDown>({ status: "revoked", message: REVOKED });
-    }
   });
 
   /** One link: succeeds when a link that came up drops, fails when it never came up. */
@@ -3650,41 +3760,51 @@ In `make`, after `awaitGone`:
       const { upstream: connection, token, member } = yield* connect(memberId).pipe(
         Effect.mapError((error): LinkDown => ({ status: "offline", message: error.message })),
       );
-      yield* preflight(memberId, connection, token);
-      const socket = yield* Socket.makeWebSocket(
-        `${connection.origin.replace(/^http/, "ws")}/ws?${ORCHESTRATION_PROTOCOL_QUERY_PARAM}=${ORCHESTRATION_PROTOCOL_VERSION}`,
-        { openTimeout: REQUEST_TIMEOUT, headers: { authorization: `Bearer ${token}` } },
-      ).pipe(Effect.provideService(Socket.WebSocketConstructor, connection.webSocket));
-      const client = yield* RpcClient.make(ClusterLinkRpcs).pipe(
-        // No retry inside: this fiber reconnects, so status and backoff stay in one place.
-        Effect.provideServiceEffect(
-          RpcClient.Protocol,
-          RpcClient.makeProtocolSocket({ retryPolicy: Schedule.recurs(0) }),
-        ),
-        Effect.provideService(Socket.Socket, socket),
-        Effect.provide(RpcSerialization.layerJson),
-      );
-      // Answers leave over HTTP, one request each, so a large one never blocks the socket.
+      yield* preflight(memberId, connection);
+      const headers = { authorization: `Bearer ${token}` };
+      const response = yield* connection.httpClient
+        .execute(
+          HttpClientRequest.get(`${connection.origin}/api/cluster/events`).pipe(
+            HttpClientRequest.setHeaders({ ...headers, accept: "text/event-stream" }),
+          ),
+        )
+        .pipe(
+          Effect.timeout(REQUEST_TIMEOUT),
+          Effect.mapError(
+            (cause): LinkDown => ({
+              status: "offline",
+              message: PinnedTransport.isPinMismatch(cause) ? CERTIFICATE_CHANGED : NOT_ANSWERING,
+            }),
+          ),
+        );
+      if (response.status === 401) {
+        return yield* Effect.fail<LinkDown>({ status: "revoked", message: REVOKED });
+      }
+      if (response.status !== 200) {
+        return yield* Effect.fail<LinkDown>({ status: "offline", message: NOT_ANSWERING });
+      }
+      // Each body is its own request, so no call's size holds up another or the heartbeats.
       const api = yield* clientFor(connection);
       const answer = (requestId: string, result: ClusterHostResult) =>
-        api.cluster.hostReply({
-          headers: { authorization: `Bearer ${token}` },
-          payload: { requestId, result },
-        });
+        api.cluster.hostReply({ headers, payload: { requestId, result } });
+      const run = (requestId: string) =>
+        api.cluster.hostRequest({ headers, params: { requestId } }).pipe(
+          Effect.flatMap((request) => serve(member, request)),
+          Effect.flatMap((result) => answer(requestId, result)),
+        );
       const inFlight = yield* Semaphore.make(CLUSTER_HOST_MAX_IN_FLIGHT);
       let up = false;
-      yield* client[WS_METHODS.clusterHostChannel]({}).pipe(
+      yield* readLinkEvents(response.stream).pipe(
         Stream.runForEach((event) =>
           event._tag === "ready"
             ? Effect.sync(() => {
                 up = true;
               }).pipe(Effect.andThen(recordStatus(memberId, "online", null)))
-            : serve(member, event.request).pipe(
-                Effect.flatMap((result) => answer(event.request.requestId, result)),
+            : run(event.requestId).pipe(
                 inFlight.withPermitsIfAvailable(1),
                 Effect.flatMap(
                   Option.match({
-                    onNone: () => answer(event.request.requestId, hostBusy),
+                    onNone: () => answer(event.requestId, hostBusy),
                     onSome: () => Effect.void,
                   }),
                 ),
@@ -3760,123 +3880,120 @@ In `make`, after `awaitGone`:
     },
   );
 
-  // Member side: the main host's subscription while its link is up.
-  let hostChannel: HostChannel | undefined;
+  // Member side: the main host's event stream while it is open.
+  let hostLink: HostLink | undefined;
 
   const hostUnreachableHere = readMembership.pipe(
     Effect.map((membership) => clusterHostUnreachable(membership?.host_label ?? "The main host")),
     Effect.orElseSucceed(() => clusterHostUnreachable("The main host")),
   );
 
-  /** Fails every call still waiting on `closing`; none is sent again on a later link. */
-  const closeHostChannel = (closing: HostChannel) =>
+  /** Fails every call still pending on `closing`; none is fetched or announced again. */
+  const closeHostLink = (closing: HostLink) =>
     Effect.gen(function* () {
-      if (hostChannel === closing) hostChannel = undefined;
+      if (hostLink === closing) hostLink = undefined;
       const unreachable = yield* hostUnreachableHere;
-      for (const reply of closing.pending.values()) yield* Deferred.fail(reply, unreachable);
+      for (const call of closing.pending.values()) yield* Deferred.fail(call.reply, unreachable);
       closing.pending.clear();
       yield* Queue.end(closing.events);
     });
 
-  const openHostChannel: ClusterService["Service"]["hostChannel"] = (session) =>
-    Stream.unwrap(
-      Effect.gen(function* () {
-        const membership = yield* readMembership;
-        if (membership?.host_session_id !== session.sessionId) {
-          return yield* new ClusterError({
+  const hostEvents: ClusterService["Service"]["hostEvents"] = Effect.fn(
+    "ClusterService.hostEvents",
+  )(function* (session) {
+    const membership = yield* readMembership;
+    if (membership?.host_session_id !== session.sessionId) {
+      return yield* new ClusterError({
+        reason: "forbidden",
+        message: "Only this environment's cluster host can open its control link.",
+      });
+    }
+    return Stream.unwrap(
+      Effect.acquireRelease(
+        Effect.gen(function* () {
+          const link: HostLink = {
+            sessionId: session.sessionId,
+            events: yield* Queue.unbounded<ClusterLinkEvent, Cause.Done>(),
+            pending: new Map(),
+          };
+          const replaced = hostLink;
+          hostLink = link;
+          if (replaced !== undefined) yield* closeHostLink(replaced);
+          return link;
+        }),
+        closeHostLink,
+      ).pipe(
+        Effect.map((link) =>
+          Stream.concat(Stream.make({ _tag: "ready" } as const), Stream.fromQueue(link.events)),
+        ),
+      ),
+    );
+  });
+
+  /** The pending call `requestId` names on the open link, for that link's session only. */
+  const pendingCall = (session: { readonly sessionId: string }, requestId: string) =>
+    Effect.suspend(() => {
+      const link = hostLink;
+      if (link !== undefined && link.sessionId !== session.sessionId) {
+        return Effect.fail(
+          new ClusterError({
             reason: "forbidden",
-            message: "Only this environment's cluster host can open its host channel.",
-          });
-        }
-        const opened = yield* Effect.acquireRelease(
-          Effect.gen(function* () {
-            const channel: HostChannel = {
-              sessionId: session.sessionId,
-              events: yield* Queue.unbounded<ClusterHostChannelEvent, Cause.Done>(),
-              pending: new Map(),
-            };
-            const replaced = hostChannel;
-            hostChannel = channel;
-            if (replaced !== undefined) yield* closeHostChannel(replaced);
-            return channel;
+            message: "Only this environment's cluster host can take or answer its calls.",
           }),
-          closeHostChannel,
         );
-        return Stream.concat(
-          Stream.make({ _tag: "ready" } as const),
-          Stream.fromQueue(opened.events),
-        );
+      }
+      const call = link?.pending.get(requestId);
+      return link === undefined || call === undefined
+        ? Effect.fail(unknownRequest())
+        : Effect.succeed({ link, call });
+    });
+
+  const hostRequest: ClusterService["Service"]["hostRequest"] = (session, requestId) =>
+    pendingCall(session, requestId).pipe(
+      Effect.flatMap(({ call }) => {
+        const request = call.request;
+        // Taken on the first fetch, so a retried GET never runs a call twice.
+        if (request === undefined) return Effect.fail(unknownRequest());
+        call.request = undefined;
+        return Effect.succeed(request);
       }),
+      Effect.withSpan("ClusterService.hostRequest"),
     );
 
   const hostReply: ClusterService["Service"]["hostReply"] = (session, input) =>
-    Effect.suspend(() => {
-      const channel = hostChannel;
-      if (channel !== undefined && channel.sessionId !== session.sessionId) {
-        return Effect.fail(
-          new ClusterError({
-            reason: "forbidden",
-            message: "Only this environment's cluster host can answer its calls.",
-          }),
-        );
-      }
-      // Taken out before it is answered, so a repeated POST finds nothing and lands nowhere.
-      const reply = channel?.pending.get(input.requestId);
-      if (channel === undefined || reply === undefined) {
-        return Effect.fail(
-          new ClusterError({
-            reason: "unknown_request",
-            message: "No call here is waiting for that answer.",
-          }),
-        );
-      }
-      channel.pending.delete(input.requestId);
-      return Deferred.succeed(reply, input.result).pipe(Effect.asVoid);
-    }).pipe(Effect.withSpan("ClusterService.hostReply"));
+    pendingCall(session, input.requestId).pipe(
+      Effect.flatMap(({ link, call }) => {
+        // Taken out before it is answered, so a repeated POST finds nothing and lands nowhere.
+        link.pending.delete(input.requestId);
+        return Deferred.succeed(call.reply, input.result);
+      }),
+      Effect.asVoid,
+      Effect.withSpan("ClusterService.hostReply"),
+    );
 
   const hostCall: ClusterService["Service"]["hostCall"] = Effect.fn("ClusterService.hostCall")(
     function* (call) {
-      const bytes = new TextEncoder().encode(JSON.stringify(call)).byteLength;
-      if (bytes > CLUSTER_HOST_REQUEST_MAX_BYTES) return yield* clusterHostTooLarge(bytes);
-      const channel = hostChannel;
-      if (channel === undefined) return yield* yield* hostUnreachableHere;
+      const link = hostLink;
+      if (link === undefined) return yield* yield* hostUnreachableHere;
       const requestId = Hex.encode(yield* random.randomBytes(16));
       const reply = yield* Deferred.make<ClusterHostResult, ClusterError>();
-      channel.pending.set(requestId, reply);
-      // False once that link has dropped: a call is never queued for a later one.
-      const queued = yield* Queue.offer(channel.events, {
-        _tag: "request",
-        request: { requestId, ...call },
-      });
-      if (!queued) {
-        channel.pending.delete(requestId);
+      link.pending.set(requestId, { request: { requestId, ...call }, reply });
+      // False once that link has dropped: a call is never announced on a later one.
+      const announced = yield* Queue.offer(link.events, { _tag: "request", requestId });
+      if (!announced) {
+        link.pending.delete(requestId);
         return yield* yield* hostUnreachableHere;
       }
       return yield* Deferred.await(reply).pipe(
-        Effect.ensuring(Effect.sync(() => channel.pending.delete(requestId))),
+        Effect.ensuring(Effect.sync(() => link.pending.delete(requestId))),
       );
     },
   );
 ```
 
-and add `start,`, `hostChannel: openHostChannel,`, `hostReply,` and `hostCall,` to the returned `ClusterService.of({ … })`.
+and add `start,`, `hostEvents,`, `hostRequest,`, `hostReply,` and `hostCall,` to the returned `ClusterService.of({ … })`.
 
-`apps/server/src/ws.ts` — import `* as ClusterService from "./cluster/ClusterService.ts"`; in `layerWsRpc` after line 1556 `const cluster = yield* ClusterService.ClusterService;`; after the `peerLinksAnswerRequest` handler:
-
-```ts
-        // The main host's control link; ClusterService refuses every other session.
-        [WS_METHODS.clusterHostChannel]: (_input) => cluster.hostChannel(currentSession),
-```
-
-In `layer`, after line 3606 `const cluster = yield* ClusterService.ClusterService;`, and after line 3705:
-
-```ts
-              Layer.provide(Layer.succeed(ClusterService.ClusterService, cluster)),
-```
-
-`apps/server/src/ws.test.ts` line 845: add `Layer.mock(ClusterService.ClusterService)({}),` (with the import).
-
-`apps/server/src/server.ts`, in `layerMakeRoutes` after the `RemoteDelegation` `Layer.effectDiscard`:
+`apps/server/src/server.ts` — in `layerMakeRoutes`, add `ClusterHttp.layerEvents,` after `DeviceHubProxy.layer,`, and after the `RemoteDelegation` `Layer.effectDiscard`:
 
 ```ts
   // One control link to each member while the server runs; members' agent calls ride it back.
@@ -3889,8 +4006,8 @@ In `layer`, after line 3606 `const cluster = yield* ClusterService.ClusterServic
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `vp test run apps/server/src/cluster/ClusterService.test.ts apps/server/src/auth/RpcAuthorization.test.ts apps/server/src/ws.test.ts`
-Expected: PASS (13 tests in `ClusterService.test.ts`; "declares exactly one scope for every RPC in the server group" stays green).
+Run: `vp test run apps/server/src/cluster/ClusterService.test.ts`
+Expected: PASS (15 tests).
 
 Run: `vp run typecheck`
 Expected: no errors.
@@ -3898,13 +4015,15 @@ Expected: no errors.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/contracts/src/cluster.ts packages/contracts/src/rpc.ts packages/contracts/src/environmentHttp.ts apps/server/src/auth/RpcAuthorization.ts apps/server/src/cluster/ClusterService.ts apps/server/src/cluster/http.ts apps/server/src/cluster/ClusterService.testkit.ts apps/server/src/cluster/ClusterService.test.ts apps/server/src/ws.ts apps/server/src/ws.test.ts apps/server/src/server.ts
+git add packages/contracts/src/cluster.ts packages/contracts/src/environmentHttp.ts apps/server/src/cluster/ClusterService.ts apps/server/src/cluster/http.ts apps/server/src/cluster/ClusterService.testkit.ts apps/server/src/cluster/ClusterService.test.ts apps/server/src/server.ts
 git commit -m "feat(server): main host keeps a control link to each cluster member
 
-Member status comes from the link, and member agents' calls ride it back
-through cluster.hostChannel. Each answer is its own POST to
-/api/cluster/host-reply, so the link carries only small messages: calls
-over 256 KiB fail, and a member gets at most 32 at once.
+The main host holds GET /api/cluster/events open on each member. Its
+ready event marks the member online; a heartbeat every 15 s keeps idle
+edges open, and 40 s without a byte counts as a drop. Member agents'
+calls ride it as doorbells: the main host fetches each call once from
+/api/cluster/host-request/:id and answers with its own POST to
+/api/cluster/host-reply, at most 32 per member at once.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
@@ -3922,7 +4041,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 **Interfaces:**
 
-- Consumes: `ClusterService.connect`, `awaitGone` (Task 7), the member status the control link keeps (Task 8), `start`, `refuseHostRequests` and testkit `awaitStatus` (Task 8); `EnvironmentAuth.authenticateHttpRequest`, `authenticateWebSocketUpgrade`, `issueWebSocketTicket`; `SessionStore.awaitInvalidation`; `failEnvironmentAuthInvalid`, `failEnvironmentInternal` (`auth/http.ts`); `pumpFrames` (`DeviceHubProxy.ts`); `encodeOAuthScope`.
+- Consumes: `ClusterService.connect`, `awaitGone` (Task 7), the member status the control link keeps (Task 8), `start`, `refuseHostRequests`, `ClusterHttp.layerEvents` and testkit `awaitStatus` (Task 8); `EnvironmentAuth.authenticateHttpRequest`, `authenticateWebSocketUpgrade`, `issueWebSocketTicket`; `SessionStore.awaitInvalidation`; `failEnvironmentAuthInvalid`, `failEnvironmentInternal` (`auth/http.ts`); `pumpFrames` (`DeviceHubProxy.ts`); `encodeOAuthScope`.
 - Produces: `ClusterProxy.layer` (`HttpRouter.add("*", "/cluster/*", …)`); the response contract listed for Plan 3. A client socket is piped only while the member's link is `online`; otherwise the upgrade gets `502` with the link's status. The proxy reads status and never writes it.
 
 - [ ] **Step 1: Write the failing tests**
@@ -3962,7 +4081,7 @@ const memberRoutes = (context: ClusterEnvironment["context"]) =>
       Layer.provide(ServerHttp.layerServerEnvironmentHttpApi),
       Layer.provide(AuthHttp.layerAuthenticatedAuth),
     ),
-    layerLinkSocket,
+    ClusterHttp.layerEvents,
     layerEcho,
   ).pipe(Layer.provide(Layer.succeedContext(context)));
 ```
@@ -4400,7 +4519,7 @@ const handler = Effect.gen(function* () {
 export const layer = HttpRouter.add("*", `${CLUSTER_ROUTE_PREFIX}/*`, handler);
 ```
 
-`apps/server/src/server.ts` — import `* as ClusterProxy from "./cluster/ClusterProxy.ts"` and add `ClusterProxy.layer,` after `DeviceHubProxy.layer,` in `layerMakeRoutes`.
+`apps/server/src/server.ts` — import `* as ClusterProxy from "./cluster/ClusterProxy.ts"` and add `ClusterProxy.layer,` after `ClusterHttp.layerEvents,` in `layerMakeRoutes`.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -4428,16 +4547,17 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 **Files:**
 
-- Modify: `packages/contracts/src/rpc.ts:20-28` (imports), `WS_METHODS` (after `clusterHostChannel`), Rpc definitions (after `ClusterLinkRpcs`), group (after `WsClusterHostChannelRpc`) — all added in Task 8
+- Modify: `packages/contracts/src/rpc.ts:20-28` (imports), `:546-549` (`WS_METHODS`), after `:902-905` (Rpc definitions), `:2294-2297` (group)
 - Modify: `packages/contracts/src/clientRpcPermissions.ts:83-87` (guarded scopes)
 - Modify: `apps/server/src/auth/RpcAuthorization.ts:95` (reads)
-- Modify: `apps/server/src/ws.ts:2693-2701` (handlers)
+- Modify: `apps/server/src/ws.ts:10` (import), `:1556` (service), `:2693-2701` (handlers), `:3606` and `:3705` (provide)
+- Modify: `apps/server/src/ws.test.ts:845` (mock)
 - Modify: `apps/server/src/environment/ServerEnvironment.ts:295-297` (capability)
 - Test: `apps/server/src/auth/RpcAuthorization.test.ts` (in `describe("RPC authorization scopes")`, after `:84`)
 
 **Interfaces:**
 
-- Consumes: `ClusterService` (Tasks 6–7), already provided to `ws.ts` by Task 8; contracts from Task 1; `ClusterRpcError` (Task 8).
+- Consumes: `ClusterService` (Tasks 6–8); contracts from Task 1.
 - Produces: the seven `WS_METHODS.cluster*` RPCs listed for Plan 3; capability `cluster: true`.
 
 - [ ] **Step 1: Write the failing test**
@@ -4468,7 +4588,7 @@ Expected: FAIL — `RPC method undefined has no declared authorization scope.`
 
 - [ ] **Step 3: Implement**
 
-`packages/contracts/src/rpc.ts` — add to the `./cluster.ts` import: `ClusterAddMemberInput, ClusterInvite, ClusterInviteInput, ClusterLeaveResult, ClusterMember, ClusterMemberRef, ClusterRemoveMemberResult, ClusterRenameMemberInput, ClusterStatus`. In `WS_METHODS` after `clusterHostChannel`:
+`packages/contracts/src/rpc.ts` — import from `./cluster.ts`: `ClusterAddMemberInput, ClusterError, ClusterInvite, ClusterInviteInput, ClusterLeaveResult, ClusterMember, ClusterMemberRef, ClusterRemoveMemberResult, ClusterRenameMemberInput, ClusterStatus`. In `WS_METHODS` after `peerLinksAnswerRequest`:
 
 ```ts
   clusterStatus: "cluster.status",
@@ -4480,9 +4600,11 @@ Expected: FAIL — `RPC method undefined has no declared authorization scope.`
   clusterLeave: "cluster.leave",
 ```
 
-After `ClusterLinkRpcs`:
+After `WsPeerLinksAnswerRequestRpc`:
 
 ```ts
+const ClusterRpcError = Schema.Union([ClusterError, EnvironmentAuthorizationError]);
+
 const WsClusterStatusRpc = Rpc.make(WS_METHODS.clusterStatus, {
   payload: Schema.Struct({}),
   success: ClusterStatus,
@@ -4527,7 +4649,7 @@ const WsClusterLeaveRpc = Rpc.make(WS_METHODS.clusterLeave, {
 });
 ```
 
-and in `WsRpcGroup` after `WsClusterHostChannelRpc,`:
+and in `WsRpcGroup` after `WsPeerLinksAnswerRequestRpc,`:
 
 ```ts
   WsClusterStatusRpc,
@@ -4558,7 +4680,7 @@ and in `WsRpcGroup` after `WsClusterHostChannelRpc,`:
   [WS_METHODS.clusterMembers]: AuthOrchestrationReadScope,
 ```
 
-`apps/server/src/ws.ts` — after the `clusterHostChannel` handler Task 8 added (it uses the same `cluster`):
+`apps/server/src/ws.ts` — import `* as ClusterService from "./cluster/ClusterService.ts"`; in `layerWsRpc` after line 1556 `const cluster = yield* ClusterService.ClusterService;`; after the `peerLinksAnswerRequest` handler:
 
 ```ts
         [WS_METHODS.clusterStatus]: (_input) => cluster.status,
@@ -4569,6 +4691,14 @@ and in `WsRpcGroup` after `WsClusterHostChannelRpc,`:
         [WS_METHODS.clusterRenameMember]: (input) => cluster.renameMember(input),
         [WS_METHODS.clusterLeave]: (_input) => cluster.leave,
 ```
+
+In `layer`, after line 3606 `const cluster = yield* ClusterService.ClusterService;`, and after line 3705:
+
+```ts
+              Layer.provide(Layer.succeed(ClusterService.ClusterService, cluster)),
+```
+
+`apps/server/src/ws.test.ts` line 845: add `Layer.mock(ClusterService.ClusterService)({}),` (with the import).
 
 `apps/server/src/environment/ServerEnvironment.ts`, after `linkFence: true,`:
 
@@ -4587,7 +4717,7 @@ Expected: no errors.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/contracts/src/rpc.ts packages/contracts/src/clientRpcPermissions.ts apps/server/src/auth/RpcAuthorization.ts apps/server/src/auth/RpcAuthorization.test.ts apps/server/src/ws.ts apps/server/src/environment/ServerEnvironment.ts
+git add packages/contracts/src/rpc.ts packages/contracts/src/clientRpcPermissions.ts apps/server/src/auth/RpcAuthorization.ts apps/server/src/auth/RpcAuthorization.test.ts apps/server/src/ws.ts apps/server/src/ws.test.ts apps/server/src/environment/ServerEnvironment.ts
 git commit -m "feat(server): cluster RPCs
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
@@ -4878,17 +5008,19 @@ session with that header, which only narrows, and only for `cluster-host`
 sessions; the proxy always overwrites a header the client sent. An unparseable
 header grants nothing.
 
-The main host also keeps one `cluster-host` WebSocket to each member, its
-control link. The member's status is that link's state, and calls from the
-member's agents ride it back on `cluster.hostChannel`, so a member never needs
-the main host's address or a credential for it. Only the session the member
-recorded at join can open that channel or answer on it. A WebSocket is one
-ordered stream, so the link carries only small control messages: each answer is
-its own `POST /api/cluster/host-reply` (a pooled HTTPS connection or its own SSH
-channel), calls over 256 KiB fail on the member, and the main host runs at most
-32 of a member's calls at once, answering the rest "cluster host busy". A call
-waiting when the link drops fails as "cluster host unreachable" and is never
-sent again on a later link.
+The main host also holds one `cluster-host` request open on each member, its
+control link: `GET /api/cluster/events`, a server-sent event stream. The
+member's status is that stream's state. Calls from the member's agents ride it
+back as doorbells that carry only an id; the main host fetches each call once
+with `GET /api/cluster/host-request/<id>` and answers with its own
+`POST /api/cluster/host-reply`, so a member never needs the main host's address
+or a credential for it, and no payload waits behind another on the ordered
+stream. Only the session the member recorded at join can open the stream, fetch
+or answer. The member sends a heartbeat comment every 15 s so edges that drop
+idle requests keep it open; 40 s without a byte counts as a drop. The main host
+runs at most 32 of a member's calls at once, answering the rest "cluster host
+busy". A call pending when the link drops fails as "cluster host unreachable"
+and is never fetched or announced again.
 ```
 
 - [ ] **Step 3: Commit**
@@ -4908,7 +5040,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   Expected: PASS.
 - [ ] Run: `vp run check:changed`
   Expected: clean (format, lint, knip, typecheck, tests beside changes).
-- [ ] The integrated two-server pass in the spec's Testing section (two dev servers, join over HTTPS, drive a member thread with the Replay provider) runs once Plan 3's client route exists; it is not part of this plan.
+- [ ] The integrated two-server pass in the spec's Testing section (two dev servers, join over HTTPS, drive a member thread with the Replay provider) runs once Plan 3's client route exists; it is not part of this plan. Run it once with the member reached through T3 Connect too, so the event stream crosses a real edge (Review Focus 12).
 
 ---
 
@@ -4925,17 +5057,17 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 | Join over HTTPS with pinned fingerprint, join string format | Tasks 1, 5, 7 |
 | Join step 3: main host gets a `cluster-host` session (RPC, HTTP, MCP) and opens the control link | Task 3 (session, `cluster: true` on `/mcp`), Tasks 7, 8 (a new row starts its link) |
 | Join over SSH with the main host machine's keys or agent, prompts fail clearly, no client involved, forward restored | Tasks 5, 7 (`SshPasswordPrompt.disabledLayer`; `ensureEnvironment` reuses or rebuilds the forward per connect, so each link attempt restores it) |
-| Control link: one long-lived WebSocket RPC session per member, over pinned HTTPS or the SSH forward, reconnecting with backoff | Task 8 (`start`, `runLink`, `LINK_BACKOFF`) |
-| Status from the link: connected `online`, protocol mismatch `incompatible`, `401` `revoked`, else `offline`; no polling loop | Task 8 (`ready` event, preflight); the proxy only reads it (Task 9) |
-| Member→main calls ride the link: `cluster.hostChannel`; each answer is the main host's own `POST /api/cluster/host-reply` (`cluster-host` credential) | Task 8 (contracts, member side, link fiber, `http.ts` handler) |
-| The link carries only small control messages: requests capped at 256 KiB, replies as separate HTTP requests, at most 32 in flight per member ("cluster host busy") | Task 8 (`hostCall` cap, `inFlight` semaphore, `answer`), tested: "the link carries only small calls, at most 32 at a time", "a large reply in flight does not hold back a small one" |
-| Calls queued while the link is down fail "cluster host unreachable", never delivered twice | Task 8 (`hostCall`, `closeHostChannel`), tested |
+| Control link: one long-lived SSE stream per member, `GET /api/cluster/events`, over pinned HTTPS or the SSH forward, reconnecting with backoff; heartbeat comment every 15 s | Task 8 (`start`, `runLink`, `LINK_BACKOFF`, `layerEvents`, `readLinkEvents`), tested: "the control link lives on heartbeats and ends after 40 s without a byte" |
+| Status from the link: open after `ready` `online`, protocol mismatch `incompatible`, `401` `revoked`, else (drop or missed heartbeats) `offline`; no polling loop | Task 8 (`ready` event, preflight, events status, `LINK_SILENCE`); the proxy only reads it (Task 9) |
+| Member→main calls: a doorbell `request {requestId}` on the stream; the main host fetches `GET /api/cluster/host-request/<requestId>` and answers `POST /api/cluster/host-reply` (`cluster-host` credential) | Task 8 (contracts, member side, link fiber, `http.ts` handlers), tested: "a member holds each call until its link fetches it once, and drops them with the link" |
+| The stream carries only doorbells; each fetch and reply is its own HTTP request, so payloads never block each other; at most 32 in flight per member ("cluster host busy") | Task 8 (`run`, `answer`, `inFlight` semaphore), tested: "the control link runs at most 32 of a member's calls at a time", "a large request or reply on the control link does not hold back a small one" |
+| Requests pending when the link drops fail "cluster host unreachable", never delivered twice | Task 8 (`hostCall`, `closeHostLink`, `hostRequest` takes a call once), tested |
 | Member writes membership, revokes non-loopback sessions and peer links, stops minting ordinary codes | Tasks 3, 6 |
 | Leave from main host (remove) and from member | Tasks 6, 7, CLI Task 11 |
 | Refusals: peer link create/accept on clustered envs; ordinary pairing on member; add on member; join on main | Tasks 4, 3, 7, 6 |
 | Status `online/offline/incompatible/revoked`; 502 unreachable; certificate changed; 401 → revoked; protocol checked per upstream connect | Task 8 (each link connect), Task 9 (502 bodies) |
 | `cluster_members` / `cluster_membership` tables | Task 2 (adds `status`; the reconcile lists gain 99) |
-| RPCs, guarded `access:write` | Task 10 (the host channel RPC in Task 8) |
+| RPCs, guarded `access:write` | Task 10 (the control link is HTTP, no RPC) |
 | Labs `clusterEnabled` gating both sides | Task 1; main side gated in `connect`/`addMember`/proxy and the links, which stop while it is off (Tasks 7, 8, 9) |
 | New auth subject `cluster-host` only | Task 3 |
 | Capability flag | Tasks 1, 10 |
@@ -4944,7 +5076,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 Resolved ambiguities (each is a deliberate choice an implementer should not re-litigate):
 
-1. **Invite on the member is not Labs-gated server-side**; the flag gates the main side (add, proxy, links) and Plan 3 hides the member UI behind it. Reason: SSH joins mint the invite with the remote's CLI, and a headless member cannot flip its Labs flag. The member side of the host channel is not gated either: membership is the gate.
+1. **Invite on the member is not Labs-gated server-side**; the flag gates the main side (add, proxy, links) and Plan 3 hides the member UI behind it. Reason: SSH joins mint the invite with the remote's CLI, and a headless member cannot flip its Labs flag. The member side of the control link is not gated either: membership is the gate.
 2. **Re-invite rotates**: a member accepts a join from the host it already belongs to and revokes the old `cluster-host` session. This is the "admin re-invites" path for a changed certificate or address; the new token restarts that member's link.
 3. **A main host also drops its outbound peer links on its first member**, and `/mcp` refuses linked clients on any clustered environment (403 with the existing `linked_environments_off` code so older peers degrade the same way).
 4. **Upstream 401 is surfaced to the client as `502 cluster_member_revoked`**, not 401, so clients do not discard their own valid main-host credential.
@@ -4952,12 +5084,12 @@ Resolved ambiguities (each is a deliberate choice an implementer should not re-l
 6. **`cluster-host` sessions last 10 years** (no renewal channel); leave or removal ends them.
 7. **No client answers SSH prompts**: the server uses `SshPasswordPrompt.disabledLayer` everywhere, desktop included.
 8. **Join strings accept `http:` only for loopback hosts** (no pin, nothing on the network), which also lets tests run without TLS; the pinned path is tested directly in Task 5.
-9. **The link opens the member's ordinary `/ws`** with `?orchestrationProtocol=<v>`, after an HTTP preflight. The preflight is what tells `incompatible` and `revoked` apart, because a WebSocket client cannot read the status of a refused upgrade.
-10. **`ready` marks online**, not the socket opening: a member's agent call can only succeed once the member has installed the channel, so status and `hostCall` agree.
+9. **The link is plain HTTP, after a descriptor preflight.** The preflight tells `offline` (wrong environment, no answer) and `incompatible` apart; `401` on `GET /api/cluster/events` itself is `revoked`, since an HTTP client reads a refusal's status directly. The events route is a raw `HttpRouter` route, not an `HttpApi` endpoint, because it writes heartbeat comments that `HttpApiSchema.StreamSse` cannot express and the main host times reads on the raw bytes.
+10. **`ready` marks online**, not the response headers: a member's agent call can only succeed once the member has installed the link, so status and `hostCall` agree.
 11. **A main host restart resets every `online` row to `offline`** before its links start; a revoked member keeps retrying at the 30 s cap until it is removed or re-added.
 12. **Proxied sockets need an `online` link**: a member that is up while its link is still reconnecting gets `502` for that moment, and the client retries.
 13. **A duplicate host reply is `404`, like an unknown one.** `hostReply` takes the waiting call out before answering it, so a second POST for the same `requestId` finds nothing and is never delivered twice. A separate `409` would need a record of answered ids; nothing acts on the difference.
-14. **The 256 KiB cap measures the call's JSON on the member**, before it gets a `requestId` or is queued; the envelope adds a few dozen bytes. Answers have no cap: they never share the socket.
+14. **Silence is timed on bytes, per read.** `readLinkEvents` applies `Stream.timeout(40 s)` to the raw body before SSE decoding, so a heartbeat comment, which the decoder never emits, still counts as life. Calls have no size cap: neither a call nor its answer shares the stream.
 15. **The 32-call limit is per link and held until the answer is sent**, so a slow 3 MiB answer still counts. A busy answer is an `isError` result (`orchestration_error`, not final), not a `ClusterError`, because it comes from the main host over the same `host-reply` path as any answer.
 
 Known limits worth a reviewer's eye: the main host mirrors `cluster_members` in memory and rereads it every 30 s (only rows; status never polls), so a `t3 cluster add` run beside a live server reaches the proxy and gets its link within 30 s; `reload` publishes only when the rows changed, so clients hear no repeats. A call the main host started before its link dropped may still have run on the target although the member's agent heard "unreachable"; Plan 4 keeps `clientRequestId` stable so the agent's retry lands once.

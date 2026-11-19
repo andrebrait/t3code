@@ -31,6 +31,7 @@ import {
   createAssetEnvironmentAtoms,
   createProjectFaviconUrlAtomFamily,
   makeRevisionedAssetUrlFamily,
+  resolveAssetUrl,
 } from "./assets.ts";
 
 describe("project favicon URL cache", () => {
@@ -477,4 +478,13 @@ describe("makeRevisionedAssetUrlFamily", () => {
     expect(url("mutation-4")).toBe("/a/5");
     edited();
   });
+});
+
+it("keeps a cluster member's path prefix on root-relative asset URLs", () => {
+  expect(
+    resolveAssetUrl("https://studio.example.test/cluster/environment-box", "/api/assets/t/a.png"),
+  ).toBe("https://studio.example.test/cluster/environment-box/api/assets/t/a.png");
+  expect(resolveAssetUrl("https://studio.example.test/", "/api/assets/t/a.png")).toBe(
+    "https://studio.example.test/api/assets/t/a.png",
+  );
 });

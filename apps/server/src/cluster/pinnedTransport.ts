@@ -21,7 +21,7 @@ export interface PinnedAgent {
 }
 
 const pinnedConnector =
-  (pin: string): Undici.buildConnector.connector =>
+  (undici: typeof Undici, pin: string, connectTimeoutMs: number): Undici.buildConnector.connector =>
   (options, callback) => {
     let settled = false;
     const host = options.hostname.replace(/^\[(.*)\]$/, "$1");
@@ -33,20 +33,28 @@ const pinnedConnector =
       rejectUnauthorized: false,
       ALPNProtocols: ["http/1.1"],
     });
+    // undici applies its connect timeout only inside its own connector.
+    socket.setTimeout(connectTimeoutMs, () => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      callback(new undici.errors.ConnectTimeoutError(), null);
+    });
     socket.once("secureConnect", () => {
       if (settled) return;
       settled = true;
-      const presented = normalizeCertificateFingerprint(
-        socket.getPeerCertificate().fingerprint256 ?? "",
-      );
-      if (presented === pin) return callback(null, socket);
+      socket.setTimeout(0);
+      // Typed as string, but absent when the peer sent no certificate.
+      const raw: string | undefined = socket.getPeerCertificate().fingerprint256;
+      const presented = raw === undefined ? null : normalizeCertificateFingerprint(raw);
+      if (presented !== null && presented === pin) return callback(null, socket);
       socket.destroy();
       callback(
         Object.assign(
-          new Error(`The certificate presented (${presented}) is not the pinned one.`),
-          {
-            code: PIN_MISMATCH,
-          },
+          new Error(
+            `The member's certificate changed: it presented ${presented ?? "none"}, not the pinned one. Invite the member again.`,
+          ),
+          { code: PIN_MISMATCH },
         ),
         null,
       );
@@ -59,13 +67,22 @@ const pinnedConnector =
   };
 
 /** One connection pool to members; with a pin, nothing is sent until the certificate matches. */
-export const makeAgent = Effect.fn("pinnedTransport.makeAgent")(function* (pin: string | null) {
+export const makeAgent = Effect.fn("pinnedTransport.makeAgent")(function* (
+  pin: string | null,
+  connectTimeoutMs = 10_000,
+) {
   const undici = requireUndici("undici") as typeof Undici;
   const dispatcher = yield* Effect.acquireRelease(
     Effect.sync(() =>
       pin === null
         ? new undici.Agent()
-        : new undici.Agent({ connect: pinnedConnector(normalizeCertificateFingerprint(pin)) }),
+        : new undici.Agent({
+            connect: pinnedConnector(
+              undici,
+              normalizeCertificateFingerprint(pin),
+              connectTimeoutMs,
+            ),
+          }),
     ),
     (agent) => Effect.promise(() => agent.destroy()),
   );
@@ -82,10 +99,7 @@ export const makeAgent = Effect.fn("pinnedTransport.makeAgent")(function* (pin: 
       ...(protocols === undefined ? {} : { protocols }),
       ...(headers === undefined ? {} : { headers }),
     };
-    const socket = new undici.WebSocket(url, init) as unknown as globalThis.WebSocket;
-    // An unhandled error on a socket still connecting would exit the server.
-    socket.addEventListener("error", () => undefined);
-    return socket;
+    return new undici.WebSocket(url, init) as unknown as globalThis.WebSocket;
   };
   return { httpClient, webSocket } satisfies PinnedAgent;
 });

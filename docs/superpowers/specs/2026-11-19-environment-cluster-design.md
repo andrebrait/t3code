@@ -61,34 +61,38 @@ so no long-lived multiplexed link or resend protocol is needed.
 
 ## Control link
 
-- The main host keeps one long-lived WebSocket RPC session to each member
-  (its `cluster-host` session, over pinned HTTPS or the SSH forward),
-  reconnecting with backoff.
-- Member status comes from the link: connected is `online`, a protocol
-  mismatch on connect is `incompatible`, `401` is `revoked`, otherwise
-  `offline`. No polling loop.
-- Members never need an address for the main host. Calls from a member to
-  the main host ride the link in reverse: the member exposes a
-  `cluster.hostChannel` subscription carrying requests, and the main host
-  answers each with its own HTTP request,
-  `POST /api/cluster/host-reply` (`cluster-host` credential).
-- A WebSocket is one ordered stream, so the link carries only small control
-  messages: requests are capped at 256 KiB and fail clearly beyond that;
-  replies and attachments travel as separate HTTP requests (pooled HTTPS
-  connections or separate SSH channels), so a large reply never delays
-  another. At most 32 requests per member are in flight; beyond that a call
-  fails with "cluster host busy".
+- The main host keeps one long-lived SSE stream open on each member,
+  `GET /api/cluster/events` (its `cluster-host` session, over pinned HTTPS
+  or the SSH forward), reconnecting with backoff. The member sends a
+  heartbeat comment every 15 s so idle edges (T3 Connect drops idle requests
+  after about 100 s) keep it open and a dead link is noticed.
+- Member status comes from the link: stream open after its first `ready`
+  event is `online`, a protocol mismatch on connect is `incompatible`, `401`
+  is `revoked`, otherwise (drop or missed heartbeats) `offline`. No polling
+  loop.
+- Members never need an address for the main host; every connection is
+  opened by the main host. The stream carries only doorbells, never
+  payloads, because a stream is ordered and one large event would delay
+  every event behind it:
+  1. A member agent's call is stored on the member and announced as event
+     `request {requestId}`.
+  2. The main host fetches it: `GET /api/cluster/host-request/<requestId>`.
+  3. The main host runs it and answers: `POST /api/cluster/host-reply`.
+  Each fetch and reply is its own HTTP request (pooled HTTPS connections or
+  separate SSH channels), so payloads of any size never block each other.
+- At most 32 requests per member are in flight on the main host; beyond that
+  a call fails with "cluster host busy".
+- Requests pending when the link drops fail with "cluster host unreachable"
+  and are never delivered twice.
 
 ## Agents
 
 - On the main host, MCP tools with an `environmentId` target forward to the
   member's `/mcp` using the `cluster-host` credential.
-- A member agent targeting another environment puts the call on
-  `cluster.hostChannel`; the main host runs it (forwarding to the target
-  member) and replies. All cross-member traffic hairpins through the main
-  host. No separate member-to-main credential exists.
-- Requests queued while the link is down fail with "cluster host
-  unreachable" and are never delivered twice.
+- A member agent targeting another environment goes through the control
+  link doorbell; the main host runs it (forwarding to the target member) and
+  replies. All cross-member traffic hairpins through the main host. No
+  separate member-to-main credential exists.
 - The existing forwarded-wait limits (≤ 50 s) apply.
 
 ## Membership and storage

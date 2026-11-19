@@ -322,7 +322,7 @@ const ThreadInterruptTool = Tool.make("t3_thread_interrupt", {
 
 const EnvironmentLinksTool = Tool.make("t3_environment_links", {
   description:
-    "List linked environments (the user's other machines) and whether each answers now. Pass one's `environmentId` to a tool to act there; `delegate_task` takes `target.environmentId`. Expired: link it again with `t3_environment_link`.",
+    "List the user's other machines and whether each answers now: linked environments, or `cluster` when this one is in a cluster. Pass one's `environmentId` to a tool to act there; `delegate_task` takes `target.environmentId`. An expired link: link it again with `t3_environment_link`.",
   success: OrchestratorMcpEnvironmentLinksResult,
   failure: OrchestratorMcpFailure,
   failureMode: "return",
@@ -332,7 +332,7 @@ const EnvironmentLinksTool = Tool.make("t3_environment_links", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWhileLinksOff);
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWithoutOtherEnvironments);
 
 const EnvironmentLinkTool = Tool.make("t3_environment_link", {
   description:

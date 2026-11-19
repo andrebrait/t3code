@@ -1,6 +1,8 @@
 import {
   type ClusterMember,
   ClusterInvite,
+  ClusterRemoveMemberResult,
+  EnvironmentId,
   ClusterMember as ClusterMemberSchema,
   ClusterStatus,
 } from "@t3tools/contracts";
@@ -77,6 +79,7 @@ const encodeInviteJson = Schema.encodeSync(
     }),
   ),
 );
+const encodeRemoveJson = Schema.encodeSync(Schema.fromJsonString(ClusterRemoveMemberResult));
 const encodeList = Schema.encodeSync(
   Schema.fromJsonString(
     Schema.Struct({ status: ClusterStatus, members: Schema.Array(ClusterMemberSchema) }),
@@ -85,9 +88,9 @@ const encodeList = Schema.encodeSync(
 
 const formatList = (status: ClusterStatus, members: ReadonlyArray<ClusterMember>) =>
   status.host !== null
-    ? `Member of the cluster hosted by ${status.host.label} (${status.host.environmentId}).\n`
+    ? `Member of the cluster hosted by ${status.host.label} (${status.host.environmentId}).`
     : members.length === 0
-      ? "Standalone: this environment has no cluster members.\n"
+      ? "Standalone: this environment has no cluster members."
       : `${members
           .map((member) =>
             [
@@ -101,7 +104,7 @@ const formatList = (status: ClusterStatus, members: ReadonlyArray<ClusterMember>
               .join("\t")
               .trimEnd(),
           )
-          .join("\n")}\n`;
+          .join("\n")}`;
 
 const inviteCommand = Command.make("invite", {
   ...authLocationFlags,
@@ -128,8 +131,8 @@ const inviteCommand = Command.make("invite", {
                 flags.json
                   ? encodeInviteJson({ ...invite, credential: invite.code })
                   : invite.joinString !== null
-                    ? `Join string (expires ${DateTime.formatIso(invite.expiresAt)}):\n${invite.joinString}\n`
-                    : `Code: ${invite.code}\nCertificate SHA-256: ${invite.fingerprint}\nPass --url to print a join string.\n`,
+                    ? `Join string (expires ${DateTime.formatIso(invite.expiresAt)}):\n${invite.joinString}`
+                    : `Code: ${invite.code}\nCertificate SHA-256: ${invite.fingerprint}\nPass --url to print a join string.`,
               ),
             ),
           ),
@@ -156,7 +159,7 @@ const addCommand = Command.make("add", {
         .pipe(
           Effect.flatMap((member) =>
             Console.log(
-              `Added ${member.label} (${member.environmentId}) over ${member.transport}.\n`,
+              `Added ${member.label} (${member.environmentId}) over ${member.transport}.`,
             ),
           ),
         ),
@@ -172,11 +175,44 @@ const leaveCommand = Command.make("leave", { ...authLocationFlags }).pipe(
         Effect.flatMap(({ left }) =>
           Console.log(
             left
-              ? "Left the cluster. Pair clients with this environment as usual.\n"
-              : "This environment is not a member of a cluster.\n",
+              ? "Left the cluster. Pair clients with this environment as usual."
+              : "This environment is not a member of a cluster.",
           ),
         ),
       ),
+    ),
+  ),
+);
+
+const removeCommand = Command.make("remove", {
+  ...authLocationFlags,
+  environmentId: Argument.String("environmentId").pipe(
+    Argument.withDescription("The member's environment id, as shown by `t3 cluster list`."),
+    Argument.withSchema(EnvironmentId),
+  ),
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription("Remove a member from this machine's cluster."),
+  Command.withHandler((flags) =>
+    runWithCluster(
+      flags,
+      (cluster) =>
+        cluster
+          .removeMember(flags.environmentId)
+          .pipe(
+            Effect.flatMap((result) =>
+              Console.log(
+                flags.json
+                  ? encodeRemoveJson(result)
+                  : !result.removed
+                    ? "No such member."
+                    : result.memberNotified
+                      ? "Removed the member."
+                      : "Removed the member, but it could not be told. Run `t3 cluster leave` there to finish.",
+              ),
+            ),
+          ),
+      { quietLogs: flags.json },
     ),
   ),
 );
@@ -201,5 +237,5 @@ const listCommand = Command.make("list", { ...authLocationFlags, json: jsonFlag 
 
 export const clusterCommand = Command.make("cluster").pipe(
   Command.withDescription("Group environments under one main host."),
-  Command.withSubcommands([inviteCommand, addCommand, leaveCommand, listCommand]),
+  Command.withSubcommands([inviteCommand, addCommand, leaveCommand, removeCommand, listCommand]),
 );

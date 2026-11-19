@@ -5,7 +5,7 @@ import * as NodeHttps from "node:https";
 import * as NodeNet from "node:net";
 import * as NodeTls from "node:tls";
 import { generate } from "selfsigned";
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { routeByFirstByte, serveTlsOnSamePort } from "./tlsSniff.ts";
 
@@ -90,6 +90,11 @@ describe("serveTlsOnSamePort", () => {
 
 describe("serveTlsOnSamePort shutdown", () => {
   it("closes without waiting on a client that never sent a byte", async () => {
+    using _noTimer = vi.spyOn(NodeNet.Socket.prototype, "setTimeout").mockImplementation(function (
+      this: NodeNet.Socket,
+    ) {
+      return this;
+    });
     const server = serveTlsOnSamePort(NodeHttp.createServer(), await secureContext());
     const port = await listen(server);
     const connected = Promise.withResolvers<void>();

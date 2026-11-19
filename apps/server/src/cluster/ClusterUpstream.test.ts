@@ -30,8 +30,8 @@ it.effect("refuses member addresses the network could read or spoof", () =>
   Effect.gen(function* () {
     const upstream = yield* ClusterUpstream.ClusterUpstream;
     const targets: ReadonlyArray<ClusterUpstream.UpstreamTarget> = [
-      { transport: "https", url: "https://10.0.0.5:3773", certSha256: null },
       { transport: "https", url: "http://10.0.0.5:3773", certSha256: "0".repeat(64) },
+      { transport: "https", url: "http://10.0.0.5:3773", certSha256: null },
       { transport: "https", url: "https://10.0.0.5:3773", certSha256: "not-a-pin" },
       { transport: "ssh", sshTarget: "not a target" },
     ];
@@ -45,6 +45,14 @@ it.effect("refuses member addresses the network could read or spoof", () =>
       certSha256: null,
     });
     assert.equal(local.origin, "http://127.0.0.1:3773");
+    // Without a pin, the standard CA-validated pool: a tunnel or Tailscale Serve certificate.
+    const unpinned = yield* upstream.connect({
+      transport: "https",
+      url: "https://box.tail1234.ts.net",
+      certSha256: null,
+    });
+    assert.equal(unpinned.origin, "https://box.tail1234.ts.net");
+    assert.strictEqual(unpinned.httpClient, local.httpClient);
     const lower = yield* upstream.connect({
       transport: "https",
       url: "https://10.0.0.5:3773",

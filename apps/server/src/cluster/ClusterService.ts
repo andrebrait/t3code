@@ -160,7 +160,7 @@ const reachError = (origin: string) => (error: unknown) =>
           cause: error,
         });
 
-interface MemberConnection {
+export interface MemberConnection {
   readonly upstream: ClusterUpstream.Upstream;
   readonly token: string;
   readonly member: ClusterMember;
@@ -181,7 +181,7 @@ const ROWS_RELOAD_INTERVAL = Duration.seconds(30);
 // A link that drops sooner than this after `ready` is flapping, so it reconnects with backoff.
 const LINK_MIN_LIFE = Duration.seconds(5);
 // Forwarded waits run at most 50 s; a call unanswered this long lost its answer.
-const HOST_CALL_TIMEOUT = Duration.minutes(5);
+export const HOST_CALL_TIMEOUT = Duration.minutes(5);
 // Answers are idempotent (a repeat finds nothing and gets 404), so a lost POST is retried.
 const REPLY_RETRY = { times: 3, schedule: Schedule.exponential("250 millis") };
 
@@ -201,7 +201,7 @@ export type ClusterHostServe = (
 ) => Effect.Effect<ClusterHostResult>;
 
 /** What a member's agents hear while its control link is down. */
-const clusterHostUnreachable = (hostLabel: string) =>
+export const clusterHostUnreachable = (hostLabel: string) =>
   new ClusterError({
     reason: "unreachable",
     message: `Cluster host unreachable: "${hostLabel}" is not connected, so other environments in the cluster cannot be reached. Work here continues.`,

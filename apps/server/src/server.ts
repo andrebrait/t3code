@@ -185,6 +185,7 @@ import * as ClusterProxy from "./cluster/ClusterProxy.ts";
 import * as ClusterHttp from "./cluster/http.ts";
 import * as ClusterService from "./cluster/ClusterService.ts";
 import * as ClusterUpstream from "./cluster/ClusterUpstream.ts";
+import * as ClusterHostRequests from "./mcp/ClusterHostRequests.ts";
 import * as GuestHttp from "./guest/http.ts";
 import * as CloudLink from "./cloud/CloudLink.ts";
 import * as ConnectReachability from "./cloud/ConnectReachability.ts";
@@ -886,20 +887,26 @@ const layerMakeRoutes = Layer.mergeAll(
     Ws.layer,
     speechStreamRouteLayer,
   ),
-  McpHttpServer.layer.pipe(
-    Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
-    Layer.provide(McpOAuth.layerMcpClientAuthenticator),
-    Layer.provide(ProjectionStoreV2.layer),
+  // One control link to each member; their agents' calls run here with the same /mcp tools.
+  Layer.effectDiscard(
+    Effect.gen(function* () {
+      const cluster = yield* ClusterService.ClusterService;
+      const environment = yield* ServerEnvironment.ServerEnvironment;
+      const serve = yield* ClusterHostRequests.make(yield* environment.getEnvironmentId);
+      yield* cluster.start(serve);
+    }),
+  ).pipe(
+    Layer.provideMerge(
+      McpHttpServer.layer.pipe(
+        Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
+        Layer.provide(McpOAuth.layerMcpClientAuthenticator),
+        Layer.provide(ProjectionStoreV2.layer),
+      ),
+    ),
   ),
   // Follows delegated tasks running in linked environments, including after a restart.
   Layer.effectDiscard(
     RemoteDelegation.RemoteDelegation.pipe(Effect.flatMap((remote) => remote.start())),
-  ),
-  // One control link to each member while the server runs; members' agent calls ride it back.
-  Layer.effectDiscard(
-    ClusterService.ClusterService.pipe(
-      Effect.flatMap((cluster) => cluster.start(ClusterService.refuseHostRequests)),
-    ),
   ),
 ).pipe(
   Layer.provide(

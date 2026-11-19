@@ -239,13 +239,17 @@ const withModeLimit = (
 
 const decodeSenderThread = Schema.decodeUnknownOption(OrchestrationV2LinkedSender);
 
-/** Records the thread a linked environment calls for; a malformed header only loses the name. */
+/** Records the thread another T3 Code environment calls for; a malformed header only loses the name. */
 const withSenderThread = (
   invocation: McpInvocationContext.McpInvocationScope,
   request: HttpServerRequest.HttpServerRequest,
 ): McpInvocationContext.McpInvocationScope => {
   const header = request.headers[McpInvocationContext.SENDER_THREAD_HEADER];
-  if (header === undefined || invocation.client?.linked !== true) return invocation;
+  if (
+    header === undefined ||
+    (invocation.client?.linked !== true && invocation.client?.cluster !== true)
+  )
+    return invocation;
   const [environmentId, threadId, title, ...rest] = header.trim().split("/");
   if (environmentId === undefined || threadId === undefined || title === undefined)
     return invocation;
@@ -359,7 +363,13 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
       limited.thread === undefined
         ? undefined
         : yield* Cache.get(forgeOfThread, limited.thread.threadId);
-    return { ...limited, linkedEnvironments, origin, ...(forge === undefined ? {} : { forge }) };
+    return {
+      ...limited,
+      linkedEnvironments,
+      clustered: yield* clustered,
+      origin,
+      ...(forge === undefined ? {} : { forge }),
+    };
   });
   // Untraced: a span here would wrap the tool call; the HTTP server span already covers it.
   return Effect.fnUntraced(function* (httpEffect) {

@@ -35,7 +35,7 @@ export interface PeerCallLimits {
 
 /** Where a call goes and what the agent hears when it fails there. */
 export interface McpRoute {
-  /** Calls with one key share one MCP session. */
+  /** Calls with one key share one MCP session, so keys must be unique across every route kind. */
   readonly key: string;
   /** `/mcp` is appended. */
   readonly origin: string;
@@ -130,7 +130,6 @@ const responseJson = (contentType: string | undefined, text: string) =>
 /**
  * A tool's answer, from `/mcp` or a cluster's control link. A refusal is `Result.fail` with the
  * other side's own code, so the agent sees why; an answer this version cannot read fails.
- * @public
  */
 export const decodeToolResult = <S extends Schema.Decoder<unknown>>(
   answer: { readonly isError: boolean; readonly text: string },

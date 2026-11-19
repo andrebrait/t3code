@@ -181,6 +181,7 @@ import {
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as EnvironmentAuthPolicy from "./auth/EnvironmentAuthPolicy.ts";
 import * as CloudHttp from "./cloud/http.ts";
+import * as ClusterProxy from "./cluster/ClusterProxy.ts";
 import * as ClusterHttp from "./cluster/http.ts";
 import * as ClusterService from "./cluster/ClusterService.ts";
 import * as ClusterUpstream from "./cluster/ClusterUpstream.ts";
@@ -878,6 +879,7 @@ const layerMakeRoutes = Layer.mergeAll(
     GuestHttp.layer,
     DeviceHubProxy.layer,
     ClusterHttp.layerEvents,
+    ClusterProxy.layer,
     ServerBrowserStream.routeLayer,
     PreviewTunnel.routeLayer,
     ServerHttp.layerStaticAndDevRoute,

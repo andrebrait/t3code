@@ -638,7 +638,9 @@ export class EnvironmentAuth extends Context.Service<
       use: AuthWebSocketTicketUse,
     ) => Effect.Effect<AuthenticatedSession, ServerAuthCredentialError | ServerAuthInternalError>;
     readonly issueWebSocketTicket: (
-      session: Pick<AuthenticatedSession, "sessionId" | "proofKeyThumbprint">,
+      session: Pick<AuthenticatedSession, "sessionId" | "proofKeyThumbprint" | "subject"> & {
+        readonly scopes: Iterable<AuthEnvironmentScope>;
+      },
       input?: { readonly use?: AuthWebSocketTicketUse },
     ) => Effect.Effect<AuthWebSocketTicketResult, ServerAuthInternalError>;
     readonly issueStartupPairingUrl: (
@@ -1292,6 +1294,7 @@ export const make = Effect.gen(function* () {
     proofKeyThumbprint,
     requireApproval,
   }: Parameters<EnvironmentAuth["Service"]["issueConnectCredential"]>[0]) {
+    yield* clusterRole.refuseIfMember("Pairing a client");
     const mustWait =
       requireApproval &&
       !(yield* bootstrapCredentials
@@ -1547,6 +1550,8 @@ export const make = Effect.gen(function* () {
         ...(input?.use === "rpc" && session.proofKeyThumbprint
           ? { proofKeyThumbprint: session.proofKeyThumbprint }
           : {}),
+        // The upgrade request carries no cap header, so the ticket keeps the cap.
+        ...(session.subject === CLUSTER_HOST_SUBJECT ? { scopes: [...session.scopes] } : {}),
       })
       .pipe(
         Effect.mapError((cause) => new ServerAuthWebSocketTokenIssueError({ cause })),
@@ -1733,7 +1738,10 @@ export const make = Effect.gen(function* () {
     "EnvironmentAuth.consumeClusterInvite",
   )(function* (code, input) {
     const grant = yield* bootstrapCredentials
-      .consume(code.trim(), { allowedSubject: CLUSTER_MEMBER_PAIRING_SUBJECT })
+      .consume(code.trim(), {
+        allowedSubject: CLUSTER_MEMBER_PAIRING_SUBJECT,
+        exactSubject: CLUSTER_MEMBER_PAIRING_SUBJECT,
+      })
       .pipe(Effect.mapError(toBootstrapExchangeError));
     if (grant.subject !== CLUSTER_MEMBER_PAIRING_SUBJECT) {
       return yield* new ServerAuthInvalidCredentialError({

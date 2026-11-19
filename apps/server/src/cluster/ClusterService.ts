@@ -22,8 +22,8 @@ import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
-import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as PeerLinks from "../peer/PeerLinks.ts";
 import { CLUSTER_MEMBER_PAIRING_SUBJECT } from "../persistence/AuthPairingLinks.ts";
 import type * as ManagedLimits from "../policy/managedLimits.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -84,7 +84,7 @@ const make = Effect.gen(function* () {
   const auth = yield* EnvironmentAuth.EnvironmentAuth;
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
-  const secrets = yield* ServerSecretStore.ServerSecretStore;
+  const peerLinks = yield* PeerLinks.PeerLinks;
   const tls = yield* ServerTls.ServerTls;
   const role = yield* ClusterRole.ClusterRole;
   // One join or leave at a time, so two hosts racing for this member cannot both win.
@@ -157,33 +157,43 @@ const make = Effect.gen(function* () {
     },
   );
 
-  /** Revokes every session but the host's and this machine's, and every unspent code. */
-  const keepOnlyHostAndLoopback = Effect.fn("ClusterService.keepOnlyHostAndLoopback")(function* (
-    hostSessionId: AuthSessionId,
-  ) {
-    // Loopback MCP sessions stay; peer-link ones are refused at /mcp once clustered.
-    const sessions = yield* auth.listSessions();
-    const revoked = sessions.filter(
-      (session) =>
-        session.sessionId !== hostSessionId &&
-        (session.subject === EnvironmentAuth.CLUSTER_HOST_SUBJECT ||
-          session.subject === EnvironmentAuth.CLOUD_CONNECT_SUBJECT ||
-          !isLoopbackClient(session.client.ipAddress)),
-    );
-    yield* Effect.forEach(revoked, (session) => auth.revokeSession(session.sessionId), {
-      discard: true,
-    });
-    const links = yield* auth.listPairingLinks({ excludeSubjects: [], includePurposeBound: true });
-    yield* Effect.forEach(links, (link) => auth.revokePairingLink(link.id), { discard: true });
-  }, Effect.mapError(storageError));
+  /**
+   * Revokes every session but the host's and this machine's, every unspent code and peer link.
+   * Idempotent; runs after the join commits, so revocations publish committed state, and on start.
+   */
+  const keepOnlyHostAndLoopback = Effect.fn("ClusterService.keepOnlyHostAndLoopback")(
+    function* (hostSessionId: AuthSessionId) {
+      // Loopback MCP sessions stay; peer-link ones are refused at /mcp once clustered.
+      const sessions = yield* auth.listSessions();
+      const revoked = sessions.filter(
+        (session) =>
+          session.sessionId !== hostSessionId &&
+          (session.subject === EnvironmentAuth.CLUSTER_HOST_SUBJECT ||
+            session.subject === EnvironmentAuth.CLOUD_CONNECT_SUBJECT ||
+            !isLoopbackClient(session.client.ipAddress)),
+      );
+      yield* Effect.forEach(revoked, (session) => auth.revokeSession(session.sessionId), {
+        discard: true,
+      });
+      const links = yield* auth.listPairingLinks({
+        excludeSubjects: [],
+        includePurposeBound: true,
+      });
+      yield* Effect.forEach(links, (link) => auth.revokePairingLink(link.id), { discard: true });
+      yield* peerLinks.unlinkAll;
+    },
+    Effect.catch((cause) =>
+      Effect.logWarning("Could not revoke clients after joining a cluster.", { cause }),
+    ),
+  );
 
   const acceptJoin: ClusterService["Service"]["acceptJoin"] = Effect.fn(
     "ClusterService.acceptJoin",
   )(
     function* (input, client) {
       const self = yield* environment.getDescriptor;
-      // One transaction: a refusal or failure rolls back the spent invite and every revocation.
-      const joined = yield* sql
+      // One transaction: a refusal or failure rolls back the spent invite and the host session.
+      const session = yield* sql
         .withTransaction(
           Effect.gen(function* () {
             // The code is checked first, so an unauthenticated caller learns nothing about the role.
@@ -228,27 +238,14 @@ const make = Effect.gen(function* () {
               host_label = excluded.host_label,
               host_session_id = excluded.host_session_id
           `.pipe(Effect.mapError(storageError));
-            yield* keepOnlyHostAndLoopback(session.sessionId);
-            // PeerLinks' own rows, deleted here to share the transaction; secrets go after commit.
-            const unlinked = yield* sql<{ secret_name: string }>`
-            DELETE FROM peer_environment_links RETURNING secret_name
-          `.pipe(Effect.mapError(storageError));
-            return { session, unlinked };
+            return session;
           }),
         )
         .pipe(
           Effect.mapError((cause) => (cause._tag === "ClusterError" ? cause : storageError(cause))),
         );
-      yield* Effect.forEach(joined.unlinked, (row) => secrets.remove(row.secret_name), {
-        discard: true,
-      }).pipe(
-        Effect.catch((cause) =>
-          Effect.logWarning("Could not remove a peer link's secret after joining a cluster.", {
-            cause,
-          }),
-        ),
-      );
-      return { environmentId: self.environmentId, label: self.label, token: joined.session.token };
+      yield* keepOnlyHostAndLoopback(session.sessionId);
+      return { environmentId: self.environmentId, label: self.label, token: session.token };
     },
     (effect) => memberLock.withPermits(1)(effect),
   );
@@ -264,6 +261,12 @@ const make = Effect.gen(function* () {
     );
     return { left: true };
   }).pipe(memberLock.withPermits(1), Effect.withSpan("ClusterService.leave"));
+
+  // A member that stopped between a join's commit and its revocations finishes them here.
+  const membership = yield* readMembership.pipe(Effect.orElseSucceed(() => null));
+  if (membership !== null) {
+    yield* keepOnlyHostAndLoopback(AuthSessionId.make(membership.host_session_id));
+  }
 
   return ClusterService.of({ status, invite, acceptJoin, leave });
 });

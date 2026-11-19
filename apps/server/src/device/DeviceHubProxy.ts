@@ -1,3 +1,4 @@
+import { forwardedRequestHeaders, forwardedResponseHeaders } from "../proxyHeaders.ts";
 import { requestUrl } from "../requestUrl.ts";
 // Loopback-only hubs expose shell execution or unauthenticated actions.
 // Proxy with environment read scope for streams and operate scope for input and tuning.
@@ -53,32 +54,11 @@ const ALLOWED_WS_PATHS: ReadonlyArray<RegExp> = [
   /^\/vendor\/serve-emu\/ws$/,
 ];
 
-const DROPPED_REQUEST_HEADERS = new Set([
-  "host",
-  "connection",
-  "upgrade",
-  "sec-websocket-key",
-  "sec-websocket-version",
-  "sec-websocket-extensions",
-  "sec-websocket-protocol",
-  "cookie",
-  "authorization",
-  "dpop",
-  "content-length",
-  "accept-encoding",
-  // The client's HTTPS hop makes the hub reject our loopback Origin over T3 Connect.
-  "x-forwarded-proto",
-]);
-
 const isWebSocketUpgrade = (request: HttpServerRequest.HttpServerRequest) =>
   request.headers.upgrade?.toLowerCase() === "websocket";
 
 const forwardHeaders = (request: HttpServerRequest.HttpServerRequest, origin: string) => {
-  const headers: Record<string, string> = {};
-  for (const [name, value] of Object.entries(request.headers)) {
-    if (DROPPED_REQUEST_HEADERS.has(name) || value === undefined) continue;
-    headers[name] = value;
-  }
+  const headers = forwardedRequestHeaders(request.headers);
   // serve-emu refuses mutations whose Origin differs from the request origin.
   if (request.headers.origin !== undefined) headers.origin = origin;
   return headers;
@@ -161,19 +141,8 @@ const proxyHttp = Effect.fn("DeviceHubProxy.proxyHttp")(function* (
         }),
   );
   const response = yield* httpClient.execute(upstreamRequest);
-  const headers: Record<string, string> = {};
-  for (const [name, value] of Object.entries(response.headers)) {
-    // A cookie from an upstream such as an Expo Simulators session's preview host would land on T3's origin.
-    if (
-      name === "content-encoding" ||
-      name === "transfer-encoding" ||
-      name === "connection" ||
-      name === "set-cookie"
-    ) {
-      continue;
-    }
-    if (value !== undefined) headers[name] = value;
-  }
+  // A cookie from an upstream such as an Expo Simulators session's preview host would land on T3's origin.
+  const headers = forwardedResponseHeaders(response.headers);
   // Long-lived MJPEG and AVCC responses must not be buffered by compression.
   headers["cache-control"] = "no-store, no-transform";
   const body = headers["content-type"]?.startsWith("multipart/x-mixed-replace")

@@ -455,6 +455,10 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  // An entry updated in place keeps its connection, so followers keep their streams.
+  const sameConnection = new WeakMap<ConnectionCatalogEntry, ConnectionCatalogEntry>();
+  const connectionOf = (entry: ConnectionCatalogEntry) => sameConnection.get(entry) ?? entry;
+
   const followStream: EnvironmentRegistry["Service"]["followStream"] = <A, E, R>(
     environmentId: EnvironmentId,
     stream: Stream.Stream<A, E, R>,
@@ -463,7 +467,9 @@ export const make = Effect.gen(function* () {
       Stream.fromEffect(SubscriptionRef.get(entries)),
       SubscriptionRef.changes(entries),
     ).pipe(
-      Stream.map((current) => Option.fromUndefinedOr(current.get(environmentId))),
+      Stream.map((current) =>
+        Option.map(Option.fromUndefinedOr(current.get(environmentId)), connectionOf),
+      ),
       Stream.changesWith(
         (previous, current) => Option.getOrNull(previous) === Option.getOrNull(current),
       ),
@@ -969,6 +975,7 @@ export const make = Effect.gen(function* () {
           if (Equal.equals(previous, next)) return;
           // The connection depends only on the member and host ids, so a label or status change
           // updates the lease in place and keeps the member's session and streams.
+          sameConnection.set(next, connectionOf(previous));
           yield* SubscriptionRef.update(serviceScopes, (current) =>
             new Map(current).set(environmentId, { ...lease, entry: next }),
           );

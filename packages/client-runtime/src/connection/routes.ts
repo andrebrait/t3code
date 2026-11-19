@@ -203,7 +203,7 @@ export function connectionRouteLabel(route: ConnectionRoute): string {
       return T3_CONNECT_NAME;
     case "cluster":
       return route.target._tag === "ClusterConnectionTarget"
-        ? `via ${route.target.hostLabel}`
+        ? msg("via {host}", { host: route.target.hostLabel })
         : msg("Cluster");
     case "loopback":
       return msg("This device");
@@ -235,9 +235,7 @@ export function connectionRouteLabelText(
     case "public":
       return routeHostname(route) ?? resolve(msg("Remote link"));
     case "cluster":
-      return route.target._tag === "ClusterConnectionTarget"
-        ? resolve(msg("via {host}", { host: route.target.hostLabel }))
-        : connectionRouteLabel(route);
+      return resolve(connectionRouteLabel(route));
     default:
       return connectionRouteLabel(route);
   }

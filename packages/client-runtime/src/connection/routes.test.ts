@@ -13,6 +13,7 @@ import {
   connectionRouteId,
   connectionRouteKind,
   connectionRouteLabel,
+  connectionRouteLabelText,
   credentialConnectionId,
   insertRoute,
   entryWithRoutes,
@@ -484,6 +485,6 @@ it("names a cluster member's route after its main host and gives it no address",
   };
   expect(connectionRouteId(route.target)).toBe("cluster:environment-studio");
   expect(connectionRouteKind(route)).toBe("cluster");
-  expect(connectionRouteLabel(route)).toBe("via Studio");
+  expect(connectionRouteLabelText(route)).toBe("via Studio");
   expect(routeHttpBaseUrl(route)).toBeNull();
 });

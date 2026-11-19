@@ -6,6 +6,7 @@ import {
   ORCHESTRATION_PROTOCOL_VERSION,
   type ExecutionEnvironmentDescriptor,
   type ServerConfig,
+  WS_METHODS,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
@@ -68,7 +69,8 @@ import {
 import * as RpcSession from "../rpc/session.ts";
 import * as EnvironmentSupervisor from "./supervisor.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
-import { watchDiscoveredCompatibility } from "./layer.ts";
+import { watchClusterMembers, watchDiscoveredCompatibility } from "./layer.ts";
+import * as ClusterHosts from "./clusterHosts.ts";
 import * as RelayEnvironmentDiscovery from "../relay/discovery.ts";
 import type { RelayEnvironmentStatusResponse } from "@t3tools/contracts/relay";
 import { runDesktopCommitWithReconnectObserver } from "../state/server.ts";
@@ -171,6 +173,8 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     ) => Effect.Effect<ConnectionBlockedError | undefined>;
     readonly initialDisabled?: ReadonlyArray<EnvironmentId>;
     readonly directEndpoints?: ServerConfig["directEndpoints"];
+    readonly descriptor?: (environmentId: EnvironmentId) => ExecutionEnvironmentDescriptor;
+    readonly clusterMembers?: Stream.Stream<ReadonlyArray<ClusterMember>>;
   },
 ) {
   const storedTargets = yield* Ref.make<ReadonlyArray<ConnectionTarget>>(initialTargets);
@@ -402,6 +406,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
             ? { _tag: "Bearer", token: credential.value.token }
             : null,
         target,
+        ...(options?.descriptor ? { descriptor: options.descriptor(target.environmentId) } : {}),
       };
       if (options?.prepareError) return yield* options.prepareError;
       const heldError = options?.beforePrepareRoute
@@ -416,7 +421,9 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
       yield* Ref.update(sessions, (current) => [...current, { closed }]);
       const session = yield* Effect.acquireRelease(
         Effect.succeed({
-          client: {} as RpcSession.RpcSession["client"],
+          client: {
+            [WS_METHODS.clusterMembers]: () => options?.clusterMembers ?? Stream.never,
+          } as unknown as RpcSession.RpcSession["client"],
           initialConfig:
             options?.directEndpoints === undefined
               ? Effect.die(new Error("Config is not used by registry tests."))
@@ -2326,6 +2333,61 @@ describe("EnvironmentRegistry cluster members", () => {
         );
         expect(yield* Ref.get(harness.cacheClears)).not.toContain(MEMBER_ID);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("follows a capable main host's member list and drops it when the host goes", () =>
+    Effect.gen(function* () {
+      const members = yield* SubscriptionRef.make<ReadonlyArray<ClusterMember>>([
+        clusterMember(MEMBER_ID),
+      ]);
+      const harness = yield* makeHarness([TARGET], [], [], {
+        descriptor: (environmentId) => ({
+          environmentId,
+          label: "Server",
+          platform: { os: "linux", arch: "x64" },
+          serverVersion: "1.0.0",
+          orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
+          capabilities: { repositoryIdentity: true, cluster: true },
+        }),
+        // The server replays the whole list to every new subscription.
+        clusterMembers: SubscriptionRef.changes(members),
+      });
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        const hosts = yield* ClusterHosts.ClusterHosts;
+        const awaitMember = (listed: boolean) =>
+          SubscriptionRef.changes(registry.entries).pipe(
+            Stream.filter((entries) => entries.has(MEMBER_ID) === listed),
+            Stream.runHead,
+          );
+        yield* watchClusterMembers().pipe(Effect.forkScoped);
+
+        yield* awaitMember(true);
+        expect((yield* SubscriptionRef.get(registry.entries)).get(MEMBER_ID)?.target).toMatchObject(
+          { hostEnvironmentId: TARGET.environmentId, hostLabel: TARGET.label },
+        );
+        const firstHost = Option.getOrThrow(yield* hosts.get(TARGET.environmentId));
+        expect(firstHost.environmentId).toBe(TARGET.environmentId);
+
+        yield* SubscriptionRef.set(members, []);
+        yield* awaitMember(false);
+        yield* SubscriptionRef.set(members, [clusterMember(MEMBER_ID)]);
+        yield* awaitMember(true);
+
+        yield* registry.setEnabled(TARGET.environmentId, false);
+        yield* awaitMember(false);
+        expect(Option.isNone(yield* hosts.get(TARGET.environmentId))).toBe(true);
+
+        yield* registry.setEnabled(TARGET.environmentId, true);
+        yield* awaitMember(true);
+        const secondHost = Option.getOrThrow(yield* hosts.get(TARGET.environmentId));
+        expect(secondHost).not.toBe(firstHost);
+
+        yield* registry.remove(TARGET.environmentId);
+        yield* awaitMember(false);
+        expect(Option.isNone(yield* hosts.get(TARGET.environmentId))).toBe(true);
+      }).pipe(Effect.provide(Layer.merge(harness.layer, ClusterHosts.layer)), Effect.scoped);
     }),
   );
 });

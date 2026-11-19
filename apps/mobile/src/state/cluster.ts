@@ -1,5 +1,5 @@
 import { createClusterEnvironmentAtoms } from "@t3tools/client-runtime/state/cluster";
-import { AuthOrchestrationReadScope } from "@t3tools/contracts";
+import { AuthOrchestrationReadScope, type EnvironmentId } from "@t3tools/contracts";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { useEnvironments } from "./environments";
@@ -18,4 +18,14 @@ export function useClusterHosts() {
   );
   const readable = useEnvironmentsWithScope(supported, AuthOrchestrationReadScope);
   return supported.filter((environment) => readable.has(environment.environmentId));
+}
+
+/** Cluster members are ephemeral routes through a main host, managed in its Cluster section. */
+export function useClusterMemberIds(): ReadonlySet<EnvironmentId> {
+  const { environments } = useEnvironments();
+  return new Set(
+    environments
+      .filter((environment) => environment.entry.target._tag === "ClusterConnectionTarget")
+      .map((environment) => environment.environmentId),
+  );
 }

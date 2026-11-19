@@ -25,6 +25,9 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { useAdaptiveWorkspaceLayout } from "../layout/adaptive-workspace-context";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
+import { useClusterMemberIds } from "../../state/cluster";
+import type { SavedRemoteConnection } from "../../lib/connection";
+import type { EnvironmentId } from "@t3tools/contracts";
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection, SettingsSidebarContext } from "./components/SettingsSection";
 import { SettingsScreen } from "./components/SettingsScreen";
@@ -115,6 +118,7 @@ function ConfiguredSettingsRouteScreen() {
   const { isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
   const { user } = useUser();
   const { savedConnectionsById } = useSavedRemoteConnections();
+  const clusterMemberIds = useClusterMemberIds();
   const accountLabel = !isLoaded
     ? gt("Checking")
     : !isSignedIn
@@ -132,7 +136,10 @@ function ConfiguredSettingsRouteScreen() {
           disabled: !isLoaded,
           onPress: () => navigation.navigate("SettingsAuth"),
         },
-        environmentsRow(gt("Environments"), Object.keys(savedConnectionsById).length),
+        environmentsRow(
+          gt("Environments"),
+          savedEnvironmentCount(savedConnectionsById, clusterMemberIds),
+        ),
         {
           id: "SettingsNotifications",
           icon: "bell.badge",
@@ -147,11 +154,26 @@ function ConfiguredSettingsRouteScreen() {
 function LocalSettingsRouteScreen() {
   const gt = useGT();
   const { savedConnectionsById } = useSavedRemoteConnections();
+  const clusterMemberIds = useClusterMemberIds();
   return (
     <SettingsList
-      connections={[environmentsRow(gt("Environments"), Object.keys(savedConnectionsById).length)]}
+      connections={[
+        environmentsRow(
+          gt("Environments"),
+          savedEnvironmentCount(savedConnectionsById, clusterMemberIds),
+        ),
+      ]}
     />
   );
+}
+
+function savedEnvironmentCount(
+  savedConnectionsById: Readonly<Record<EnvironmentId, SavedRemoteConnection>>,
+  clusterMemberIds: ReadonlySet<EnvironmentId>,
+): number {
+  return Object.values(savedConnectionsById).filter(
+    (connection) => !clusterMemberIds.has(connection.environmentId),
+  ).length;
 }
 
 function environmentsRow(label: string, count: number): SettingsListRow {

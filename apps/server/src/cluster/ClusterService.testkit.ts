@@ -1,6 +1,8 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - NodeHttpServer.layer takes Node's server factory.
+import * as NodeHttp from "node:http";
 import * as NodeTls from "node:tls";
 import {
   CLUSTER_SCOPES_HEADER,
@@ -171,7 +173,11 @@ const memberRoutes = Layer.mergeAll(
 /** `routes` on a real socket in the current scope; returns its `http://` origin. */
 export const serveRoutes = <A, E, R>(routes: Layer.Layer<A, E, R>) =>
   Effect.gen(function* () {
-    const server = yield* Layer.build(Layer.fresh(NodeHttpServer.layerTest));
+    // Bound to the address tests dial: on the IPv6 wildcard, another process's later bind of
+    // 127.0.0.1 on the same port takes this server's IPv4 traffic.
+    const server = yield* Layer.build(
+      Layer.fresh(NodeHttpServer.layer(NodeHttp.createServer, { host: "127.0.0.1", port: 0 })),
+    );
     yield* HttpRouter.serve(routes, { disableListenLog: true, disableLogger: true }).pipe(
       Layer.fresh,
       Layer.build,

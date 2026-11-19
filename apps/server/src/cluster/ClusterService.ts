@@ -595,12 +595,16 @@ const make = Effect.gen(function* () {
       Effect.provideService(HttpClient.HttpClient, connection.httpClient),
     );
 
-  const connectRow = Effect.fn("ClusterService.connectRow")(function* (row: MemberRow) {
+  const connectRow = Effect.fn("ClusterService.connectRow")(function* (
+    row: MemberRow,
+    options?: { readonly refresh?: boolean },
+  ) {
     const token = yield* tokenOf(row.secret_name);
     const connection = yield* upstream.connect(
       row.transport === "https"
         ? { transport: "https", url: row.url ?? "", certSha256: row.cert_sha256 }
         : { transport: "ssh", sshTarget: row.ssh_target ?? "" },
+      options,
     );
     return { upstream: connection, token, member: toMember(row) };
   });
@@ -818,7 +822,10 @@ const make = Effect.gen(function* () {
       upstream: connection,
       token,
       member,
-    } = yield* connect(memberId).pipe(
+    } = yield* requireEnabled.pipe(
+      Effect.andThen(findRow(memberId)),
+      // Each link attempt re-checks an ssh member's server; proxied requests reuse its address.
+      Effect.flatMap((row) => connectRow(row, { refresh: true })),
       Effect.mapError((error): LinkDown => ({ status: "offline", message: error.message })),
     );
     const api = yield* preflight(memberId, connection);

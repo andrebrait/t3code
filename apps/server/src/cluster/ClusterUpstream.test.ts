@@ -7,20 +7,23 @@ import * as SshTunnel from "@t3tools/ssh/tunnel";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
 
 import * as ClusterUpstream from "./ClusterUpstream.ts";
 
+const dependencies = Layer.provideMerge(
+  Layer.mergeAll(
+    NodeServices.layer,
+    NodeCrypto.layer,
+    NodeHttpClient.layerUndici,
+    NetService.layer,
+    SshPasswordPrompt.disabledLayer,
+  ),
+);
+
 const layer = ClusterUpstream.layer.pipe(
   Layer.provide(SshTunnel.SshEnvironmentManager.layer()),
-  Layer.provideMerge(
-    Layer.mergeAll(
-      NodeServices.layer,
-      NodeCrypto.layer,
-      NodeHttpClient.layerUndici,
-      NetService.layer,
-      SshPasswordPrompt.disabledLayer,
-    ),
-  ),
+  dependencies,
 );
 
 it.effect("refuses member addresses the network could read or spoof", () =>
@@ -54,4 +57,46 @@ it.effect("refuses member addresses the network could read or spoof", () =>
     });
     assert.strictEqual(upper.httpClient, lower.httpClient);
   }).pipe(Effect.provide(layer)),
+);
+
+it.effect(
+  "starts an ssh member's server once, until the link asks again or the tunnel closes",
+  () =>
+    Effect.gen(function* () {
+      const ensured = yield* Ref.make(0);
+      const ssh = SshTunnel.SshEnvironmentManager.of({
+        ensureEnvironment: (target) =>
+          Ref.updateAndGet(ensured, (count) => count + 1).pipe(
+            Effect.map((count) => ({
+              target,
+              httpBaseUrl: `http://127.0.0.1:${4000 + count}/`,
+              wsBaseUrl: `ws://127.0.0.1:${4000 + count}/`,
+              pairingToken: null,
+            })),
+          ),
+        disconnectEnvironment: () => Effect.void,
+        closeAllTunnels: Effect.void,
+      });
+      const upstream = yield* ClusterUpstream.ClusterUpstream.pipe(
+        Effect.provide(
+          ClusterUpstream.layer.pipe(
+            Layer.provide(Layer.succeed(SshTunnel.SshEnvironmentManager, ssh)),
+            dependencies,
+          ),
+        ),
+      );
+      const target = { transport: "ssh", sshTarget: "me@box" } as const;
+      for (let request = 0; request < 3; request++) {
+        assert.equal((yield* upstream.connect(target)).origin, "http://127.0.0.1:4001");
+      }
+      assert.equal(yield* Ref.get(ensured), 1);
+      assert.equal(
+        (yield* upstream.connect(target, { refresh: true })).origin,
+        "http://127.0.0.1:4002",
+      );
+      assert.equal((yield* upstream.connect(target)).origin, "http://127.0.0.1:4002");
+      yield* upstream.closeSsh("me@box");
+      assert.equal((yield* upstream.connect(target)).origin, "http://127.0.0.1:4003");
+      assert.equal(yield* Ref.get(ensured), 3);
+    }),
 );

@@ -32,7 +32,11 @@ export interface Upstream extends PinnedTransport.PinnedAgent {
 export class ClusterUpstream extends Context.Service<
   ClusterUpstream,
   {
-    readonly connect: (target: UpstreamTarget) => Effect.Effect<Upstream, ClusterError>;
+    /** `refresh` re-runs the ssh start and readiness probe; otherwise an ssh origin is reused. */
+    readonly connect: (
+      target: UpstreamTarget,
+      options?: { readonly refresh?: boolean },
+    ) => Effect.Effect<Upstream, ClusterError>;
     /** Starts or reuses T3 on the member over ssh and mints a cluster invite there. */
     readonly inviteOverSsh: (
       sshTarget: string,
@@ -76,6 +80,8 @@ const make = Effect.gen(function* () {
     );
   };
 
+  const sshOrigins = new Map<string, string>();
+
   const sshBaseUrl = Effect.fn("ClusterUpstream.sshBaseUrl")(function* (
     sshTarget: string,
     pairingPurpose?: "cluster-member",
@@ -99,10 +105,13 @@ const make = Effect.gen(function* () {
   });
 
   const connect: ClusterUpstream["Service"]["connect"] = Effect.fn("ClusterUpstream.connect")(
-    function* (target) {
+    function* (target, options) {
       if (target.transport === "ssh") {
-        const bootstrap = yield* sshBaseUrl(target.sshTarget);
-        const origin = new URL(bootstrap.httpBaseUrl).origin;
+        let origin = options?.refresh === true ? undefined : sshOrigins.get(target.sshTarget);
+        if (origin === undefined) {
+          origin = new URL((yield* sshBaseUrl(target.sshTarget)).httpBaseUrl).origin;
+          sshOrigins.set(target.sshTarget, origin);
+        }
         return { origin, ...(yield* agentFor(null)) };
       }
       const url = new URL(target.url);
@@ -136,6 +145,7 @@ const make = Effect.gen(function* () {
   });
 
   const closeSsh: ClusterUpstream["Service"]["closeSsh"] = (sshTarget) => {
+    sshOrigins.delete(sshTarget);
     const parsed = parseClusterSshTarget(sshTarget);
     if (parsed === undefined) return Effect.void;
     return ssh.disconnectEnvironment({ alias: parsed.hostname, ...parsed }).pipe(

@@ -4,8 +4,10 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeTls from "node:tls";
 import {
   CLUSTER_SCOPES_HEADER,
+  ClusterError,
   type ClusterHostReplyInput,
   type ClusterHostRequest,
+  type ClusterMember,
   type ClusterMemberStatus,
   EnvironmentHttpApi,
   type EnvironmentId,
@@ -16,12 +18,15 @@ import * as NetService from "@t3tools/shared/Net";
 import * as SshAuth from "@t3tools/ssh/auth";
 import * as SshTunnel from "@t3tools/ssh/tunnel";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
@@ -38,6 +43,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerHttp from "../http.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
 import { descriptorOf } from "../peer/PeerLinks.testkit.ts";
+import { CLUSTER_MEMBER_PAIRING_SUBJECT } from "../persistence/AuthPairingLinks.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -218,4 +224,96 @@ export const awaitStatus = (
     Stream.filter((member) => member.environmentId === memberId && member.status === status),
     Stream.runHead,
     Effect.map(Option.getOrThrow),
+  );
+
+/** An environment agent calls are routed to, as a main host stores its member. */
+export interface RoutedEnvironment {
+  readonly descriptor: ExecutionEnvironmentDescriptor;
+  readonly url: string;
+  /** The member's `cluster-host` token the main host sends. */
+  readonly token: string;
+}
+
+const upstreamAt = (url: string) =>
+  HttpClient.HttpClient.pipe(
+    Effect.provide(FetchHttpClient.layer),
+    Effect.map((httpClient): ClusterUpstream.Upstream => ({
+      origin: new URL(url).origin,
+      httpClient,
+      webSocket: () => {
+        throw new Error("Agent routing opens no WebSockets.");
+      },
+    })),
+  );
+
+const asMember = ({ descriptor, url }: RoutedEnvironment): ClusterMember => ({
+  environmentId: descriptor.environmentId,
+  label: descriptor.label,
+  transport: "https",
+  address: url,
+  status: "online",
+  joinedAt: DateTime.makeUnsafe(0),
+  lastReachedAt: null,
+  lastError: null,
+});
+
+/** A main host whose members are `members`. */
+export const layerRoutingMain = (members: Ref.Ref<ReadonlyArray<RoutedEnvironment>>) =>
+  Layer.mock(ClusterService.ClusterService)({
+    status: Effect.succeed({ enabled: true, role: "main", fingerprint: FINGERPRINT, host: null }),
+    members: Stream.fromEffect(Ref.get(members)).pipe(Stream.map((list) => list.map(asMember))),
+    connect: (memberId) =>
+      Ref.get(members).pipe(
+        Effect.flatMap((list) => {
+          const member = list.find((candidate) => candidate.descriptor.environmentId === memberId);
+          return member === undefined
+            ? Effect.fail(
+                new ClusterError({
+                  reason: "unknown_member",
+                  message: `${memberId} is not a member of this cluster.`,
+                }),
+              )
+            : upstreamAt(member.url).pipe(
+                Effect.map((upstream) => ({
+                  upstream,
+                  token: member.token,
+                  member: asMember(member),
+                })),
+              );
+        }),
+      ),
+  });
+
+/** A member of `host` whose control link is `hostCall`. */
+export const layerRoutingMember = (input: {
+  readonly host: ExecutionEnvironmentDescriptor;
+  readonly hostCall: ClusterService.ClusterService["Service"]["hostCall"];
+}) =>
+  Layer.mock(ClusterService.ClusterService)({
+    status: Effect.succeed({
+      enabled: true,
+      role: "member",
+      fingerprint: FINGERPRINT,
+      host: {
+        environmentId: input.host.environmentId,
+        label: input.host.label,
+        joinedAt: DateTime.makeUnsafe(0),
+      },
+    }),
+    hostCall: input.hostCall,
+  });
+
+/** A `cluster-host` session on the environment `auth` serves, as a main host holds after adding it. */
+export const clusterHostToken = (
+  auth: EnvironmentAuth.EnvironmentAuth["Service"],
+  hostLabel: string,
+) =>
+  auth.createPairingLink({ subject: CLUSTER_MEMBER_PAIRING_SUBJECT }).pipe(
+    Effect.flatMap((invite) =>
+      auth.consumeClusterInvite(invite.credential, {
+        hostLabel,
+        client: { deviceType: "unknown" },
+      }),
+    ),
+    Effect.map((session) => session.token),
   );

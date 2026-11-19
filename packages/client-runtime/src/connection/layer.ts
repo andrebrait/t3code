@@ -85,7 +85,8 @@ export const watchDiscoveredCompatibility = Effect.fn("connection.watchDiscovere
 export const watchClusterMembers = Effect.fn("connection.watchClusterMembers")(function* () {
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
   const hosts = yield* ClusterHosts.ClusterHosts;
-  // The parts of a host connection its members borrow (see the resolver's cluster broker).
+  // Members borrow a bearer host's address and token, but only a DPoP host's address: the broker
+  // mints their DPoP tokens itself (see the resolver's cluster broker).
   const borrowed = new Map<EnvironmentId, string>();
   const dropMembers = (hostEnvironmentId: EnvironmentId) =>
     registry.reconcileCluster({ hostEnvironmentId, hostLabel: "", members: [] });
@@ -93,25 +94,35 @@ export const watchClusterMembers = Effect.fn("connection.watchClusterMembers")(f
     hostEnvironmentId: EnvironmentId,
     host: Option.Option<PreparedConnection>,
   ) {
+    const returned = Option.isNone(yield* hosts.get(hostEnvironmentId));
     yield* hosts.set(hostEnvironmentId, host);
     if (Option.isNone(host)) return;
     const authorization = host.value.httpAuthorization;
-    const next = `${host.value.httpBaseUrl} ${
-      authorization === null
-        ? ""
-        : authorization._tag === "Bearer"
-          ? authorization.token
-          : authorization.accessToken
-    }`;
+    const next =
+      authorization?._tag === "Bearer"
+        ? `${host.value.httpBaseUrl} ${authorization.token}`
+        : host.value.httpBaseUrl;
     const previous = borrowed.get(hostEnvironmentId);
     borrowed.set(hostEnvironmentId, next);
-    if (previous === undefined || previous === next) return;
+    const changed = previous !== undefined && previous !== next;
+    if (!changed && !returned) return;
     for (const { target } of (yield* SubscriptionRef.get(registry.entries)).values()) {
       if (
-        target._tag === "ClusterConnectionTarget" &&
-        target.hostEnvironmentId === hostEnvironmentId
+        target._tag !== "ClusterConnectionTarget" ||
+        target.hostEnvironmentId !== hostEnvironmentId
       ) {
+        continue;
+      }
+      if (changed) {
         yield* registry.reprepare(target.environmentId);
+      } else if (
+        Option.exists(
+          yield* Effect.option(registry.state(target.environmentId)),
+          (state) => state.phase !== "connected",
+        )
+      ) {
+        // A member waiting out its backoff retries now that its host is back.
+        yield* registry.retryNow(target.environmentId);
       }
     }
   });

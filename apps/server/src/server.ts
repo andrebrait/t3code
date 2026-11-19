@@ -180,6 +180,8 @@ import {
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as EnvironmentAuthPolicy from "./auth/EnvironmentAuthPolicy.ts";
 import * as CloudHttp from "./cloud/http.ts";
+import * as ClusterHttp from "./cluster/http.ts";
+import * as ClusterService from "./cluster/ClusterService.ts";
 import * as GuestHttp from "./guest/http.ts";
 import * as CloudLink from "./cloud/CloudLink.ts";
 import * as ConnectReachability from "./cloud/ConnectReachability.ts";
@@ -861,6 +863,7 @@ const layerMakeRoutes = Layer.mergeAll(
       Layer.provide(speechHttpApiLayer),
       Layer.provide(ServerHttp.layerServerEnvironmentHttpApi),
       Layer.provide(WebhookRoute.layer.pipe(Layer.provide(RelayDeliveryProof.layer))),
+      Layer.provide(ClusterHttp.layer),
       Layer.provide(AuthHttp.layerAuthenticatedAuth),
     ),
     ServerHttp.layerOtlpTracesProxyRoute,
@@ -902,9 +905,11 @@ const layerMakeRoutes = Layer.mergeAll(
     ),
   ),
   Layer.provide(PreviewBrowser.layer),
-  // Links to other environments, shared by Settings (WebSocket) and agents (/mcp).
+  // Links to other environments and the cluster, shared by Settings (WebSocket), HTTP, the
+  // proxy and agents (/mcp). ServerTls comes from layerHttpServer.
   Layer.provide(
     PeerForwarding.layer.pipe(
+      Layer.provideMerge(ClusterService.layer),
       Layer.provideMerge(PeerMcpClient.layer),
       Layer.provideMerge(PeerLinks.layer),
     ),

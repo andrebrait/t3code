@@ -1659,7 +1659,12 @@ export const make = Effect.gen(function* () {
             return {
               sessionId: session.sessionId,
               label: session.client.label ?? "Cluster host",
-              access: "full-access",
+              // The main host's own forwarding sends no cap; a capped call carries a client's scopes.
+              access: capClusterHostScopes(request, session).scopes.includes(
+                AuthOrchestrationOperateScope,
+              )
+                ? "full-access"
+                : "read-only",
               peerLink: false,
               cluster: true,
             } satisfies McpClientSession;

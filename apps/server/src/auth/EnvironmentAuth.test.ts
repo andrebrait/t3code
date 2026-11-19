@@ -801,6 +801,20 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
           withHeaders(makeBearerRequest(host.token), { [CLUSTER_SCOPES_HEADER]: "" }),
         );
         expect(garbled.scopes).toEqual([]);
+        const mcpAccess = (headers: Record<string, string>) =>
+          serverAuth
+            .authenticateMcpClient(withHeaders(makeBearerRequest(host.token), headers))
+            .pipe(Effect.map((session) => session.access));
+        expect(yield* mcpAccess({ [CLUSTER_SCOPES_HEADER]: "orchestration:read" })).toBe(
+          "read-only",
+        );
+        expect(yield* mcpAccess({ [CLUSTER_SCOPES_HEADER]: "" })).toBe("read-only");
+        expect(
+          yield* mcpAccess({
+            [CLUSTER_SCOPES_HEADER]: "orchestration:read orchestration:operate",
+          }),
+        ).toBe("full-access");
+        expect(yield* mcpAccess({})).toBe("full-access");
       }).pipe(Effect.provide(layerEnvironmentAuth())),
     );
 

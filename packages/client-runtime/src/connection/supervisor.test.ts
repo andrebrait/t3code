@@ -1255,6 +1255,26 @@ describe("EnvironmentSupervisor", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect("re-prepares a live session on request, keeping the supervisor", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      const first = yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* supervisor.reprepare;
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation > first.generation,
+      );
+
+      expect(yield* Ref.get(harness.prepareCount)).toBe(2);
+      expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+    }),
+  );
+
   it.effect("probes the active session without reconnecting on application activation", () =>
     Effect.gen(function* () {
       const probeCount = yield* Ref.make(0);

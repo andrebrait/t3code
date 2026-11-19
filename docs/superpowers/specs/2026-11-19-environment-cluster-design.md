@@ -59,14 +59,29 @@ so no long-lived multiplexed link or resend protocol is needed.
   capability checks for member environments. Web, desktop, and mobile share
   this.
 
+## Control link
+
+- The main host keeps one long-lived WebSocket RPC session to each member
+  (its `cluster-host` session, over pinned HTTPS or the SSH forward),
+  reconnecting with backoff.
+- Member status comes from the link: connected is `online`, a protocol
+  mismatch on connect is `incompatible`, `401` is `revoked`, otherwise
+  `offline`. No polling loop.
+- Members never need an address for the main host. Calls from a member to
+  the main host ride the link in reverse: the member exposes a
+  `cluster.hostChannel` subscription carrying requests, and the main host
+  answers each with `cluster.hostReply(requestId, result)`.
+
 ## Agents
 
 - On the main host, MCP tools with an `environmentId` target forward to the
   member's `/mcp` using the `cluster-host` credential.
-- Each member receives a `cluster-member` MCP credential for the main host
-  at join time. A member agent targeting another member calls the main
-  host's `/mcp`, which forwards. All cross-member traffic hairpins through
-  the main host.
+- A member agent targeting another environment puts the call on
+  `cluster.hostChannel`; the main host runs it (forwarding to the target
+  member) and replies. All cross-member traffic hairpins through the main
+  host. No separate member-to-main credential exists.
+- Requests queued while the link is down fail with "cluster host
+  unreachable" and are never delivered twice.
 - The existing forwarded-wait limits (≤ 50 s) apply.
 
 ## Membership and storage
@@ -96,8 +111,7 @@ Rows in `cluster_members` mean "is a main host".
    `t3 cluster add <join-string>`) dials the URL with TLS pinned to the
    fingerprint and exchanges the code.
 3. The main host receives a `cluster-host` session (accepted on RPC, HTTP,
-   and MCP) and the member's environment id, then hands the member a
-   `cluster-member` MCP token for itself.
+   and MCP) and the member's environment id, then opens the control link.
 4. The member writes its membership row, revokes all non-loopback client
    sessions and peer links, and stops minting ordinary pairing codes.
 
@@ -107,8 +121,9 @@ Rows in `cluster_members` mean "is a main host".
   host uses `packages/ssh` (`launchOrReuseRemoteServer`) to start or reuse T3
   on the member, mints the code over SSH, and exchanges it through the
   loopback forward. No join string or fingerprint.
-- Headless main hosts need SSH keys or an agent; a password prompt fails
-  with a clear error. Desktop main handles prompts as today.
+- SSH is only how the main host's server reaches the member. It uses the
+  main host machine's SSH keys or agent; a password or passphrase prompt
+  fails with a clear error. No client is involved, desktop included.
 - The main host restores the forward before reconnecting, as the existing
   SSH tunnel logic does.
 
@@ -166,8 +181,7 @@ Each refusal returns a clear error naming the cluster:
 - Contracts in `packages/contracts/src/cluster.ts`; new RPCs added to
   `CLIENT_GUARDED_RPC_SCOPES` (`access:write` for add/remove/invite/leave).
 - Labs setting `clusterEnabled`, default false, gating both sides.
-- New auth subjects: `cluster-host` (member side) and `cluster-member` (MCP
-  on the main host).
+- New auth subject: `cluster-host` (member side).
 
 ## UI
 

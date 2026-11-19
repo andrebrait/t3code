@@ -51,6 +51,9 @@ import { EnvironmentIconMenu } from "./EnvironmentIconPicker";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { LinkedEnvironmentsSettings } from "./LinkedEnvironmentsSettings";
 import { usePeerLinkHosts } from "~/state/peerLinks";
+import { offersCluster } from "@t3tools/client-runtime/state/cluster";
+import { ClusterSettings } from "./ClusterSettings";
+import { useClusterHosts } from "~/state/cluster";
 import { LoadBalancingSettings } from "./LoadBalancingSettings";
 import { PullRequestRoutingSettings } from "./PullRequestRoutingSettings";
 import { Input } from "../ui/input";
@@ -271,6 +274,7 @@ function ConnectionsSettingsContent({
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
   const peerLinkHosts = usePeerLinkHosts();
+  const clusterHosts = useClusterHosts();
   const removeEnvironment = useAtomCommand(environmentCatalog.remove, { reportFailure: false });
   const setEnvironmentEnabled = useAtomCommand(environmentCatalog.setEnabled, {
     reportFailure: false,
@@ -286,7 +290,9 @@ function ConnectionsSettingsContent({
     : null;
   const currentAuthPolicy = desktopBridge ? null : (accessSessionState.data?.auth.policy ?? null);
   const savedEnvironments = environments.filter(
-    (environment) => environment.entry.target._tag !== "PrimaryConnectionTarget",
+    (environment) =>
+      environment.entry.target._tag !== "PrimaryConnectionTarget" &&
+      environment.entry.target._tag !== "ClusterConnectionTarget",
   );
   const listedEnvironments = savedEnvironments.filter(
     (environment) => !isDesktopLocalConnectionTarget(environment.entry.target),
@@ -1878,6 +1884,16 @@ function ConnectionsSettingsContent({
           key={environment.environmentId}
           environmentId={environment.environmentId}
           environmentLabel={peerLinkHosts.length > 1 ? environment.label : null}
+          isSearchTarget={index === 0}
+        />
+      ))}
+      {clusterHosts.map((environment, index) => (
+        <ClusterSettings
+          key={environment.environmentId}
+          environmentId={environment.environmentId}
+          label={environment.label}
+          enabled={offersCluster(environment.serverConfig)}
+          showLabel={clusterHosts.length > 1}
           isSearchTarget={index === 0}
         />
       ))}

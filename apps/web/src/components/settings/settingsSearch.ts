@@ -71,6 +71,7 @@ export interface SettingsSearchItem {
   readonly wslAvailableOnly?: boolean;
   readonly managedTunnelOnly?: boolean;
   readonly peerLinksOnly?: boolean;
+  readonly clusterOnly?: boolean;
   readonly fastWorktreeCheckoutOnly?: boolean;
   readonly textGeneratorsOnly?: boolean;
   readonly secondary?: boolean;
@@ -87,6 +88,7 @@ export interface SettingsSearchAvailability {
   readonly hasThreadAutoSettlement: boolean;
   readonly managedTunnelActive?: boolean;
   readonly hasPeerLinkHost?: boolean;
+  readonly hasClusterHost?: boolean;
   readonly hasFastWorktreeCheckoutEnvironment?: boolean;
   /** An environment without a provider allow-list, which hides text generators. */
   readonly hasTextGeneratorsEnvironment?: boolean;
@@ -544,6 +546,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/labs",
     scope: "environment",
     searchTerms: [msg("beta link another machine vps peer agents work there delegate")],
+  },
+  {
+    id: "cluster-beta",
+    title: msg("Cluster"),
+    to: "/settings/labs",
+    scope: "environment",
+    searchTerms: [msg("beta cluster main host members group machines proxy invite join")],
   },
   {
     id: "prompt-suggestions-beta",
@@ -1426,6 +1435,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("link peer another machine vps agents work there handoff pairing code")],
   },
   {
+    id: "cluster",
+    clusterOnly: true,
+    title: msg("Cluster"),
+    to: "/settings/connections",
+    targetId: "cluster",
+    searchTerms: [msg("cluster main host member invite join string fingerprint ssh leave remove")],
+  },
+  {
     id: "remote-environments",
     title: msg("Environments"),
     to: "/settings/connections",
@@ -1633,6 +1650,7 @@ export function filterAvailableSettingsSearchItems(
       (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement) &&
       (!item.managedTunnelOnly || availability.managedTunnelActive === true) &&
       (!item.peerLinksOnly || availability.hasPeerLinkHost === true) &&
+      (!item.clusterOnly || availability.hasClusterHost === true) &&
       (!item.fastWorktreeCheckoutOnly ||
         availability.hasFastWorktreeCheckoutEnvironment === true) &&
       (!item.textGeneratorsOnly || availability.hasTextGeneratorsEnvironment === true),

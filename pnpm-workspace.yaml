@@ -120,6 +120,8 @@ overrides:
   "@react-native-ai/apple": 0.12.0
   "@react-native-menu/menu": 2.0.0
   "@react-navigation/native-stack": 7.21.0
+  # x509 must share one asn1-schema with the asn1-* packages it uses, or selfsigned cannot serialize.
+  "@peculiar/x509>@peculiar/asn1-schema": 2.11.1
   dbus-next: 0.10.2
   node-pty: 1.2.0-beta.15
   react-native-gesture-handler: 3.5.0

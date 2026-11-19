@@ -3,6 +3,7 @@ import type * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
+import * as HttpApiError from "effect/http-api/HttpApiError";
 import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
 import * as HttpApiMiddleware from "effect/http-api/HttpApiMiddleware";
 import * as HttpApiSchema from "effect/http-api/HttpApiSchema";
@@ -72,6 +73,8 @@ import {
 } from "./speech.ts";
 import {
   ClusterError,
+  ClusterHostReplyInput,
+  ClusterHostRequest,
   ClusterJoinRequest,
   ClusterJoinResult,
   ClusterLeaveResult,
@@ -1091,6 +1094,23 @@ class EnvironmentClusterHttpApi extends HttpApiGroup.make("cluster")
       headers: OptionalBearerHeaders,
       success: ClusterLeaveResult,
       error: [ClusterError, EnvironmentHttpForbiddenError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    // The main host fetches each call its control link announced; a call is taken once.
+    HttpApiEndpoint.get("hostRequest", "/api/cluster/host-request/:requestId", {
+      headers: OptionalBearerHeaders,
+      params: Schema.Struct({ requestId: Schema.String }),
+      success: ClusterHostRequest,
+      error: [EnvironmentHttpForbiddenError, HttpApiError.NotFound],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    // The main host's answer to one call: its own request, so no answer waits behind another.
+    HttpApiEndpoint.post("hostReply", "/api/cluster/host-reply", {
+      headers: OptionalBearerHeaders,
+      payload: ClusterHostReplyInput,
+      error: [EnvironmentHttpForbiddenError, HttpApiError.NotFound],
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 

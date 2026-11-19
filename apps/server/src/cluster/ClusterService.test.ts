@@ -1,17 +1,24 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { type ClusterHostRequest, type ClusterLinkEvent, EnvironmentId } from "@t3tools/contracts";
 import { SshCommandError } from "@t3tools/ssh/errors";
 import * as SshTunnel from "@t3tools/ssh/tunnel";
 import { expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Result from "effect/Result";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ClusterService from "./ClusterService.ts";
 import {
+  awaitStatus,
+  type ClusterEnvironment,
   clusterDescriptor,
   FINGERPRINT,
   makeEnvironment,
@@ -426,4 +433,292 @@ it.effect("adds a member over ssh, and a password prompt fails with a clear erro
       });
     }),
   ),
+);
+
+const readCall = {
+  tool: "t3_thread_read",
+  arguments: { environmentId: "environment-other", threadId: "thread-1" },
+  limits: { runtimeMode: "full-access", interactionMode: "default" },
+} satisfies ClusterService.ClusterHostCall;
+
+const UNREACHABLE =
+  'Cluster host unreachable: "Studio" is not connected, so other environments in the cluster cannot be reached. Work here continues.';
+
+/** The session a member recorded for its main host at join. */
+const hostSessionOf = (member: ClusterEnvironment) =>
+  member.sql<{ readonly host_session_id: string }>`
+    SELECT host_session_id FROM cluster_membership
+  `.pipe(Effect.map(([membership]) => ({ sessionId: membership?.host_session_id ?? "" })));
+
+it.effect(
+  "the control link carries a member's calls, fails them when it drops, and never sends one twice",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const member = yield* serveMember(box);
+        const main = yield* makeEnvironment(studioDescriptor);
+        const invite = yield* member.cluster.invite({ url: member.url });
+        yield* main.cluster.addMember({ target: invite.joinString ?? "" });
+        // No link yet: an agent's call fails at once instead of waiting for one.
+        expect(yield* member.cluster.hostCall(readCall).pipe(Effect.flip)).toMatchObject({
+          reason: "unreachable",
+          message: UNREACHABLE,
+        });
+
+        const served = yield* Queue.unbounded<ClusterHostRequest>();
+        const interrupted = yield* Deferred.make<string>();
+        const serve: ClusterService.ClusterHostServe = (from, request) =>
+          Queue.offer(served, request).pipe(
+            Effect.andThen(
+              request.tool === "slow"
+                ? Effect.never.pipe(
+                    Effect.onInterrupt(() => Deferred.succeed(interrupted, request.requestId)),
+                  )
+                : Effect.succeed({
+                    isError: false,
+                    text: JSON.stringify({ from: from.environmentId }),
+                  }),
+            ),
+          );
+        const firstRun = yield* Scope.make();
+        yield* main.cluster.start(serve).pipe(Effect.provideService(Scope.Scope, firstRun));
+        expect(yield* awaitStatus(main, box.environmentId, "online")).toMatchObject({
+          lastError: null,
+        });
+
+        expect(yield* member.cluster.hostCall(readCall)).toEqual({
+          isError: false,
+          text: JSON.stringify({ from: box.environmentId }),
+        });
+        const answered = yield* Queue.take(served);
+        expect(answered).toMatchObject(readCall);
+        // A second answer for that call, as a retried POST would bring, finds nothing waiting.
+        expect(
+          yield* member.cluster
+            .hostReply(yield* hostSessionOf(member), {
+              requestId: answered.requestId,
+              result: { isError: false, text: "again" },
+            })
+            .pipe(Effect.flip),
+        ).toMatchObject({ reason: "unknown_request" });
+
+        // The main host stops with a call in flight: the member hears so, the work there stops.
+        const slow = yield* member.cluster
+          .hostCall({ ...readCall, tool: "slow" })
+          .pipe(Effect.flip, Effect.forkScoped);
+        const inFlight = yield* Queue.take(served);
+        yield* Scope.close(firstRun, Exit.void);
+        expect(yield* Deferred.await(interrupted)).toBe(inFlight.requestId);
+        expect(yield* Fiber.join(slow)).toMatchObject({
+          reason: "unreachable",
+          message: UNREACHABLE,
+        });
+
+        // It starts again: nothing is online until its link is, and the old call never comes back.
+        yield* main.cluster.start(serve);
+        yield* awaitStatus(main, box.environmentId, "online");
+        yield* member.cluster.hostCall(readCall);
+        const next = yield* Queue.take(served);
+        expect(next.tool).toBe("t3_thread_read");
+        expect(next.requestId).not.toBe(inFlight.requestId);
+      }),
+    ),
+);
+
+it.effect(
+  "a member holds each call until its link fetches it once, and drops them with the link",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const member = yield* serveMember(box);
+        const main = yield* makeEnvironment(studioDescriptor);
+        const invite = yield* member.cluster.invite({ url: member.url });
+        yield* main.cluster.addMember({ target: invite.joinString ?? "" });
+        const host = yield* hostSessionOf(member);
+        // The main host's end of the link, held by hand: nothing fetches unless the test does.
+        const link = yield* Scope.make();
+        const doorbells = yield* Queue.unbounded<ClusterLinkEvent>();
+        yield* member.cluster
+          .hostEvents(host)
+          .pipe(
+            Effect.flatMap(Stream.runForEach((event) => Queue.offer(doorbells, event))),
+            Effect.forkScoped,
+            Effect.provideService(Scope.Scope, link),
+          );
+        expect(yield* Queue.take(doorbells)).toEqual({ _tag: "ready" });
+
+        const first = yield* member.cluster.hostCall(readCall).pipe(Effect.forkScoped);
+        const ring = yield* Queue.take(doorbells);
+        if (ring._tag !== "request") return yield* Effect.die("expected a doorbell");
+        // The doorbell names the call; its body stays on the member until it is fetched, once.
+        expect(Object.keys(ring)).toEqual(["_tag", "requestId"]);
+        expect(yield* member.cluster.hostRequest(host, ring.requestId)).toMatchObject(readCall);
+        expect(
+          yield* member.cluster.hostRequest(host, ring.requestId).pipe(Effect.flip),
+        ).toMatchObject({ reason: "unknown_request" });
+        yield* member.cluster.hostReply(host, {
+          requestId: ring.requestId,
+          result: { isError: false, text: "done" },
+        });
+        expect(yield* Fiber.join(first)).toEqual({ isError: false, text: "done" });
+
+        // The link drops before the next call is fetched: it fails, and its id is gone.
+        const second = yield* member.cluster
+          .hostCall(readCall)
+          .pipe(Effect.flip, Effect.forkScoped);
+        const pending = yield* Queue.take(doorbells);
+        if (pending._tag !== "request") return yield* Effect.die("expected a doorbell");
+        yield* Scope.close(link, Exit.void);
+        expect(yield* Fiber.join(second)).toMatchObject({ reason: "unreachable" });
+        expect(
+          yield* member.cluster.hostRequest(host, pending.requestId).pipe(Effect.flip),
+        ).toMatchObject({ reason: "unknown_request" });
+      }),
+    ),
+);
+
+it.effect("a member that leaves shows revoked over its link, and only its host opens it", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const member = yield* serveMember(box);
+      const main = yield* makeEnvironment(studioDescriptor);
+      const invite = yield* member.cluster.invite({ url: member.url });
+      yield* main.cluster.addMember({ target: invite.joinString ?? "" });
+      yield* main.cluster.start(ClusterService.refuseHostRequests);
+      yield* awaitStatus(main, box.environmentId, "online");
+      expect(yield* member.cluster.hostCall(readCall)).toMatchObject({ isError: true });
+      const someoneElse = { sessionId: "session-someone-else" };
+      expect(yield* member.cluster.hostEvents(someoneElse).pipe(Effect.flip)).toMatchObject({
+        reason: "forbidden",
+      });
+      expect(
+        yield* member.cluster.hostRequest(someoneElse, "request-1").pipe(Effect.flip),
+      ).toMatchObject({ reason: "forbidden" });
+      expect(
+        yield* member.cluster
+          .hostReply(someoneElse, {
+            requestId: "request-1",
+            result: { isError: false, text: "{}" },
+          })
+          .pipe(Effect.flip),
+      ).toMatchObject({ reason: "forbidden" });
+
+      yield* member.cluster.leave;
+      expect(yield* awaitStatus(main, box.environmentId, "revoked")).toMatchObject({
+        lastError: "It no longer accepts this host. Invite it again.",
+      });
+      yield* main.cluster.removeMember(box.environmentId);
+      expect(yield* memberCount(main)).toEqual(Option.some(0));
+    }),
+  ),
+);
+
+it.effect("the control link runs at most 32 of a member's calls at a time", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const member = yield* serveMember(box);
+      const main = yield* makeEnvironment(studioDescriptor);
+      const invite = yield* member.cluster.invite({ url: member.url });
+      yield* main.cluster.addMember({ target: invite.joinString ?? "" });
+      const served = yield* Queue.unbounded<ClusterHostRequest>();
+      yield* main.cluster.start((_from, request) =>
+        Queue.offer(served, request).pipe(Effect.andThen(Effect.never)),
+      );
+      yield* awaitStatus(main, box.environmentId, "online");
+
+      // 32 calls run; the 33rd is answered busy at once and never reaches `serve`.
+      yield* Effect.forEach(
+        Array.from({ length: 32 }),
+        () => member.cluster.hostCall(readCall).pipe(Effect.forkScoped),
+        { discard: true },
+      );
+      yield* Effect.forEach(Array.from({ length: 32 }), () => Queue.take(served), {
+        discard: true,
+      });
+      const busy = yield* member.cluster.hostCall(readCall);
+      expect(busy.isError).toBe(true);
+      expect(JSON.parse(busy.text)).toMatchObject({
+        code: "orchestration_error",
+        message: expect.stringContaining("Cluster host busy"),
+      });
+      expect(yield* Queue.size(served)).toBe(0);
+    }),
+  ),
+);
+
+it.effect("a large request or reply on the control link does not hold back a small one", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const large = "x".repeat(3 * 1024 * 1024);
+      const largeFetched = yield* Deferred.make<void>();
+      const releaseFetch = yield* Deferred.make<void>();
+      const largeAtMember = yield* Deferred.make<void>();
+      const releaseReply = yield* Deferred.make<void>();
+      // The member holds the 3 MiB call's fetch, then the 3 MiB answer, until the test lets go.
+      const member = yield* serveMember(box, {
+        hostRequestGate: (request) =>
+          request.arguments.message === large
+            ? Deferred.succeed(largeFetched, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseFetch)),
+              )
+            : Effect.void,
+        hostReplyGate: (input) =>
+          input.result.text === large
+            ? Deferred.succeed(largeAtMember, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseReply)),
+              )
+            : Effect.void,
+      });
+      const main = yield* makeEnvironment(studioDescriptor);
+      const invite = yield* member.cluster.invite({ url: member.url });
+      yield* main.cluster.addMember({ target: invite.joinString ?? "" });
+      yield* main.cluster.start((_from, request) =>
+        Effect.succeed({ isError: false, text: request.tool === "large" ? large : "small" }),
+      );
+      yield* awaitStatus(main, box.environmentId, "online");
+
+      const largeRequest = yield* member.cluster
+        .hostCall({ ...readCall, arguments: { message: large } })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(largeFetched);
+      expect(yield* member.cluster.hostCall(readCall)).toEqual({ isError: false, text: "small" });
+      expect(largeRequest.pollUnsafe()).toBeUndefined();
+      yield* Deferred.succeed(releaseFetch, undefined);
+      expect(yield* Fiber.join(largeRequest)).toEqual({ isError: false, text: "small" });
+
+      const largeReply = yield* member.cluster
+        .hostCall({ ...readCall, tool: "large" })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(largeAtMember);
+      expect(yield* member.cluster.hostCall(readCall)).toEqual({ isError: false, text: "small" });
+      expect(largeReply.pollUnsafe()).toBeUndefined();
+      yield* Deferred.succeed(releaseReply, undefined);
+      expect((yield* Fiber.join(largeReply)).text.length).toBe(large.length);
+    }),
+  ),
+);
+
+it.effect("the control link lives on heartbeats and ends after 40 s without a byte", () =>
+  Effect.gen(function* () {
+    const bytes = yield* Queue.unbounded<string>();
+    const reading = yield* Stream.fromQueue(bytes).pipe(
+      Stream.encodeText,
+      ClusterService.readLinkEvents,
+      Stream.runCollect,
+      Effect.forkScoped({ startImmediately: true }),
+    );
+    yield* Queue.offer(bytes, 'event: ready\ndata: {"_tag":"ready"}\n\n');
+    // Comments only, 15 s apart: a minute with no event, and the link is still up.
+    for (let beat = 0; beat < 4; beat++) {
+      yield* TestClock.adjust("15 seconds");
+      yield* Queue.offer(bytes, ": heartbeat\n\n");
+    }
+    yield* Queue.offer(bytes, 'event: request\ndata: {"_tag":"request","requestId":"r1"}\n\n');
+    expect(reading.pollUnsafe()).toBeUndefined();
+    yield* TestClock.adjust("40 seconds");
+    expect(Array.from(yield* Fiber.join(reading))).toEqual([
+      { _tag: "ready" },
+      { _tag: "request", requestId: "r1" },
+    ]);
+  }),
 );

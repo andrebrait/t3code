@@ -3,6 +3,7 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeTls from "node:tls";
 import {
+  CLUSTER_SCOPES_HEADER,
   type ClusterHostReplyInput,
   type ClusterHostRequest,
   type ClusterMemberStatus,
@@ -18,10 +19,13 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServer from "effect/http/HttpServer";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -37,6 +41,7 @@ import { descriptorOf } from "../peer/PeerLinks.testkit.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { pumpFrames } from "../device/DeviceHubProxy.ts";
 import * as ServerTls from "../tls/ServerTls.ts";
 import * as ClusterService from "./ClusterService.ts";
 import * as ClusterUpstream from "./ClusterUpstream.ts";
@@ -112,6 +117,36 @@ class MemberTestApi extends HttpApi.make("environment")
   .add(EnvironmentHttpApi.groups.auth)
   .add(EnvironmentHttpApi.groups.cluster) {}
 
+const encodeEchoHello = Schema.encodeSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      authorization: Schema.NullOr(Schema.String),
+      scopes: Schema.NullOr(Schema.String),
+    }),
+  ),
+);
+
+/** Reports the credential and scope cap the member received, then echoes. */
+const layerEcho = HttpRouter.add(
+  "GET",
+  "/echo",
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const socket = yield* request.upgrade;
+    const writer = yield* socket.writer;
+    // Writes wait for the reader that `pumpFrames` opens, so this one runs beside it.
+    yield* writer
+      .write(
+        encodeEchoHello({
+          authorization: request.headers.authorization ?? null,
+          scopes: request.headers[CLUSTER_SCOPES_HEADER] ?? null,
+        }),
+      )
+      .pipe(Effect.forkScoped);
+    return yield* pumpFrames(socket, writer);
+  }).pipe(Effect.scoped, Effect.ignoreCause, Effect.as(HttpServerResponse.empty())),
+);
+
 const memberRoutes = Layer.mergeAll(
   HttpApiBuilder.layer(MemberTestApi).pipe(
     Layer.provide(ClusterHttp.layer),
@@ -120,7 +155,22 @@ const memberRoutes = Layer.mergeAll(
     Layer.provide(AuthHttp.layerAuthenticatedAuth),
   ),
   ClusterHttp.layerEvents,
+  layerEcho,
 );
+
+/** `routes` on a real socket in the current scope; returns its `http://` origin. */
+export const serveRoutes = <A, E, R>(routes: Layer.Layer<A, E, R>) =>
+  Effect.gen(function* () {
+    const server = yield* Layer.build(Layer.fresh(NodeHttpServer.layerTest));
+    yield* HttpRouter.serve(routes, { disableListenLog: true, disableLogger: true }).pipe(
+      Layer.fresh,
+      Layer.build,
+      Effect.provideContext(server),
+    );
+    const address = Context.get(server, HttpServer.HttpServer).address;
+    if (address._tag === "UnixPathAddress") return yield* Effect.die("expected a TCP address");
+    return `http://127.0.0.1:${address.port}`;
+  });
 
 /**
  * A member on a real socket; `serveAgain` serves the same environment at a new address.
@@ -153,18 +203,7 @@ export const serveMember = (
           ),
       }),
     );
-    const serveAgain = Effect.gen(function* () {
-      const server = yield* Layer.build(Layer.fresh(NodeHttpServer.layerTest));
-      yield* HttpRouter.serve(memberRoutes, { disableListenLog: true, disableLogger: true }).pipe(
-        Layer.provide(Layer.succeedContext(context)),
-        Layer.fresh,
-        Layer.build,
-        Effect.provideContext(server),
-      );
-      const address = Context.get(server, HttpServer.HttpServer).address;
-      if (address._tag === "UnixPathAddress") return yield* Effect.die("expected a TCP address");
-      return `http://127.0.0.1:${address.port}`;
-    });
+    const serveAgain = serveRoutes(memberRoutes).pipe(Effect.provideContext(context));
     return { ...environment, url: yield* serveAgain, serveAgain };
   });
 

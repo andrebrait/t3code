@@ -29,6 +29,7 @@ it.effect("refuses member addresses the network could read or spoof", () =>
     const targets: ReadonlyArray<ClusterUpstream.UpstreamTarget> = [
       { transport: "https", url: "https://10.0.0.5:3773", certSha256: null },
       { transport: "https", url: "http://10.0.0.5:3773", certSha256: "0".repeat(64) },
+      { transport: "https", url: "https://10.0.0.5:3773", certSha256: "not-a-pin" },
       { transport: "ssh", sshTarget: "not a target" },
     ];
     for (const target of targets) {
@@ -41,5 +42,16 @@ it.effect("refuses member addresses the network could read or spoof", () =>
       certSha256: null,
     });
     assert.equal(local.origin, "http://127.0.0.1:3773");
+    const lower = yield* upstream.connect({
+      transport: "https",
+      url: "https://10.0.0.5:3773",
+      certSha256: "ab".repeat(32),
+    });
+    const upper = yield* upstream.connect({
+      transport: "https",
+      url: "https://10.0.0.5:3773",
+      certSha256: Array.from({ length: 32 }, () => "AB").join(":"),
+    });
+    assert.strictEqual(upper.httpClient, lower.httpClient);
   }).pipe(Effect.provide(layer)),
 );

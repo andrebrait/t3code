@@ -2168,6 +2168,166 @@ describe("EnvironmentRegistry cluster members", () => {
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );
+
+  it.effect("a platform entry for a listed member stays when the host replays or drops it", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([TARGET]);
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        const reconcile = (members: ReadonlyArray<ClusterMember>) =>
+          registry.reconcileCluster({
+            hostEnvironmentId: TARGET.environmentId,
+            hostLabel: "Studio",
+            members,
+          });
+        const platformTarget = new PrimaryConnectionTarget({
+          environmentId: MEMBER_ID,
+          label: "Box",
+          httpBaseUrl: "https://box.example.test",
+          wsBaseUrl: "wss://box.example.test",
+        });
+
+        yield* reconcile([clusterMember(MEMBER_ID)]);
+        yield* registry.reconcilePlatform([
+          new PrimaryConnectionRegistration({ target: platformTarget }),
+        ]);
+        yield* reconcile([clusterMember(MEMBER_ID, "Renamed")]);
+        yield* reconcile([]);
+
+        expect((yield* SubscriptionRef.get(registry.entries)).get(MEMBER_ID)?.target).toBe(
+          platformTarget,
+        );
+        expect(yield* Ref.get(harness.cacheClears)).not.toContain(MEMBER_ID);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("a failed save of a member leaves it owned by its host", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([TARGET], [], [], {
+        beforeRegistrationRegister: () =>
+          Effect.fail(
+            new Persistence.ConnectionPersistenceError({
+              operation: "register-connection",
+              message: "disk full",
+            }),
+          ),
+      });
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        const reconcile = (members: ReadonlyArray<ClusterMember>) =>
+          registry.reconcileCluster({
+            hostEnvironmentId: TARGET.environmentId,
+            hostLabel: "Studio",
+            members,
+          });
+
+        yield* reconcile([clusterMember(BEARER_TARGET.environmentId)]);
+        const saved = yield* Effect.exit(
+          registry.register(
+            new BearerConnectionRegistration({
+              target: BEARER_TARGET,
+              profile: BEARER_PROFILE,
+              credential: BEARER_CREDENTIAL,
+            }),
+          ),
+        );
+        expect(Exit.isFailure(saved)).toBe(true);
+
+        yield* reconcile([]);
+        expect(
+          (yield* SubscriptionRef.get(registry.entries)).has(BEARER_TARGET.environmentId),
+        ).toBe(false);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("a renamed member or host keeps the member's session", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([TARGET]);
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.reconcileCluster({
+          hostEnvironmentId: TARGET.environmentId,
+          hostLabel: "Studio",
+          members: [clusterMember(MEMBER_ID)],
+        });
+        yield* awaitConnectionState(registry, MEMBER_ID, (state) => state.phase === "connected");
+        const sessionsBefore = (yield* Ref.get(harness.sessions)).length;
+        const releasedBefore = yield* Ref.get(harness.releasedSessions);
+
+        yield* registry.reconcileCluster({
+          hostEnvironmentId: TARGET.environmentId,
+          hostLabel: "Workshop",
+          members: [{ ...clusterMember(MEMBER_ID, "Renamed"), lastError: "slow" }],
+        });
+
+        expect((yield* SubscriptionRef.get(registry.entries)).get(MEMBER_ID)?.target).toMatchObject(
+          { label: "Renamed", hostLabel: "Workshop", statusDetail: "slow" },
+        );
+        expect((yield* Ref.get(harness.sessions)).length).toBe(sessionsBefore);
+        expect(yield* Ref.get(harness.releasedSessions)).toBe(releasedBefore);
+        expect((yield* registry.state(MEMBER_ID)).phase).toBe("connected");
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("a member coming back online reconnects at once", () =>
+    Effect.gen(function* () {
+      const rejection = yield* Ref.make<ConnectionBlockedError | undefined>(
+        new ConnectionBlockedError({ reason: "authentication", detail: "member is down" }),
+      );
+      const harness = yield* makeHarness([TARGET], [], [], {
+        beforePrepareRoute: (target) =>
+          target._tag === "ClusterConnectionTarget" ? Ref.get(rejection) : Effect.undefined,
+      });
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        const reconcile = (status: ClusterMember["status"]) =>
+          registry.reconcileCluster({
+            hostEnvironmentId: TARGET.environmentId,
+            hostLabel: "Studio",
+            members: [{ ...clusterMember(MEMBER_ID), status }],
+          });
+
+        yield* reconcile("offline");
+        yield* awaitConnectionState(registry, MEMBER_ID, (state) => state.phase === "blocked");
+        yield* Ref.set(rejection, undefined);
+        yield* reconcile("online");
+
+        yield* awaitConnectionState(registry, MEMBER_ID, (state) => state.phase === "connected");
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("a host never changes or drops another host's member", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([TARGET, SECOND_TARGET]);
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.reconcileCluster({
+          hostEnvironmentId: TARGET.environmentId,
+          hostLabel: "Studio",
+          members: [clusterMember(MEMBER_ID)],
+        });
+        yield* registry.reconcileCluster({
+          hostEnvironmentId: SECOND_TARGET.environmentId,
+          hostLabel: "Other",
+          members: [clusterMember(MEMBER_ID, "Hijacked")],
+        });
+        yield* registry.reconcileCluster({
+          hostEnvironmentId: SECOND_TARGET.environmentId,
+          hostLabel: "Other",
+          members: [],
+        });
+
+        expect((yield* SubscriptionRef.get(registry.entries)).get(MEMBER_ID)?.target).toMatchObject(
+          { label: "Box", hostEnvironmentId: TARGET.environmentId },
+        );
+        expect(yield* Ref.get(harness.cacheClears)).not.toContain(MEMBER_ID);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
 });
 
 describe("EnvironmentRegistry routes", () => {

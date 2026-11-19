@@ -2,6 +2,8 @@ import * as Schema from "effect/Schema";
 
 import { PAIRING_CODE_ALPHABET, PAIRING_CODE_LENGTH } from "./auth.ts";
 import { EnvironmentId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { OrchestrationV2LinkedSender } from "./orchestrationV2.ts";
+import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
 
 export const CLUSTER_SCOPES_HEADER = "x-t3-cluster-scopes";
 
@@ -180,3 +182,34 @@ export const formatClusterSshTarget = (target: ClusterSshTarget) =>
 
 export const clusterMemberBaseUrl = (hostBaseUrl: string, memberId: EnvironmentId) =>
   `${new URL(hostBaseUrl).origin}${CLUSTER_ROUTE_PREFIX}/${encodeURIComponent(memberId)}`;
+
+/** One call a member's agent makes through its main host, which fetches it by `requestId`. */
+export const ClusterHostRequest = Schema.Struct({
+  requestId: TrimmedNonEmptyString,
+  /** A T3 MCP tool; `arguments.environmentId` names the target unless it is the main host. */
+  tool: TrimmedNonEmptyString,
+  arguments: Schema.Record(Schema.String, Schema.Unknown),
+  /** The calling agent's modes, which cap the call as `T3-Mode-Limit` does on `/mcp`. */
+  limits: Schema.Struct({ runtimeMode: RuntimeMode, interactionMode: ProviderInteractionMode }),
+  /** The member's thread the call is made for, as `T3-Sender-Thread` carries it. */
+  sender: Schema.optionalKey(OrchestrationV2LinkedSender),
+});
+export type ClusterHostRequest = typeof ClusterHostRequest.Type;
+
+/** `GET /api/cluster/events`: `ready` once the member listens, then a doorbell per call. */
+export const ClusterLinkEvent = Schema.Union([
+  Schema.TaggedStruct("ready", {}),
+  Schema.TaggedStruct("request", { requestId: TrimmedNonEmptyString }),
+]);
+export type ClusterLinkEvent = typeof ClusterLinkEvent.Type;
+
+/** A tool's answer as `/mcp` gives it: its joined text, and whether it is a refusal. */
+export const ClusterHostResult = Schema.Struct({ isError: Schema.Boolean, text: Schema.String });
+export type ClusterHostResult = typeof ClusterHostResult.Type;
+
+/** The body of the main host's `POST /api/cluster/host-reply`: one call's answer. */
+export const ClusterHostReplyInput = Schema.Struct({
+  requestId: TrimmedNonEmptyString,
+  result: ClusterHostResult,
+});
+export type ClusterHostReplyInput = typeof ClusterHostReplyInput.Type;

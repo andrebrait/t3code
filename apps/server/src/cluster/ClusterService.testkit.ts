@@ -3,7 +3,11 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeTls from "node:tls";
 import {
+  type ClusterHostReplyInput,
+  type ClusterHostRequest,
+  type ClusterMemberStatus,
   EnvironmentHttpApi,
+  type EnvironmentId,
   type ExecutionEnvironmentDescriptor,
   ORCHESTRATION_PROTOCOL_VERSION,
 } from "@t3tools/contracts";
@@ -13,6 +17,8 @@ import * as SshTunnel from "@t3tools/ssh/tunnel";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServer from "effect/http/HttpServer";
@@ -106,21 +112,51 @@ class MemberTestApi extends HttpApi.make("environment")
   .add(EnvironmentHttpApi.groups.auth)
   .add(EnvironmentHttpApi.groups.cluster) {}
 
-const memberRoutes = HttpApiBuilder.layer(MemberTestApi).pipe(
-  Layer.provide(ClusterHttp.layer),
-  Layer.provide(AuthHttp.layer),
-  Layer.provide(ServerHttp.layerServerEnvironmentHttpApi),
-  Layer.provide(AuthHttp.layerAuthenticatedAuth),
+const memberRoutes = Layer.mergeAll(
+  HttpApiBuilder.layer(MemberTestApi).pipe(
+    Layer.provide(ClusterHttp.layer),
+    Layer.provide(AuthHttp.layer),
+    Layer.provide(ServerHttp.layerServerEnvironmentHttpApi),
+    Layer.provide(AuthHttp.layerAuthenticatedAuth),
+  ),
+  ClusterHttp.layerEvents,
 );
 
-/** A member on a real socket; `serveAgain` serves the same environment at a new address. */
-export const serveMember = (descriptor: ExecutionEnvironmentDescriptor) =>
+/**
+ * A member on a real socket; `serveAgain` serves the same environment at a new address.
+ * `hostRequestGate` runs in its `GET /api/cluster/host-request/:requestId` handler once the call
+ * is taken, and `hostReplyGate` in its `POST /api/cluster/host-reply` handler before the answer
+ * lands, so a test can hold either request open.
+ */
+export const serveMember = (
+  descriptor: ExecutionEnvironmentDescriptor,
+  options: {
+    readonly hostRequestGate?: (request: ClusterHostRequest) => Effect.Effect<void>;
+    readonly hostReplyGate?: (input: ClusterHostReplyInput) => Effect.Effect<void>;
+  } = {},
+) =>
   Effect.gen(function* () {
     const environment = yield* makeEnvironment(descriptor);
+    const { hostRequestGate, hostReplyGate } = options;
+    const context = Context.add(
+      environment.context,
+      ClusterService.ClusterService,
+      ClusterService.ClusterService.of({
+        ...environment.cluster,
+        hostRequest: (session, requestId) =>
+          environment.cluster
+            .hostRequest(session, requestId)
+            .pipe(Effect.tap((request) => hostRequestGate?.(request) ?? Effect.void)),
+        hostReply: (session, input) =>
+          (hostReplyGate?.(input) ?? Effect.void).pipe(
+            Effect.andThen(environment.cluster.hostReply(session, input)),
+          ),
+      }),
+    );
     const serveAgain = Effect.gen(function* () {
       const server = yield* Layer.build(Layer.fresh(NodeHttpServer.layerTest));
       yield* HttpRouter.serve(memberRoutes, { disableListenLog: true, disableLogger: true }).pipe(
-        Layer.provide(Layer.succeedContext(environment.context)),
+        Layer.provide(Layer.succeedContext(context)),
         Layer.fresh,
         Layer.build,
         Effect.provideContext(server),
@@ -131,3 +167,16 @@ export const serveMember = (descriptor: ExecutionEnvironmentDescriptor) =>
     });
     return { ...environment, url: yield* serveAgain, serveAgain };
   });
+
+/** The member as `main` lists it, once its status is `status`. */
+export const awaitStatus = (
+  main: ClusterEnvironment,
+  memberId: EnvironmentId,
+  status: ClusterMemberStatus,
+) =>
+  main.cluster.members.pipe(
+    Stream.flatMap((members) => Stream.fromIterable(members)),
+    Stream.filter((member) => member.environmentId === memberId && member.status === status),
+    Stream.runHead,
+    Effect.map(Option.getOrThrow),
+  );

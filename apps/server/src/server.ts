@@ -874,6 +874,7 @@ const layerMakeRoutes = Layer.mergeAll(
     ServerHttp.layerAttachmentUploadRoute,
     GuestHttp.layer,
     DeviceHubProxy.layer,
+    ClusterHttp.layerEvents,
     ServerBrowserStream.routeLayer,
     PreviewTunnel.routeLayer,
     ServerHttp.layerStaticAndDevRoute,
@@ -888,6 +889,12 @@ const layerMakeRoutes = Layer.mergeAll(
   // Follows delegated tasks running in linked environments, including after a restart.
   Layer.effectDiscard(
     RemoteDelegation.RemoteDelegation.pipe(Effect.flatMap((remote) => remote.start())),
+  ),
+  // One control link to each member while the server runs; members' agent calls ride it back.
+  Layer.effectDiscard(
+    ClusterService.ClusterService.pipe(
+      Effect.flatMap((cluster) => cluster.start(ClusterService.refuseHostRequests)),
+    ),
   ),
 ).pipe(
   Layer.provide(

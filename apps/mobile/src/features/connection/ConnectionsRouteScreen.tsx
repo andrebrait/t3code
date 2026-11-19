@@ -11,8 +11,7 @@ import { AppBar } from "../../components/ui/AppBar";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
 import { LocalEnvironmentList } from "./LocalEnvironmentList";
 import { PullRequestRoutingSettings } from "./PullRequestRoutingSettings";
-import { useClusterHosts } from "../../state/cluster";
-import { useEnvironments } from "../../state/environments";
+import { useClusterHosts, useClusterMemberIds } from "../../state/cluster";
 import { ClusterSection } from "./ClusterSection";
 import { LinkedEnvironmentsSection } from "./LinkedEnvironmentsSection";
 import { LinkSeveralEnvironmentsAction } from "./LinkSeveralEnvironments";
@@ -29,12 +28,7 @@ export function ConnectionsRouteScreen() {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const clusterHosts = useClusterHosts();
-  const { environments } = useEnvironments();
-  const clusterMemberIds = new Set(
-    environments
-      .filter((environment) => environment.entry.target._tag === "ClusterConnectionTarget")
-      .map((environment) => environment.environmentId),
-  );
+  const clusterMemberIds = useClusterMemberIds();
   const [expandedId, setExpandedId] = useState<EnvironmentId | null>(null);
   const handleToggle = (environmentId: EnvironmentId) => {
     setExpandedId((prev) => (prev === environmentId ? null : environmentId));

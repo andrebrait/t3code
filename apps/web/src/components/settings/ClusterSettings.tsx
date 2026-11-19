@@ -4,6 +4,10 @@ import {
   clusterMemberStatusText,
   defaultClusterInviteUrl,
 } from "@t3tools/client-runtime/state/cluster";
+import {
+  type AtomCommandResult,
+  isAtomCommandInterrupted,
+} from "@t3tools/client-runtime/state/runtime";
 import type { ClusterInvite, ClusterMember, EnvironmentId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { PlusIcon } from "lucide-react";
@@ -14,8 +18,9 @@ import { requestConfirmDialog } from "~/confirmDialog";
 import { cn } from "~/lib/utils";
 import { clusterEnvironment } from "~/state/cluster";
 import { useEnvironmentHttpBaseUrl } from "~/state/environments";
-import { useEnvironmentQuery } from "~/state/query";
+import { formatEnvironmentQueryError, useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
+import type { MessageResolver } from "../../i18n/messages";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
@@ -37,6 +42,18 @@ import { toastManager } from "../ui/toast";
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "./itemRows";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { useSearchableSetting } from "./settingsSearch";
+
+const commandFailure = (result: AtomCommandResult<unknown, unknown>, m: MessageResolver) =>
+  result._tag === "Failure" && !isAtomCommandInterrupted(result)
+    ? formatEnvironmentQueryError(result.cause, m)
+    : null;
+
+const FailureText = ({ error }: { readonly error: string | null }) =>
+  error === null ? null : (
+    <p role="alert" className="mt-2 text-xs text-destructive">
+      {error}
+    </p>
+  );
 
 export function ClusterSettings({
   environmentId,
@@ -167,7 +184,14 @@ function ClusterMemberRow({
       input: { memberId: member.environmentId },
     });
     setBusy(false);
-    if (result._tag === "Success" && !result.value.memberNotified) {
+    const error = commandFailure(result, m);
+    if (error !== null) {
+      toastManager.add({
+        type: "error",
+        title: gt("Could not remove {label}", { label: member.label }),
+        description: error,
+      });
+    } else if (result._tag === "Success" && !result.value.memberNotified) {
       toastManager.add({
         type: "warning",
         title: gt("Removed {label} here", { label: member.label }),
@@ -226,9 +250,11 @@ function RenameMemberAction({
   readonly member: ClusterMember;
 }) {
   const gt = useGT();
+  const m = useMessages();
   const [open, setOpen] = useState(false);
   const [label, setLabel] = useState(member.label);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const formId = useId();
   const rename = useAtomCommand(clusterEnvironment.renameMember, {
     label: "rename cluster member",
@@ -241,6 +267,7 @@ function RenameMemberAction({
       input: { memberId: member.environmentId, label: label.trim() },
     });
     setBusy(false);
+    setError(commandFailure(result, m));
     if (result._tag === "Success") setOpen(false);
   };
   return (
@@ -249,6 +276,7 @@ function RenameMemberAction({
       onOpenChange={(next) => {
         if (busy) return;
         setOpen(next);
+        setError(null);
         if (next) setLabel(member.label);
       }}
     >
@@ -274,6 +302,7 @@ function RenameMemberAction({
               aria-label={gt("Member name")}
               nativeInput
             />
+            <FailureText error={error} />
           </form>
         </DialogPanel>
         <DialogFooter variant="bare">
@@ -291,10 +320,12 @@ function RenameMemberAction({
 
 function AddMemberAction({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const gt = useGT();
+  const m = useMessages();
   const [open, setOpen] = useState(false);
   const [raw, setRaw] = useState("");
   const [label, setLabel] = useState("");
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const formId = useId();
   const addMember = useAtomCommand(clusterEnvironment.addMember, { label: "add cluster member" });
   const target = clusterAddTarget(raw, { ssh: true });
@@ -306,6 +337,7 @@ function AddMemberAction({ environmentId }: { readonly environmentId: Environmen
       input: { target, ...(label.trim() ? { label: label.trim() } : {}) },
     });
     setBusy(false);
+    setError(commandFailure(result, m));
     if (result._tag === "Success") {
       toastManager.add({
         type: "success",
@@ -320,7 +352,9 @@ function AddMemberAction({ environmentId }: { readonly environmentId: Environmen
     <Dialog
       open={open}
       onOpenChange={(next) => {
-        if (!busy) setOpen(next);
+        if (busy) return;
+        setOpen(next);
+        setError(null);
       }}
     >
       <DialogTrigger
@@ -378,6 +412,7 @@ function AddMemberAction({ environmentId }: { readonly environmentId: Environmen
                 nativeInput
               />
             </label>
+            <FailureText error={error} />
           </form>
         </DialogPanel>
         <DialogFooter variant="bare">
@@ -420,11 +455,13 @@ function InviteRow({
 
 function InviteAction({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const gt = useGT();
+  const m = useMessages();
   const httpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
   const [open, setOpen] = useState(false);
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [created, setCreated] = useState<ClusterInvite | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const formId = useId();
   const invite = useAtomCommand(clusterEnvironment.invite, { label: "create cluster invite" });
   const { copyToClipboard, isCopied } = useCopyToClipboard<void>();
@@ -436,6 +473,7 @@ function InviteAction({ environmentId }: { readonly environmentId: EnvironmentId
       input: url.trim() ? { url: url.trim() } : {},
     });
     setBusy(false);
+    setError(commandFailure(result, m));
     if (result._tag === "Success") setCreated(result.value);
   };
   return (
@@ -444,10 +482,10 @@ function InviteAction({ environmentId }: { readonly environmentId: EnvironmentId
       onOpenChange={(next) => {
         if (busy) return;
         setOpen(next);
-        if (next) {
-          setUrl(defaultClusterInviteUrl(httpBaseUrl));
-          setCreated(null);
-        }
+        // The join string carries the invite secret, so it does not outlive the dialog.
+        setCreated(null);
+        setError(null);
+        if (next) setUrl(defaultClusterInviteUrl(httpBaseUrl));
       }}
     >
       <DialogTrigger render={<Button size="xs" variant="outline" />}>
@@ -487,6 +525,7 @@ function InviteAction({ environmentId }: { readonly environmentId: EnvironmentId
                   spellCheck={false}
                 />
               </label>
+              <FailureText error={error} />
             </form>
           ) : (
             <div className="space-y-2 text-sm">
@@ -542,6 +581,7 @@ function MemberOfRow({
   readonly hostLabel: string;
 }) {
   const gt = useGT();
+  const m = useMessages();
   const canLeave = useAtomValue(clusterEnvironment.leave.permissionAtom(environmentId));
   const leave = useAtomCommand(clusterEnvironment.leave, { label: "leave cluster" });
   const [busy, setBusy] = useState(false);
@@ -554,8 +594,16 @@ function MemberOfRow({
     ) ?? Promise.resolve(false));
     if (!confirmed) return;
     setBusy(true);
-    await leave({ environmentId, input: {} });
+    const result = await leave({ environmentId, input: {} });
     setBusy(false);
+    const error = commandFailure(result, m);
+    if (error !== null) {
+      toastManager.add({
+        type: "error",
+        title: gt("Could not leave the cluster"),
+        description: error,
+      });
+    }
   };
   return (
     <SettingsRow

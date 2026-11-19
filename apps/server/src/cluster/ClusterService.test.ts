@@ -801,3 +801,35 @@ it.effect("the control link lives on heartbeats and ends after 40 s without a by
     ]);
   }),
 );
+
+it.effect("rereads members a CLI add wrote, except on a member, which never has any", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const writeRow = (environment: ClusterEnvironment) => environment.sql`
+        INSERT INTO cluster_members (environment_id, label, transport, url, ssh_target, cert_sha256, secret_name, status, joined_at, last_reached_at, last_error)
+        VALUES ('environment-added', 'Added', 'https', 'https://192.168.1.30:3773', NULL, NULL, 'cluster-member-added', 'offline', '2026-11-19T00:00:00.000Z', NULL, NULL)
+      `;
+      const standalone = yield* makeEnvironment(studioDescriptor);
+      yield* standalone.cluster.start(ClusterService.refuseHostRequests);
+      const member = yield* makeEnvironment(box);
+      const invite = yield* member.cluster.invite({});
+      yield* member.cluster.acceptJoin({ code: invite.code, host: studio }, bot);
+      yield* member.cluster.start(ClusterService.refuseHostRequests);
+      yield* writeRow(member);
+      yield* writeRow(standalone);
+
+      yield* TestClock.adjust("30 seconds");
+      yield* standalone.cluster.members.pipe(
+        Stream.filter((members) => members.length === 1),
+        Stream.runHead,
+      );
+      // A member's timer would have fired twice by now; only a skipped reread leaves this empty.
+      yield* TestClock.adjust("30 seconds");
+      yield* standalone.cluster.renameMember({
+        memberId: EnvironmentId.make("environment-added"),
+        label: "Renamed",
+      });
+      expect(yield* member.cluster.members.pipe(Stream.runHead)).toEqual(Option.some([]));
+    }),
+  ),
+);

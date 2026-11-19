@@ -958,12 +958,15 @@ const make = Effect.gen(function* () {
         Effect.forkScoped,
       );
       // `t3 cluster add` beside a running server writes rows only this rereads; only while on.
+      // A member refuses adds, so it never has rows to reread.
+      const rereadRows = role.current.pipe(
+        Effect.flatMap((state) => (state.role === "member" ? Effect.void : reload)),
+        Effect.ignore,
+      );
       yield* enabledChanges.pipe(
         Stream.switchMap((on) =>
           on
-            ? Stream.fromEffect(
-                reload.pipe(Effect.ignore, Effect.delay(ROWS_RELOAD_INTERVAL), Effect.forever),
-              )
+            ? Stream.fromEffect(rereadRows.pipe(Effect.delay(ROWS_RELOAD_INTERVAL), Effect.forever))
             : Stream.empty,
         ),
         Stream.runDrain,

@@ -6,12 +6,12 @@ import {
 } from "@t3tools/client-runtime/linked-thread";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { T, useGT, useMessages, Var } from "gt-react";
-import { ChevronRightIcon, EyeIcon } from "lucide-react";
+import { ChevronRightIcon, EyeIcon, PlugIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { type LinkedThreadSurface, linkedThreadTitle } from "../../linkedThreadSurface";
 import { useEnvironment } from "../../state/environments";
-import { useLinkedThreadSession } from "../../state/linkedThreadView";
+import { useConnectLinkedEnvironment, useLinkedThreadSession } from "../../state/linkedThreadView";
 import ChatMarkdown from "../ChatMarkdown";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
@@ -23,6 +23,7 @@ import {
   ReadOnlyComposerStatus,
 } from "./ReadOnlyComposerBar";
 import { Spinner } from "../ui/spinner";
+import { toastManager } from "../ui/toast";
 
 function TruncatedNote() {
   return (
@@ -127,6 +128,55 @@ export function LinkedThreadPane(props: {
   const { state, session } = useLinkedThreadSession(panelRef, surface, props.visible);
   const { transcript } = state;
   const label = transcript?.label ?? surface.label;
+  const connection = useConnectLinkedEnvironment(panelRef, surface);
+  const connectState = connection.state;
+  const connecting = connectState.phase === "connecting";
+  const connect = async () => {
+    const outcome = await connection.connect();
+    if (outcome.type === "connected") {
+      toastManager.add({
+        type: "success",
+        title: gt("Connected to {label}", { label }),
+        description: gt("This device is paired with it and can use its threads."),
+      });
+    }
+  };
+  const connectNotice: ComposerBannerStackItem | null =
+    connectState.phase === "connecting"
+      ? {
+          id: "connecting",
+          variant: "info",
+          icon: <Spinner size="sm" />,
+          title: gt("Connecting to {label}…", { label }),
+        }
+      : connectState.phase === "unreachable"
+        ? {
+            id: "unreachable",
+            variant: "warning",
+            icon: <PlugIcon />,
+            title: gt("{label} is not reachable from this device", { label: connectState.label }),
+            description: gt(
+              "Join a network it is on, such as its Tailscale network, and try again. You can keep reading here.",
+            ),
+          }
+        : connectState.phase === "manual"
+          ? {
+              id: "manual",
+              variant: "info",
+              icon: <PlugIcon />,
+              title: gt("{label} needs a pairing code", { label: connectState.prefill.label }),
+              description: gt("Create one on it, then add it to this device as an environment."),
+              actions: (
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  onClick={() => connection.addWithCode(connectState.prefill)}
+                >
+                  <T>Enter code</T>
+                </Button>
+              ),
+            }
+          : null;
   const failure = state.error === null ? null : linkedThreadFailure(state.error, { via, label }, m);
   const retry = failure?.retryable ? (
     <AlertAction>
@@ -202,6 +252,15 @@ export function LinkedThreadPane(props: {
         label={label}
         via={via}
         working={transcript !== null && isLinkedThreadWorking(transcript)}
+        notice={connectNotice}
+        action={
+          <Button size="sm" variant="outline" disabled={connecting} onClick={() => void connect()}>
+            <PlugIcon aria-hidden />
+            <span className="@max-[320px]/composer-surface:sr-only">
+              <T>Connect to interact</T>
+            </span>
+          </Button>
+        }
       />
     </div>
   );

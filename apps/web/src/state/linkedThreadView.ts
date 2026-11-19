@@ -1,6 +1,7 @@
-import { useAtomValue } from "@effect/atom-react";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { useAtom, useAtomSet, useAtomValue } from "@effect/atom-react";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
+  connectLinkedEnvironment,
   createLinkedThreadSession,
   type LinkedThreadOpen,
   resolveLinkedThreadOpen,
@@ -12,11 +13,13 @@ import { Atom } from "effect/reactivity";
 import { useSyncExternalStore } from "react";
 
 import { useRightPanelStore } from "../rightPanelStore";
+import { connectPairing, reachesEnvironment } from "../connection/onboarding";
 import { getDocumentActivity } from "../lib/documentActivity";
 import type { LinkedThreadSurface } from "../linkedThreadSurface";
 import { buildThreadRouteParams } from "../threadRoutes";
 import { useEnvironment } from "./environments";
 import { peerLinkEnvironment, useLinkedEnvironments } from "./peerLinks";
+import { useAtomCommand } from "./use-atom-command";
 
 /**
  * How a click opens a thread that the thread `panelRef` says is on a linked environment: in place
@@ -112,6 +115,105 @@ const linkedThreadSessionAtom = Atom.family((key: string) => {
     }),
   ).pipe(Atom.setIdleTTL(5 * 60_000), Atom.withLabel(`linked-thread-session:${key}`));
 });
+
+/** A linked environment the add-environment dialog opens for, with what is known about it filled in. */
+export interface AddEnvironmentPrefill {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  readonly host: string | null;
+}
+
+export const addEnvironmentPrefillAtom = Atom.make<AddEnvironmentPrefill | null>(null).pipe(
+  Atom.withLabel("add-environment-prefill"),
+);
+
+export type LinkedEnvironmentConnectState =
+  | { readonly phase: "idle" | "connecting" }
+  | { readonly phase: "unreachable"; readonly label: string }
+  /** The user pairs with a code of their own; `prefill` reopens the dialog for it. */
+  | { readonly phase: "manual"; readonly prefill: AddEnvironmentPrefill };
+
+// Kept like the tab's reads, so the tab still says what happened after a visit to Settings.
+const linkedEnvironmentConnectAtom = Atom.family((key: string) =>
+  Atom.make<LinkedEnvironmentConnectState>({ phase: "idle" }).pipe(
+    Atom.setIdleTTL(5 * 60_000),
+    Atom.withLabel(`linked-environment-connect:${key}`),
+  ),
+);
+
+/**
+ * Connects this client to the environment `surface`'s thread lives in. One step when the linking
+ * environment can get a pairing for this client: the thread then opens there and the tab closes.
+ * Otherwise the add-environment dialog opens for that machine.
+ */
+export function useConnectLinkedEnvironment(panelRef: ScopedThreadRef, surface: LinkedThreadSurface) {
+  const navigate = useNavigate();
+  const setPrefill = useAtomSet(addEnvironmentPrefillAtom);
+  const mayPair = useAtomValue(
+    peerLinkEnvironment.pairClient.permissionAtom(surface.viaEnvironmentId),
+  );
+  const quiet = { reportFailure: false, reportDefect: false } as const;
+  const requestPairing = useAtomCommand(peerLinkEnvironment.pairClient, quiet);
+  const reaches = useAtomCommand(reachesEnvironment, quiet);
+  const pair = useAtomCommand(connectPairing, quiet);
+  const [state, setState] = useAtom(
+    linkedEnvironmentConnectAtom(`${scopedThreadKey(panelRef)}:${surface.id}`),
+  );
+  const addWithCode = (prefill: AddEnvironmentPrefill) => {
+    setPrefill(prefill);
+    void navigate({ to: "/settings/connections" });
+  };
+  const connect = async () => {
+    setState({ phase: "connecting" });
+    const outcome = await connectLinkedEnvironment({
+      label: surface.label,
+      requestPairing: async () => {
+        // Without it the linking environment refuses; the user can still pair by hand.
+        if (!mayPair) return null;
+        const result = await requestPairing({
+          environmentId: surface.viaEnvironmentId,
+          input: { environmentId: surface.environmentId },
+        });
+        return result._tag === "Success" ? result.value : null;
+      },
+      reaches: async (host) => {
+        const result = await reaches({ host, environmentId: surface.environmentId });
+        return result._tag === "Success" && result.value;
+      },
+      pair: async ({ host, pairingCode }) => {
+        const result = await pair({
+          host,
+          pairingCode,
+          expectedEnvironmentId: surface.environmentId,
+        });
+        return result._tag === "Success";
+      },
+    });
+    if (outcome.type === "unreachable") {
+      setState({ phase: "unreachable", label: outcome.label });
+      return outcome;
+    }
+    if (outcome.type === "connected") {
+      setState({ phase: "idle" });
+      // The thread opens where every thread on a connected environment does, so its tab is done.
+      useRightPanelStore.getState().closeSurface(panelRef, surface.id);
+      void navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(scopeThreadRef(surface.environmentId, surface.threadId)),
+      });
+      return outcome;
+    }
+    const prefill = {
+      environmentId: surface.environmentId,
+      label: outcome.label,
+      host: outcome.host,
+    };
+    setState({ phase: "manual", prefill });
+    addWithCode(prefill);
+    return outcome;
+  };
+  return { state, connect, addWithCode };
+}
 
 const noSubscription = () => () => {};
 

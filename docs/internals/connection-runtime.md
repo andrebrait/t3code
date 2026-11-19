@@ -70,7 +70,9 @@ so a member re-prepares only when the borrowed part changes: the address, or
 the Bearer token (DPoP hosts only the address). It is dropped only when the
 host is removed or disabled, loses the cluster capability, or reports an empty
 member list, never on a plain reconnect. A saved or platform entry for the same
-environment wins.
+environment wins. A member's base URL is `<main>/cluster/<memberId>`, so endpoint
+URLs must join onto the base path: `new URL("/path", base)` would hit the main
+host instead.
 
 ## Transport health and data freshness are separate
 

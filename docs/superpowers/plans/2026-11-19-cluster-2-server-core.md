@@ -2470,6 +2470,7 @@ it.effect("adds a member with its join string, and neither side nests", () =>
       expect(yield* main.cluster.members.pipe(Stream.runHead)).toEqual(Option.some([renamed]));
 
       yield* main.settings.updateSettings({ clusterEnabled: false });
+      expect(yield* main.cluster.members.pipe(Stream.runHead)).toEqual(Option.some([]));
       expect(yield* main.cluster.addMember({ target: joinString }).pipe(Effect.flip)).toMatchObject({
         reason: "disabled",
       });
@@ -3001,7 +3002,15 @@ In `make`, after `const memberLock = …`:
     return toMember(yield* findRow(input.memberId));
   });
 
-  const members = SubscriptionRef.changes(rowsRef).pipe(Stream.map((rows) => rows.map(toMember)));
+  // Clients would otherwise list members the proxy answers 403 for.
+  const members = Stream.zipLatestWith(
+    SubscriptionRef.changes(rowsRef),
+    Stream.concat(
+      Stream.fromEffect(enabled),
+      serverSettings.streamChanges.pipe(Stream.map((settings) => settings.clusterEnabled)),
+    ).pipe(Stream.changes),
+    (rows, on) => (on ? rows.map(toMember) : []),
+  );
 
   const awaitGone: ClusterService["Service"]["awaitGone"] = (memberId) =>
     SubscriptionRef.changes(rowsRef).pipe(
@@ -3226,7 +3235,11 @@ it.effect("forwards HTTP to the member under the client's scopes, never the clie
         authenticated: true,
         ...authScopeResponse(["orchestration:read"]),
       });
-      expect((yield* get(`${base}/.well-known/t3/environment`)).status).toBe(401);
+      // Clients read the descriptor before they hold credentials.
+      expect(
+        yield* get(`${base}/.well-known/t3/environment`).pipe(Effect.flatMap((response) => response.json)),
+      ).toMatchObject({ environmentId: box.environmentId });
+      expect((yield* get(`${base}/api/auth/session`)).status).toBe(401);
       expect(
         yield* get(`${base}/.well-known/t3/environment`, reader).pipe(
           Effect.flatMap((response) => response.json),
@@ -3408,6 +3421,31 @@ const memberFailure = (memberId: EnvironmentId, status: Exclude<ClusterMemberSta
     { status: 502 },
   );
 
+const forwardPublicDescriptor = (memberId: EnvironmentId, request: HttpServerRequest.HttpServerRequest) =>
+  Effect.gen(function* () {
+    const cluster = yield* ClusterService.ClusterService;
+    const connected = yield* Effect.result(cluster.connect(memberId));
+    if (Result.isFailure(connected)) {
+      return connected.failure.reason === "disabled"
+        ? HttpServerResponse.jsonUnsafe({ code: "cluster_disabled" }, { status: 403 })
+        : connected.failure.reason === "unknown_member"
+          ? HttpServerResponse.text("Not Found", { status: 404 })
+          : memberFailure(memberId, "offline");
+    }
+    const { upstream } = connected.success;
+    const response = yield* upstream.httpClient
+      .execute(
+        HttpClientRequest.get(`${upstream.origin}/.well-known/t3/environment`).pipe(
+          HttpClientRequest.setHeaders({ accept: request.headers.accept ?? "application/json" }),
+        ),
+      )
+      .pipe(Effect.option);
+    if (Option.isNone(response)) return memberFailure(memberId, "offline");
+    return HttpServerResponse.jsonUnsafe(yield* response.value.json.pipe(Effect.orDie), {
+      status: response.value.status,
+    });
+  });
+
 const handler = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
   const url = requestUrl(request);
@@ -3420,6 +3458,10 @@ const handler = Effect.gen(function* () {
   const upgrade = request.headers.upgrade?.toLowerCase() === "websocket";
 
   const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+  // The descriptor is public on every environment; clients read it before they hold credentials.
+  if (!upgrade && request.method === "GET" && path === "/.well-known/t3/environment") {
+    return yield* forwardPublicDescriptor(memberId, request);
+  }
   const session = yield* (
     upgrade
       ? serverAuth.authenticateWebSocketUpgrade(request, path === "/ws" ? "rpc" : "media")

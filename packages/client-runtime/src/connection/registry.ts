@@ -169,6 +169,7 @@ export class EnvironmentRegistry extends Context.Service<
       | PlatformEnvironmentRemovalError
     >;
     readonly retryNow: (environmentId: EnvironmentId) => Effect.Effect<void>;
+    readonly reprepare: (environmentId: EnvironmentId) => Effect.Effect<void>;
     readonly setEnabled: (
       environmentId: EnvironmentId,
       enabled: boolean,
@@ -1194,6 +1195,12 @@ export const make = Effect.gen(function* () {
       Effect.catchTags({ EnvironmentNotRegisteredError: () => Effect.void }),
       Effect.withSpan("EnvironmentRegistry.retryNow"),
     );
+  const reprepare = (environmentId: EnvironmentId) =>
+    acquireSupervisor(environmentId).pipe(
+      Effect.flatMap((supervisor) => supervisor.reprepare),
+      Effect.catchTags({ EnvironmentNotRegisteredError: () => Effect.void }),
+      Effect.withSpan("EnvironmentRegistry.reprepare"),
+    );
   const setEnabled = Effect.fn("EnvironmentRegistry.setEnabled")(function* (
     environmentId: EnvironmentId,
     enabled: boolean,
@@ -1340,6 +1347,7 @@ export const make = Effect.gen(function* () {
     reorderRoutes,
     removeRelayEnvironments,
     retryNow,
+    reprepare,
     setEnabled,
     setCompatibility,
     state,

@@ -15,6 +15,8 @@ import * as EnvironmentRegistry from "./registry.ts";
 import * as ConnectionOnboarding from "./onboarding.ts";
 import { connectionRoutes, hasRelayRoute } from "./routes.ts";
 import * as EnvironmentSupervisor from "./supervisor.ts";
+import type { ConnectionCatalogEntry } from "./catalog.ts";
+import type { PreparedConnection } from "./model.ts";
 import * as PlatformConnectionSource from "../platform/source.ts";
 import * as RelayEnvironmentDiscovery from "../relay/discovery.ts";
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
@@ -77,15 +79,42 @@ export const watchDiscoveredCompatibility = Effect.fn("connection.watchDiscovere
 );
 
 /**
- * Publishes each main host's connection for its members to borrow and lists its members while it
- * is connected. A changed or lost host connection drops the members, so none keeps a stale route
- * or credential; the next subscription replays the list and they prepare again.
+ * Publishes each enabled main host's connection for its members to borrow and lists its members.
+ * Members outlive host reconnects; a host that changes route or credential re-prepares them.
  */
 export const watchClusterMembers = Effect.fn("connection.watchClusterMembers")(function* () {
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
   const hosts = yield* ClusterHosts.ClusterHosts;
+  // The parts of a host connection its members borrow (see the resolver's cluster broker).
+  const borrowed = new Map<EnvironmentId, string>();
   const dropMembers = (hostEnvironmentId: EnvironmentId) =>
     registry.reconcileCluster({ hostEnvironmentId, hostLabel: "", members: [] });
+  const publishHost = Effect.fnUntraced(function* (
+    hostEnvironmentId: EnvironmentId,
+    host: Option.Option<PreparedConnection>,
+  ) {
+    yield* hosts.set(hostEnvironmentId, host);
+    if (Option.isNone(host)) return;
+    const authorization = host.value.httpAuthorization;
+    const next = `${host.value.httpBaseUrl} ${
+      authorization === null
+        ? ""
+        : authorization._tag === "Bearer"
+          ? authorization.token
+          : authorization.accessToken
+    }`;
+    const previous = borrowed.get(hostEnvironmentId);
+    borrowed.set(hostEnvironmentId, next);
+    if (previous === undefined || previous === next) return;
+    for (const { target } of (yield* SubscriptionRef.get(registry.entries)).values()) {
+      if (
+        target._tag === "ClusterConnectionTarget" &&
+        target.hostEnvironmentId === hostEnvironmentId
+      ) {
+        yield* registry.reprepare(target.environmentId);
+      }
+    }
+  });
   const followHost = (hostEnvironmentId: EnvironmentId) =>
     registry
       .followStream(
@@ -94,28 +123,45 @@ export const watchClusterMembers = Effect.fn("connection.watchClusterMembers")(f
           EnvironmentSupervisor.EnvironmentSupervisor.pipe(
             Effect.map((supervisor) =>
               SubscriptionRef.changes(supervisor.prepared).pipe(
-                Stream.map(ClusterHosts.clusterHostConnection),
-                Stream.switchMap((host) =>
-                  Stream.unwrap(
-                    Effect.gen(function* () {
-                      // followStream restarts on any entry change; only a new connection drops.
-                      const previous = yield* hosts.get(hostEnvironmentId);
-                      if (Option.getOrNull(previous) !== Option.getOrNull(host)) {
-                        yield* hosts.set(hostEnvironmentId, host);
-                        yield* dropMembers(hostEnvironmentId);
-                      }
-                      if (Option.isNone(host)) return Stream.empty;
-                      return subscribe(WS_METHODS.clusterMembers, {}).pipe(
-                        Stream.tap((members) =>
-                          registry.reconcileCluster({
-                            hostEnvironmentId,
-                            hostLabel: host.value.target.label,
-                            members,
-                          }),
-                        ),
-                      );
-                    }),
+                Stream.changesWith(
+                  (previous, next) => Option.getOrNull(previous) === Option.getOrNull(next),
+                ),
+                Stream.tap((prepared) =>
+                  publishHost(hostEnvironmentId, ClusterHosts.clusterHostConnection(prepared)),
+                ),
+                // A disconnected host keeps its subscription; it resumes with the next session.
+                Stream.filter(Option.isSome),
+                Stream.map((prepared) =>
+                  Option.map(
+                    ClusterHosts.clusterHostConnection(prepared),
+                    (host) => host.target.label,
                   ),
+                ),
+                Stream.changesWith(
+                  (previous, next) => Option.getOrNull(previous) === Option.getOrNull(next),
+                ),
+                Stream.switchMap(
+                  Option.match({
+                    onNone: () =>
+                      Stream.fromEffect(dropMembers(hostEnvironmentId)).pipe(Stream.drain),
+                    onSome: (hostLabel) =>
+                      subscribe(
+                        WS_METHODS.clusterMembers,
+                        {},
+                        {
+                          onExpectedFailure: (cause) =>
+                            Effect.logWarning("Could not list a main host's cluster members.", {
+                              hostEnvironmentId,
+                              cause,
+                            }),
+                          retryExpectedFailureAfter: "1 second",
+                        },
+                      ).pipe(
+                        Stream.tap((members) =>
+                          registry.reconcileCluster({ hostEnvironmentId, hostLabel, members }),
+                        ),
+                      ),
+                  }),
                 ),
               ),
             ),
@@ -132,19 +178,19 @@ export const watchClusterMembers = Effect.fn("connection.watchClusterMembers")(f
         ),
       );
   const followed = new Map<EnvironmentId, Fiber.Fiber<void>>();
+  const isHost = (entry: ConnectionCatalogEntry | undefined) =>
+    entry !== undefined && entry.enabled && entry.target._tag !== "ClusterConnectionTarget";
   yield* SubscriptionRef.changes(registry.entries).pipe(
     Stream.runForEach((entries) =>
       Effect.gen(function* () {
         for (const [environmentId, entry] of entries) {
-          if (entry.target._tag === "ClusterConnectionTarget" || followed.has(environmentId)) {
-            continue;
-          }
+          if (!isHost(entry) || followed.has(environmentId)) continue;
           followed.set(environmentId, yield* followHost(environmentId).pipe(Effect.forkScoped));
         }
         for (const [environmentId, fiber] of followed) {
-          const entry = entries.get(environmentId);
-          if (entry !== undefined && entry.target._tag !== "ClusterConnectionTarget") continue;
+          if (isHost(entries.get(environmentId))) continue;
           followed.delete(environmentId);
+          borrowed.delete(environmentId);
           yield* Fiber.interrupt(fiber);
           yield* hosts.set(environmentId, Option.none());
           yield* dropMembers(environmentId);

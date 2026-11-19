@@ -48,6 +48,7 @@ const ROUTE_ICONS: Record<ConnectionRouteKind, AppSymbolName> = {
   vpn: { ios: "lock.shield", android: "lock" },
   public: "globe",
   ssh: "terminal",
+  cluster: "link",
 };
 
 export function EnvironmentRoutesSection({

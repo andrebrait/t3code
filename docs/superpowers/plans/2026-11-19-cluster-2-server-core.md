@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** A T3 server can invite itself into a cluster, add members over pinned HTTPS or SSH, track their status, forward `/cluster/<memberId>/*` to them with the client's scopes as a cap, and leave or remove members again. Clustered environments take no part in peer links.
+**Goal:** A T3 server can invite itself into a cluster, add members over pinned HTTPS or SSH, hold one control link to each member (which gives their status and carries member agents' calls back), forward `/cluster/<memberId>/*` to them with the client's scopes as a cap, and leave or remove members again. Clustered environments take no part in peer links.
 
-**Architecture:** One `ClusterService` (`apps/server/src/cluster/`) owns join, leave, list, status probing and refusals; RPC handlers, the `/api/cluster/*` HTTP group, the proxy route and the CLI are thin transports over it. A small `ClusterRole` service reads the two new tables so `EnvironmentAuth`, `PeerLinks`, `McpOAuth` and `/mcp` can refuse by role without depending on `ClusterService`. Upstream connections go through `ClusterUpstream`: one undici `Agent` per pinned fingerprint (a connector that hands undici the socket only after the SHA-256 matches), or the existing `packages/ssh` loopback forward. The member side trusts a `cluster-host` session and caps it per request from `x-t3-cluster-scopes`; the proxy always overwrites that header with the authenticated client's scopes.
+**Architecture:** One `ClusterService` (`apps/server/src/cluster/`) owns join, leave, list, the control links and refusals; RPC handlers, the `/api/cluster/*` HTTP group, the proxy route and the CLI are thin transports over it. A small `ClusterRole` service reads the two new tables so `EnvironmentAuth`, `PeerLinks`, `McpOAuth` and `/mcp` can refuse by role without depending on `ClusterService`. Upstream connections go through `ClusterUpstream`: one undici `Agent` per pinned fingerprint (a connector that hands undici the socket only after the SHA-256 matches), or the existing `packages/ssh` loopback forward. The member side trusts a `cluster-host` session and caps it per request from `x-t3-cluster-scopes`; the proxy always overwrites that header with the authenticated client's scopes. The main host keeps one supervised fiber per member that opens the member's `/ws` as its `cluster-host` session and subscribes to `cluster.hostChannel`; the member's `ready` event marks it `online`, a dropped socket marks it `offline` and reconnects with backoff, and a failed preflight marks it `incompatible` or `revoked`. Calls from member agents arrive on that subscription, run through a `serve` function the server passes to `ClusterService.start`, and go back with `cluster.hostReply`.
 
-**Tech Stack:** Effect 4 services (`Context.Service`, `Effect.fn`), `effect/sql` SQLite, `effect/http` + `HttpApi`, `effect/socket`, npm `undici` (`Agent`, `WebSocket`), `@effect/platform-node/NodeHttpClient.makeUndici`, `@t3tools/ssh/tunnel`, `@effect/vitest`.
+**Tech Stack:** Effect 4 services (`Context.Service`, `Effect.fn`), `effect/sql` SQLite, `effect/http` + `HttpApi`, `effect/socket`, `effect/rpc` (`RpcClient.makeProtocolSocket`, `RpcServer`), `FiberMap`, npm `undici` (`Agent`, `WebSocket`), `@effect/platform-node/NodeHttpClient.makeUndici`, `@t3tools/ssh/tunnel`, `@effect/vitest`.
 
 **Spec:** `docs/superpowers/specs/2026-11-19-environment-cluster-design.md`
 
@@ -26,7 +26,11 @@ Verbatim from the spec; every task honours them.
 - Join string: "`<url>#<code>.<sha256>`".
 - Member status: "`online | offline | incompatible | revoked`".
 - "member unreachable | proxy `502 {code:"cluster_member_unreachable", memberId}`"; "fingerprint mismatch | hard fail "certificate changed", no fallback; admin re-invites"; "member revoked main host | upstream `401`; member marked `revoked`; row kept until admin removes it"; "protocol version mismatch | checked per upstream connect; member shown `incompatible`"; "SSH failure | existing `packages/ssh` errors surfaced as is".
-- "Headless main hosts need SSH keys or an agent; a password prompt fails with a clear error."
+- "SSH is only how the main host's server reaches the member. It uses the main host machine's SSH keys or agent; a password or passphrase prompt fails with a clear error. No client is involved, desktop included."
+- "The main host keeps one long-lived WebSocket RPC session to each member (its `cluster-host` session, over pinned HTTPS or the SSH forward), reconnecting with backoff."
+- "Member status comes from the link: connected is `online`, a protocol mismatch on connect is `incompatible`, `401` is `revoked`, otherwise `offline`. No polling loop."
+- "Members never need an address for the main host. Calls from a member to the main host ride the link in reverse: the member exposes a `cluster.hostChannel` subscription carrying requests, and the main host answers each with `cluster.hostReply(requestId, result)`."
+- "Requests queued while the link is down fail with "cluster host unreachable" and are never delivered twice."
 - Tables `cluster_members` (`environment_id` PK, `label`, `transport`, `url` / `ssh_target`, `cert_sha256`, `secret_name`, `joined_at`, `last_reached_at`, `last_error`) and `cluster_membership` ("one row with the main host's `environment_id`, label, and `joined_at`. Its presence means "is a member". Rows in `cluster_members` mean "is a main host".").
 - "new RPCs added to `CLIENT_GUARDED_RPC_SCOPES` (`access:write` for add/remove/invite/leave)."
 - "Labs setting `clusterEnabled`, default false, gating both sides."
@@ -45,9 +49,11 @@ export class ServerTls extends Context.Service<
 export const layer: Layer.Layer<ServerTls, never, ServerSecretStore.ServerSecretStore /* | whatever plan 1 needs */>;
 ```
 
-and the listener serving TLS and plain HTTP on one port. If Plan 1 lands a different path or name, change only the imports in Tasks 6, 7 and 10. Tests here never need a real `ServerTls`; they use `Layer.mock(ServerTls.ServerTls)({ fingerprint: FINGERPRINT })`. This plan normalizes any fingerprint it compares with `normalizeCertificateFingerprint` (strips `:`, lowercases), so Plan 1 may also return Node's `AB:CD:…` form.
+and the listener serving TLS and plain HTTP on one port. If Plan 1 lands a different path or name, change only the imports in Tasks 6, 7 and 11. Tests here never need a real `ServerTls`; they use `Layer.mock(ServerTls.ServerTls)({ fingerprint: FINGERPRINT })`. This plan normalizes any fingerprint it compares with `normalizeCertificateFingerprint` (strips `:`, lowercases), so Plan 1 may also return Node's `AB:CD:…` form.
 
 **Produced for Plan 3 (client runtime, web, mobile):**
+
+Member `status`, `lastReachedAt` and `lastError` come from the control link (Task 8): `online` while it is up, `offline` from the moment it drops (and right after `addMember`, until the link is up), `incompatible` or `revoked` when its preflight says so.
 
 - `@t3tools/contracts`: `ClusterMember`, `ClusterMemberStatus`, `ClusterTransport`, `ClusterRole`, `ClusterStatus`, `ClusterInviteInput`, `ClusterInvite`, `ClusterAddMemberInput`, `ClusterMemberRef`, `ClusterRenameMemberInput`, `ClusterRemoveMemberResult`, `ClusterLeaveResult`, `ClusterError`, `CLUSTER_ROUTE_PREFIX`, `clusterMemberBaseUrl(hostBaseUrl, memberId)`, `parseClusterJoinString`, `formatClusterJoinString`, `parseClusterSshTarget`, `normalizeCertificateFingerprint`.
 - `WS_METHODS.clusterStatus` (`cluster.status`, `orchestration:read`), `WS_METHODS.clusterMembers` (`cluster.members`, stream of `ReadonlyArray<ClusterMember>`, `orchestration:read`), and guarded (`access:write`) `WS_METHODS.clusterInvite`, `clusterAddMember`, `clusterRemoveMember`, `clusterRenameMember`, `clusterLeave`, all in `CLIENT_GUARDED_RPC_SCOPES` except the two reads.
@@ -56,10 +62,15 @@ and the listener serving TLS and plain HTTP on one port. If Plan 1 lands a diffe
 
 **Produced for Plan 4 (agent MCP routing):**
 
-- `EnvironmentAuth.CLUSTER_HOST_SUBJECT` (`"cluster-host"`), accepted on RPC, HTTP and `/mcp`; `authenticateMcpClient` maps it to `{ access: "full-access", peerLink: false }`.
+- `EnvironmentAuth.CLUSTER_HOST_SUBJECT` (`"cluster-host"`), accepted on RPC, HTTP and `/mcp`; `authenticateMcpClient` maps it to `{ access: "full-access", peerLink: false, cluster: true }` (`McpClientSession.cluster?: boolean`), so `/mcp` can tell the main host apart from other clients.
 - `CLUSTER_SCOPES_HEADER` (`"x-t3-cluster-scopes"`) and its rule: honoured only for `cluster-host` sessions, only narrows.
-- `ClusterService.connect(memberId): Effect<{ upstream: ClusterUpstream.Upstream; token: string; member: ClusterMember }, ClusterError>` where `Upstream = { origin; httpClient; webSocket }` — the way Plan 4 reaches a member's `/mcp` with the `cluster-host` credential.
-- Join-time hook: `ClusterJoinRequest.hostMcp?: { url: string; token: string }` (optional in this plan; `addMember` sends none). `ClusterService.acceptJoin` stores it in `cluster_membership.host_mcp_url` and the secret named by `cluster_membership.host_mcp_secret_name` (`cluster-host-mcp-<sessionId>`), and removes the secret on leave or rejoin. Plan 4 mints the `cluster-member` MCP token inside `addMember` (the `payload.host` object in Task 7, Step 3) and reads the member side through those columns.
+- `ClusterService.connect(memberId): Effect<MemberConnection, ClusterError>` with `MemberConnection = { upstream: ClusterUpstream.Upstream; token: string; member: ClusterMember }` and `Upstream = { origin; httpClient; webSocket }` — the way Plan 4 reaches a member's `/mcp` with the `cluster-host` credential.
+- The control link (Task 8):
+  - `@t3tools/contracts`: `ClusterHostRequest = { requestId; tool; arguments; limits: { runtimeMode; interactionMode }; sender? }`, `ClusterHostResult = { isError: boolean; text: string }` (an MCP tool result's joined text, as `/mcp` answers), `ClusterHostChannelEvent` (`{ _tag: "ready" } | { _tag: "request"; request }`), `ClusterHostReplyInput`, `WS_METHODS.clusterHostChannel` / `clusterHostReply`, `ClusterLinkRpcs`.
+  - `ClusterService.start(serve: ClusterHostServe): Effect<void, never, Scope>` with `ClusterHostServe = (member: ClusterMember, request: ClusterHostRequest) => Effect<ClusterHostResult>`. `server.ts` passes `ClusterService.refuseHostRequests` here; Plan 4 replaces it with the function that runs the call through `/mcp`'s tools.
+  - `ClusterService.hostCall(call: ClusterHostCall): Effect<ClusterHostResult, ClusterError>` (member side, `ClusterHostCall = Omit<ClusterHostRequest, "requestId">`). It fails at once with `clusterHostUnreachable(hostLabel)` (reason `"unreachable"`) while no link is up, and with the same error when the link drops before the answer.
+  - `ClusterService.clusterHostUnreachable(hostLabel): ClusterError`.
+- `server.ts` builds `ClusterService` inside the `PeerForwarding` provide (`Layer.provideMerge`), so `PeerForwarding` can read it with `Effect.serviceOption`.
 
 ## Review Focus
 
@@ -67,9 +78,12 @@ Untested failure modes most likely to bite, each with the test that pins it:
 
 1. **A member's address changes** (DHCP, roaming laptop, new T3 Connect host). The admin re-invites on the member and re-adds it on the main host; the member rotates its `cluster-host` session, the main host updates `url`/`cert_sha256` in place and the proxy uses the new address with no restart. Test: Task 7, "re-adding a member at a new address moves the proxy there and retires the old token".
 2. **Concurrent join of the same member twice** (two Add clicks, CLI plus UI). Each join rotates the member's host session; without serialization the main host can store the token the member already revoked. Test: Task 7, "two adds of one member racing leave the stored token the live one"; member-side variant in Task 6, "two hosts racing to join one member: one wins".
-3. **Member removed while client sockets are piped through the proxy.** Sockets must close, not keep forwarding with a forgotten member's credential. Test: Task 8, "forwards a socket to the member with the client's scopes and closes it when the member is removed".
+3. **Member removed while client sockets are piped through the proxy.** Sockets must close, not keep forwarding with a forgotten member's credential. Test: Task 9, "forwards a socket to the member with the client's scopes and closes it when the member is removed".
 4. **Leave while the main host is offline.** Leave is local only: it revokes the host session and clears the row, and the member pairs clients again. Test: Task 6, "a member leaves without its main host and is standalone again".
-5. **Scope header forged.** A non-cluster-host caller's header must not change its scopes, and a client must not widen its upstream cap by sending its own header to the main host. Tests: Task 3, "ignores the cluster scope header on any other session"; Task 8, "forwards HTTP to the member under the client's scopes, never the client's header".
+5. **Scope header forged.** A non-cluster-host caller's header must not change its scopes, and a client must not widen its upstream cap by sending its own header to the main host. Tests: Task 3, "ignores the cluster scope header on any other session"; Task 9, "forwards HTTP to the member under the client's scopes, never the client's header".
+6. **The link drops while a `hostChannel` request is in flight.** The member's agent must hear "cluster host unreachable" at once, not hang, and the main host must stop the work it started for that request instead of answering into a dead socket. Test: Task 8, "the control link carries a member's calls, fails them when it drops, and never sends one twice" (the in-flight call fails; the main host's `serve` is interrupted).
+7. **The member restarts and replays.** Its pending calls die with the process; its agents and followers call again, and the link must not hand the main host an old request a second time. Retries with the same `clientRequestId` land once at the target (Plan 4). Test: Task 8, same test: after the link comes back, the first request the main host sees is the new one.
+8. **The main host restarts.** Every member's link drops at once; statuses must not stay `online` from before the restart, and links must come back without anyone touching the member. Tests: Task 8, same test (`start` again resets statuses to `offline` and reconnects), and "a member that leaves shows revoked over its link, and only its host opens the channel" (a drop followed by a failed preflight).
 
 ## File Map
 
@@ -85,7 +99,7 @@ Create:
 - `apps/server/src/cluster/ClusterProxy.ts`, `ClusterProxy.test.ts`
 - `apps/server/src/cli/cluster.ts`
 
-Modify: `packages/contracts/src/{index,environment,settings,peerLink,rpc,clientRpcPermissions,environmentHttp}.ts`; `apps/server/src/persistence/{Migrations,AuthPairingLinks}.ts`; `apps/server/src/auth/{EnvironmentAuth,EnvironmentAuth.test,http,McpOAuth,McpOAuth.test,RpcAuthorization,RpcAuthorization.test}.ts`; `apps/server/src/cloud/{http,CloudLink}.ts`; `apps/server/src/peer/{PeerLinks,PeerLinks.test,PeerLinks.testkit}.ts`; `apps/server/src/mcp/McpHttpServer.ts`; `apps/server/src/environment/ServerEnvironment.ts`; `apps/server/src/device/DeviceHubProxy.ts`; `apps/server/src/{ws,ws.test,server,binCli}.ts`; `packages/ssh/src/{tunnel,tunnel.test}.ts`; `docs/internals/{remote,environment-auth}.md`.
+Modify: `packages/contracts/src/{index,environment,settings,peerLink,rpc,clientRpcPermissions,environmentHttp}.ts`; `apps/server/src/persistence/{Migrations,AuthPairingLinks,reconcileV2PreviewMigration.test}.ts`; `apps/server/src/auth/{EnvironmentAuth,EnvironmentAuth.test,http,McpOAuth,McpOAuth.test,RpcAuthorization,RpcAuthorization.test}.ts`; `apps/server/src/cloud/{http,CloudLink}.ts`; `apps/server/src/peer/{PeerLinks,PeerLinks.test,PeerLinks.testkit}.ts`; `apps/server/src/mcp/McpHttpServer.ts`; `apps/server/src/environment/ServerEnvironment.ts`; `apps/server/src/device/DeviceHubProxy.ts`; `apps/server/src/{ws,ws.test,server,binCli}.ts`; `packages/ssh/src/{tunnel,tunnel.test}.ts`; `docs/internals/{remote,environment-auth}.md`.
 
 ---
 
@@ -277,10 +291,6 @@ export type ClusterLeaveResult = typeof ClusterLeaveResult.Type;
 export const ClusterJoinRequest = Schema.Struct({
   code: TrimmedNonEmptyString,
   host: Schema.Struct({ environmentId: EnvironmentId, label: TrimmedNonEmptyString }),
-  /** The main host's `/mcp` and a `cluster-member` token for this member's agents. */
-  hostMcp: Schema.optionalKey(
-    Schema.Struct({ url: TrimmedNonEmptyString, token: TrimmedNonEmptyString }),
-  ),
 });
 export type ClusterJoinRequest = typeof ClusterJoinRequest.Type;
 
@@ -308,6 +318,7 @@ export class ClusterError extends Schema.TaggedError<ClusterError>()(
       "pairing_rejected",
       "ssh",
       "storage",
+      "forbidden",
     ]),
     message: Schema.String,
     cause: Schema.optionalKey(Schema.Defect()),
@@ -424,6 +435,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 - Create: `apps/server/src/persistence/Migrations/099_Cluster.ts`, `apps/server/src/cluster/ClusterRole.ts`, `apps/server/src/cluster/ClusterRole.test.ts`
 - Modify: `apps/server/src/persistence/Migrations.ts:108` (import) and `:209` (entry)
+- Modify: `apps/server/src/persistence/reconcileV2PreviewMigration.test.ts:80` and `:201` (the expected migration lists)
 
 **Interfaces:**
 
@@ -528,9 +540,7 @@ export default Effect.gen(function* () {
       host_environment_id TEXT NOT NULL,
       host_label TEXT NOT NULL,
       joined_at TEXT NOT NULL,
-      host_session_id TEXT NOT NULL,
-      host_mcp_url TEXT,
-      host_mcp_secret_name TEXT
+      host_session_id TEXT NOT NULL
     )
   `;
 });
@@ -544,6 +554,12 @@ import Migration0099 from "./Migrations/099_Cluster.ts";
 
 ```ts
   [99, "Cluster", Migration0099],
+```
+
+`apps/server/src/persistence/reconcileV2PreviewMigration.test.ts` — in both expected lists, after `[98, "ActiveShellIndexIndexes"],` (lines 80 and 201):
+
+```ts
+        [99, "Cluster"],
 ```
 
 `apps/server/src/cluster/ClusterRole.ts`:
@@ -627,19 +643,19 @@ export const layer = Layer.effect(ClusterRole, make);
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `vp test run apps/server/src/cluster/ClusterRole.test.ts apps/server/src/persistence/Migrations.test.ts`
-Expected: PASS (including `registers every migration file`).
+Run: `vp test run apps/server/src/cluster/ClusterRole.test.ts apps/server/src/persistence/Migrations.test.ts apps/server/src/persistence/reconcileV2PreviewMigration.test.ts`
+Expected: PASS (including `registers every migration file`, and the reconcile lists ending at `[99, "Cluster"]`).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add apps/server/src/persistence/Migrations/099_Cluster.ts apps/server/src/persistence/Migrations.ts apps/server/src/cluster/ClusterRole.ts apps/server/src/cluster/ClusterRole.test.ts
+git add apps/server/src/persistence/Migrations/099_Cluster.ts apps/server/src/persistence/Migrations.ts apps/server/src/persistence/reconcileV2PreviewMigration.test.ts apps/server/src/cluster/ClusterRole.ts apps/server/src/cluster/ClusterRole.test.ts
 git commit -m "feat(server): cluster tables and role
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
-> If `main` gains migration 99 before this branch merges, renumber to the next free id; the name stays `Cluster`.
+> If `main` gains migration 99 before this branch merges, renumber to the next free id (here and in the reconcile lists); the name stays `Cluster`.
 
 ---
 
@@ -648,7 +664,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 **Files:**
 
 - Modify: `apps/server/src/persistence/AuthPairingLinks.ts:23-24` (subject constant)
-- Modify: `apps/server/src/auth/EnvironmentAuth.ts` — imports (`:1-60`), constants (`:59-86`), interface (`:517-640`), `authenticateRequest` (`:843-890`), `createPairingLink` (`:1150-1161`), `listPairingLinks` (`:1163-1185`), WebSocket ticket branch (`:1477-1529`), `authenticateMcpClient` (`:1531-1554`), returned service (`:1610-1638`), `layer` (`:1701-1705`)
+- Modify: `apps/server/src/auth/EnvironmentAuth.ts` — imports (`:1-60`), constants (`:59-86`), `McpClientSession` (`:88-94`), interface (`:517-640`), `authenticateRequest` (`:843-890`), `createPairingLink` (`:1150-1161`), `listPairingLinks` (`:1163-1185`), WebSocket ticket branch (`:1477-1529`), `authenticateMcpClient` (`:1531-1554`), returned service (`:1610-1638`), `layer` (`:1701-1705`)
 - Modify: `apps/server/src/auth/http.ts:500-503` (map `ClusterError`)
 - Modify: `apps/server/src/cloud/http.ts:62-83`, `apps/server/src/cloud/CloudLink.ts:430-476` (error unions)
 - Test: `apps/server/src/auth/EnvironmentAuth.test.ts` (inside the `EnvironmentAuth.layer` block, after the test at `:516`)
@@ -656,7 +672,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 **Interfaces:**
 
 - Consumes: `ClusterRole.ClusterRole` (Task 2), `ClusterError`, `CLUSTER_SCOPES_HEADER` (Task 1), `parseOAuthScope` (`@t3tools/shared/oauthScope`).
-- Produces: `AuthPairingLinks.CLUSTER_MEMBER_PAIRING_SUBJECT = "mcp-approval:cluster-member"`; `EnvironmentAuth.CLUSTER_HOST_SUBJECT = "cluster-host"`; exported `EnvironmentAuth.MCP_CLIENT_SUBJECT`; `EnvironmentAuth["Service"]["consumeClusterInvite"]: (code: string, input: { hostLabel: string; client: AuthClientMetadata }) => Effect<{ sessionId: AuthSessionId; token: string }, ServerAuthInvalidCredentialError | ServerAuthInternalError>`; `listPairingLinks({ includePurposeBound?: boolean })`; `createPairingLink`, `issuePairingCredential`, `issueConnectCredential` may fail with `ClusterError`.
+- Produces: `AuthPairingLinks.CLUSTER_MEMBER_PAIRING_SUBJECT = "mcp-approval:cluster-member"`; `EnvironmentAuth.CLUSTER_HOST_SUBJECT = "cluster-host"`; exported `EnvironmentAuth.MCP_CLIENT_SUBJECT`; `McpClientSession.cluster?: boolean` (`true` for a `cluster-host` session on `/mcp`); `EnvironmentAuth["Service"]["consumeClusterInvite"]: (code: string, input: { hostLabel: string; client: AuthClientMetadata }) => Effect<{ sessionId: AuthSessionId; token: string }, ServerAuthInvalidCredentialError | ServerAuthInternalError>`; `listPairingLinks({ includePurposeBound?: boolean })`; `createPairingLink`, `issuePairingCredential`, `issueConnectCredential` may fail with `ClusterError`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -720,7 +736,7 @@ Add after the test "spends peer-link pairing codes only for the chosen link acce
             ?.client.label,
         ).toBe("Cluster host · Studio");
         expect(yield* serverAuth.authenticateMcpClient(makeBearerRequest(host.token))).toMatchObject(
-          { access: "full-access", peerLink: false },
+          { access: "full-access", peerLink: false, cluster: true },
         );
       }).pipe(Effect.provide(layerEnvironmentAuth())),
     );
@@ -823,6 +839,13 @@ export const MCP_CLIENT_SUBJECT = "mcp-client";
 export const CLUSTER_HOST_SUBJECT = "cluster-host";
 // Lasts until either side leaves; nothing renews it.
 const CLUSTER_HOST_SESSION_TTL = Duration.days(3650);
+```
+
+`McpClientSession` — add after `peerLink`:
+
+```ts
+  /** The cluster's main host on this member: full trust, and never a peer link. */
+  readonly cluster?: boolean;
 ```
 
 Interface — change the `createPairingLink`, `issueConnectCredential` and `issuePairingCredential` error types to add `| ClusterError`; change `listPairingLinks` input to:
@@ -929,6 +952,7 @@ WebSocket ticket branch in `authenticateWebSocketUpgrade` — wrap the returned 
                 label: session.client.label ?? "Cluster host",
                 access: "full-access",
                 peerLink: false,
+                cluster: true,
               } satisfies McpClientSession)
             : Effect.fail(
                 new ServerAuthInvalidCredentialError({
@@ -1659,11 +1683,11 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 - Create: `apps/server/src/cluster/ClusterService.ts`, `apps/server/src/cluster/ClusterService.testkit.ts`, `apps/server/src/cluster/ClusterService.test.ts`, `apps/server/src/cluster/http.ts`
 - Modify: `packages/contracts/src/environmentHttp.ts:1-96` (import), before `:1066` (group), `:1066-1075` (`.add`)
-- Modify: `apps/server/src/server.ts:837-852` (`Layer.provide(ClusterHttp.layer)`), `:888-894` (provide `ClusterService.layer`)
+- Modify: `apps/server/src/server.ts:837-852` (`Layer.provide(ClusterHttp.layer)`), `:888-894` (build `ClusterService.layer` inside the `PeerForwarding` provide)
 
 **Interfaces:**
 
-- Consumes: `EnvironmentAuth` (`consumeClusterInvite`, `createPairingLink`, `listSessions`, `revokeSession`, `listPairingLinks({ includePurposeBound })`, `revokePairingLink`, `CLUSTER_HOST_SUBJECT`, `CLOUD_CONNECT_SUBJECT`, `MCP_CLIENT_SUBJECT`) from Task 3; `PeerLinks.unlinkAll` (Task 4); `ClusterRole` (Task 2); `ServerTls.fingerprint` (Plan 1); `ServerSecretStore`; `ServerEnvironment.getDescriptor`; `ServerSettings.clusterEnabled`.
+- Consumes: `EnvironmentAuth` (`consumeClusterInvite`, `createPairingLink`, `listSessions`, `revokeSession`, `listPairingLinks({ includePurposeBound })`, `revokePairingLink`, `CLUSTER_HOST_SUBJECT`, `CLOUD_CONNECT_SUBJECT`, `MCP_CLIENT_SUBJECT`) from Task 3; `PeerLinks.unlinkAll` (Task 4); `ClusterRole` (Task 2); `ServerTls.fingerprint` (Plan 1); `ServerEnvironment.getDescriptor`; `ServerSettings.clusterEnabled`.
 - Produces: `ClusterService.ClusterService` with `status: Effect<ClusterStatus, ClusterError>`, `invite(input: ClusterInviteInput): Effect<ClusterInvite, ClusterError>`, `acceptJoin(input: ClusterJoinRequest, client: AuthClientMetadata): Effect<ClusterJoinResult, ClusterError>`, `leave: Effect<ClusterLeaveResult, ClusterError>`; `ClusterService.layer`; HTTP `POST /api/cluster/join` (unauthenticated, spends the invite) and `POST /api/cluster/leave` (`cluster-host` sessions only) as `EnvironmentHttpApi.groups.cluster`; testkit `clusterDescriptor`, `FINGERPRINT`, `makeEnvironment`, `ClusterEnvironment`.
 
 - [ ] **Step 1: Write the testkit and failing tests**
@@ -1882,17 +1906,7 @@ it.effect("a member leaves without its main host and is standalone again", () =>
     Effect.gen(function* () {
       const member = yield* makeEnvironment(box);
       const invite = yield* member.cluster.invite({});
-      const joined = yield* member.cluster.acceptJoin(
-        {
-          code: invite.code,
-          host: studio,
-          hostMcp: { url: "https://studio.local:3773/mcp", token: "cluster-member-token" },
-        },
-        bot,
-      );
-      expect(yield* member.sql`SELECT host_mcp_url FROM cluster_membership`).toEqual([
-        { host_mcp_url: "https://studio.local:3773/mcp" },
-      ]);
+      const joined = yield* member.cluster.acceptJoin({ code: invite.code, host: studio }, bot);
 
       expect(yield* member.cluster.leave).toEqual({ left: true });
       expect(
@@ -1940,7 +1954,6 @@ import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
-import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
 import { CLUSTER_MEMBER_PAIRING_SUBJECT } from "../persistence/AuthPairingLinks.ts";
@@ -1980,7 +1993,6 @@ interface MembershipRow {
   readonly host_label: string;
   readonly joined_at: string;
   readonly host_session_id: string;
-  readonly host_mcp_secret_name: string | null;
 }
 
 /** Join, leave, members and refusals for both sides of a cluster. */
@@ -2003,7 +2015,6 @@ export class ClusterService extends Context.Service<
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const auth = yield* EnvironmentAuth.EnvironmentAuth;
-  const secrets = yield* ServerSecretStore.ServerSecretStore;
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const peerLinks = yield* PeerLinks.PeerLinks;
@@ -2018,7 +2029,7 @@ const make = Effect.gen(function* () {
   );
 
   const readMembership = sql<MembershipRow>`
-    SELECT host_environment_id, host_label, joined_at, host_session_id, host_mcp_secret_name
+    SELECT host_environment_id, host_label, joined_at, host_session_id
     FROM cluster_membership WHERE singleton = 1
   `.pipe(
     Effect.map((rows) => rows[0] ?? null),
@@ -2143,22 +2154,14 @@ const make = Effect.gen(function* () {
           ),
         );
       yield* Effect.gen(function* () {
-        const mcpSecretName =
-          input.hostMcp === undefined ? null : `cluster-host-mcp-${session.sessionId}`;
-        if (input.hostMcp !== undefined && mcpSecretName !== null) {
-          yield* secrets.set(mcpSecretName, new TextEncoder().encode(input.hostMcp.token));
-        }
         const joinedAt = previous?.joined_at ?? DateTime.formatIso(yield* DateTime.now);
         yield* sql`
-          INSERT INTO cluster_membership (singleton, host_environment_id, host_label, joined_at, host_session_id, host_mcp_url, host_mcp_secret_name)
-          VALUES (1, ${input.host.environmentId}, ${input.host.label}, ${joinedAt}, ${session.sessionId}, ${input.hostMcp?.url ?? null}, ${mcpSecretName})
+          INSERT INTO cluster_membership (singleton, host_environment_id, host_label, joined_at, host_session_id)
+          VALUES (1, ${input.host.environmentId}, ${input.host.label}, ${joinedAt}, ${session.sessionId})
           ON CONFLICT (singleton) DO UPDATE SET
             host_label = excluded.host_label,
-            host_session_id = excluded.host_session_id,
-            host_mcp_url = excluded.host_mcp_url,
-            host_mcp_secret_name = excluded.host_mcp_secret_name
+            host_session_id = excluded.host_session_id
         `;
-        if (previous?.host_mcp_secret_name) yield* secrets.remove(previous.host_mcp_secret_name);
       }).pipe(
         Effect.mapError(storageError),
         Effect.onError(() => auth.revokeSession(session.sessionId).pipe(Effect.ignore)),
@@ -2178,9 +2181,6 @@ const make = Effect.gen(function* () {
     yield* sql`DELETE FROM cluster_membership WHERE singleton = 1`.pipe(
       Effect.mapError(storageError),
     );
-    if (membership.host_mcp_secret_name !== null) {
-      yield* secrets.remove(membership.host_mcp_secret_name).pipe(Effect.mapError(storageError));
-    }
     return { left: true };
   }).pipe(memberLock.withPermits(1), Effect.withSpan("ClusterService.leave"));
 
@@ -2260,12 +2260,21 @@ export const layer = HttpApiBuilder.group(
 );
 ```
 
-`apps/server/src/server.ts` — add imports `* as ClusterHttp from "./cluster/http.ts"`, `* as ClusterService from "./cluster/ClusterService.ts"`, `* as ServerTls from "./tls/ServerTls.ts"`; in `HttpApiBuilder.layer(EnvironmentHttpApi).pipe(…)` add `Layer.provide(ClusterHttp.layer),`; in the `layerMakeRoutes` `.pipe(…)`, directly above the `// Links to other environments, shared by Settings (WebSocket) and agents (/mcp).` provide (so `PeerLinks`, provided below it, reaches the cluster):
+`apps/server/src/server.ts` — add imports `* as ClusterHttp from "./cluster/http.ts"`, `* as ClusterService from "./cluster/ClusterService.ts"`, `* as ServerTls from "./tls/ServerTls.ts"`; in `HttpApiBuilder.layer(EnvironmentHttpApi).pipe(…)` add `Layer.provide(ClusterHttp.layer),`. Then replace the links provide in `layerMakeRoutes` (`:887-894`) with:
 
 ```ts
-  // Clusters: joins, members and the proxy, shared by Settings (WebSocket), HTTP and the CLI.
-  Layer.provide(ClusterService.layer.pipe(Layer.provide(ServerTls.layer))),
+  // Links to other environments and the cluster, shared by Settings (WebSocket), HTTP, the
+  // proxy and agents (/mcp). PeerForwarding reads ClusterService, so it is built in here.
+  Layer.provide(
+    PeerForwarding.layer.pipe(
+      Layer.provideMerge(ClusterService.layer.pipe(Layer.provide(ServerTls.layer))),
+      Layer.provideMerge(PeerMcpClient.layer),
+      Layer.provideMerge(PeerLinks.layer),
+    ),
+  ),
 ```
+
+`ClusterService` takes `PeerLinks` from the `provideMerge` below it, and everything in `layerMakeRoutes` still sees `ClusterService` through the merge.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -2286,7 +2295,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
-## Task 7: `ClusterService` main side — add, probe, rename, remove, members
+## Task 7: `ClusterService` main side — add, rename, remove, members
 
 **Files:**
 
@@ -2304,10 +2313,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   - `removeMember(memberId: EnvironmentId): Effect<ClusterRemoveMemberResult, ClusterError>`
   - `renameMember(input: ClusterRenameMemberInput): Effect<ClusterMember, ClusterError>`
   - `connect(memberId: EnvironmentId): Effect<MemberConnection, ClusterError>` with `MemberConnection = { upstream: ClusterUpstream.Upstream; token: string; member: ClusterMember }`
-  - `probe(memberId: EnvironmentId): Effect<ClusterMember, ClusterError>`
-  - `recordStatus(memberId: EnvironmentId, status: ClusterMemberStatus, error: string | null): Effect<void>`
   - `awaitGone(memberId: EnvironmentId): Effect<void>`
-  - `start(): Effect<void, never, Scope>` (probes now and every 30 s)
+  - A new or re-added member is stored `offline`: only its control link (Task 8) marks it `online`.
   - testkit: `serveMember(descriptor)` → `ClusterEnvironment & { url: string; serveAgain: Effect<string, never, Scope> }`, `serveRoutes(routes, context)`, `makeEnvironment(descriptor, ssh?)`.
 
 - [ ] **Step 1: Extend the testkit and write the failing tests**
@@ -2438,22 +2445,19 @@ it.effect("adds a member with its join string, and neither side nests", () =>
       const main = yield* makeEnvironment(studioDescriptor);
       const joinString = (yield* member.cluster.invite({ url: member.url })).joinString ?? "";
       const added = yield* main.cluster.addMember({ target: joinString });
+      // Online once its control link is up (Task 8).
       expect(added).toMatchObject({
         environmentId: box.environmentId,
         label: "Box",
         transport: "https",
         address: member.url,
-        status: "online",
+        status: "offline",
       });
       expect(yield* member.cluster.status).toMatchObject({
         role: "member",
         host: { environmentId: studio.environmentId, label: "Studio" },
       });
       expect(yield* main.cluster.status).toMatchObject({ role: "main", host: null });
-      expect(yield* main.cluster.probe(box.environmentId)).toMatchObject({
-        status: "online",
-        lastError: null,
-      });
 
       expect(yield* member.cluster.addMember({ target: joinString }).pipe(Effect.flip)).toMatchObject(
         { reason: "is_member" },
@@ -2478,7 +2482,7 @@ it.effect("adds a member with its join string, and neither side nests", () =>
   ),
 );
 
-it.effect("a member that left shows revoked until removed; removal tells a reachable member", () =>
+it.effect("removal tells a reachable member, and forgets one that already left", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const member = yield* serveMember(box);
@@ -2488,10 +2492,6 @@ it.effect("a member that left shows revoked until removed; removal tells a reach
         .pipe(Effect.flatMap((invite) => main.cluster.addMember({ target: invite.joinString ?? "" })));
       yield* add;
       yield* member.cluster.leave;
-      expect(yield* main.cluster.probe(box.environmentId)).toMatchObject({
-        status: "revoked",
-        lastError: "It no longer accepts this host. Invite it again.",
-      });
       expect(yield* main.cluster.removeMember(box.environmentId)).toEqual({
         removed: true,
         memberNotified: false,
@@ -2522,7 +2522,7 @@ it.effect("re-adding a member at a new address moves the proxy there and retires
       const before = yield* main.cluster.connect(box.environmentId);
 
       const moved = yield* member.serveAgain;
-      expect(yield* addAt(moved)).toMatchObject({ address: moved, status: "online" });
+      expect(yield* addAt(moved)).toMatchObject({ address: moved });
       const after = yield* main.cluster.connect(box.environmentId);
       expect(after.upstream.origin).toBe(moved);
       expect(after.token).not.toBe(before.token);
@@ -2545,7 +2545,10 @@ it.effect("two adds of one member racing leave the stored token the live one", (
         [main.cluster.addMember({ target: first }), main.cluster.addMember({ target: second })],
         { concurrency: 2 },
       );
-      expect(yield* main.cluster.probe(box.environmentId)).toMatchObject({ status: "online" });
+      const { token } = yield* main.cluster.connect(box.environmentId);
+      expect((yield* member.auth.authenticateHttpRequest(bearer(token))).subject).toBe(
+        EnvironmentAuth.CLUSTER_HOST_SUBJECT,
+      );
       expect(
         (yield* member.auth.listSessions()).filter(
           (session) => session.subject === EnvironmentAuth.CLUSTER_HOST_SUBJECT,
@@ -2586,7 +2589,6 @@ it.effect("adds a member over ssh, and a password prompt fails with a clear erro
       expect(yield* main.cluster.addMember({ target: "ssh://me@box:2222" })).toMatchObject({
         transport: "ssh",
         address: "me@box:2222",
-        status: "online",
       });
       expect(
         yield* main.cluster.addMember({ target: "nokey@other" }).pipe(Effect.flip),
@@ -2629,15 +2631,14 @@ import {
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Hex from "effect/encoding/Hex";
 import * as Option from "effect/Option";
-import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
-import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ClusterUpstream from "./ClusterUpstream.ts";
 import * as PinnedTransport from "./pinnedTransport.ts";
 ```
@@ -2645,10 +2646,7 @@ import * as PinnedTransport from "./pinnedTransport.ts";
 Module scope, after `MembershipRow`:
 
 ```ts
-const PROBE_TIMEOUT = Duration.seconds(10);
-const PROBE_INTERVAL = Duration.seconds(30);
-const REVOKED = "It no longer accepts this host. Invite it again.";
-const INCOMPATIBLE = "It speaks another T3 Code protocol. Update both environments.";
+const REQUEST_TIMEOUT = Duration.seconds(10);
 const CERTIFICATE_CHANGED =
   "Certificate changed: it presented a certificate other than the pinned one. Invite it again.";
 
@@ -2722,27 +2720,19 @@ Add to the `ClusterService` interface:
     ) => Effect.Effect<ClusterMember, ClusterError>;
     /** Where to reach a member and the `cluster-host` token to send it. */
     readonly connect: (memberId: EnvironmentId) => Effect.Effect<MemberConnection, ClusterError>;
-    /** Asks the member whether it answers, speaks this protocol and still accepts this host. */
-    readonly probe: (memberId: EnvironmentId) => Effect.Effect<ClusterMember, ClusterError>;
-    readonly recordStatus: (
-      memberId: EnvironmentId,
-      status: ClusterMemberStatus,
-      error: string | null,
-    ) => Effect.Effect<void>;
     /** Completes once the member is removed or revoked. */
     readonly awaitGone: (memberId: EnvironmentId) => Effect.Effect<void>;
-    /** Probes every member now and every 30 seconds while the scope lasts. */
-    readonly start: () => Effect.Effect<void, never, Scope.Scope>;
 ```
 
 In `make`, after `const memberLock = …`:
 
 ```ts
   const upstream = yield* ClusterUpstream.ClusterUpstream;
+  const secrets = yield* ServerSecretStore.ServerSecretStore;
   const random = yield* SecureRandom.SecureRandom;
   // Each join rotates the member's token; racing adds could store one it already revoked.
   const hostLock = yield* Semaphore.make(1);
-  // Mirrors cluster_members so proxied requests read no database; the CLI's writes arrive on the next probe round.
+  // Mirrors cluster_members so proxied requests read no database; `start` rereads it for the CLI's writes.
   const rowsRef = yield* SubscriptionRef.make<ReadonlyArray<MemberRow>>([]);
   const tokens = new Map<string, string>();
 
@@ -2751,10 +2741,22 @@ In `make`, after `const memberLock = …`:
       on ? Effect.void : Effect.fail(new ClusterError({ reason: "disabled", message: CLUSTER_OFF })),
     ),
   );
+  const enabledChanges = Stream.concat(
+    Stream.fromEffect(enabled),
+    serverSettings.streamChanges.pipe(Stream.map((settings) => settings.clusterEnabled)),
+  ).pipe(Stream.changes);
 
+  let lastRows = "";
   const reload = sql`SELECT * FROM cluster_members ORDER BY label, environment_id`.pipe(
-    Effect.flatMap(decodeRows),
-    Effect.flatMap((rows) => SubscriptionRef.set(rowsRef, rows)),
+    Effect.flatMap((raw) => {
+      const serialized = JSON.stringify(raw);
+      // Unchanged rows publish nothing, so `cluster.members` sends clients only real changes.
+      if (serialized === lastRows) return Effect.void;
+      return decodeRows(raw).pipe(
+        Effect.flatMap((rows) => SubscriptionRef.set(rowsRef, rows)),
+        Effect.andThen(Effect.sync(() => (lastRows = serialized))),
+      );
+    }),
     Effect.mapError(storageError),
     Effect.withSpan("ClusterService.reload"),
   );
@@ -2809,65 +2811,6 @@ In `make`, after `const memberLock = …`:
     },
   );
 
-  const recordStatus: ClusterService["Service"]["recordStatus"] = Effect.fn(
-    "ClusterService.recordStatus",
-  )(
-    function* (memberId, status, error) {
-      const now = DateTime.formatIso(yield* DateTime.now);
-      yield* sql`
-        UPDATE cluster_members
-        SET status = ${status},
-            last_error = ${error},
-            last_reached_at = CASE WHEN ${status} = 'online' THEN ${now} ELSE last_reached_at END
-        WHERE environment_id = ${memberId}
-      `.pipe(Effect.mapError(storageError));
-      yield* reload;
-    },
-    Effect.catch((cause) => Effect.logWarning("A cluster member's status could not be saved", { cause })),
-  );
-
-  const probe: ClusterService["Service"]["probe"] = Effect.fn("ClusterService.probe")(
-    function* (memberId) {
-      const { upstream: connection, token } = yield* connect(memberId).pipe(
-        // An ssh forward that cannot be restored is an offline member, not an unknown one.
-        Effect.tapError((error) =>
-          error.reason === "unknown_member" || error.reason === "disabled"
-            ? Effect.void
-            : recordStatus(memberId, "offline", error.message),
-        ),
-      );
-      const [status, error] = yield* clientFor(connection).pipe(
-        Effect.flatMap((client) =>
-          Effect.all(
-            [
-              client.metadata.descriptor(),
-              client.auth.session({ headers: { authorization: `Bearer ${token}` } }),
-            ],
-            { concurrency: 2 },
-          ),
-        ),
-        Effect.timeout(PROBE_TIMEOUT),
-        Effect.map(([descriptor, session]): readonly [ClusterMemberStatus, string | null] =>
-          descriptor.environmentId !== memberId
-            ? ["offline", `Its address now answers as ${descriptor.label}. Invite it again.`]
-            : !isCompatible(descriptor)
-              ? ["incompatible", INCOMPATIBLE]
-              : !session.authenticated
-                ? ["revoked", REVOKED]
-                : ["online", null],
-        ),
-        Effect.catch((cause) =>
-          Effect.succeed([
-            "offline",
-            PinnedTransport.isPinMismatch(cause) ? CERTIFICATE_CHANGED : "It did not answer.",
-          ] as const),
-        ),
-      );
-      yield* recordStatus(memberId, status, error);
-      return toMember(yield* findRow(memberId));
-    },
-  );
-
   const addMember: ClusterService["Service"]["addMember"] = Effect.fn("ClusterService.addMember")(
     function* (input) {
       yield* requireEnabled;
@@ -2901,7 +2844,7 @@ In `make`, after `const memberLock = …`:
       const client = yield* clientFor(connection);
       const descriptor = yield* client.metadata
         .descriptor()
-        .pipe(Effect.timeout(PROBE_TIMEOUT), Effect.mapError(reachError(connection.origin)));
+        .pipe(Effect.timeout(REQUEST_TIMEOUT), Effect.mapError(reachError(connection.origin)));
       if (descriptor.environmentId === self.environmentId) {
         return yield* new ClusterError({ reason: "self", message: "That address is this environment." });
       }
@@ -2938,12 +2881,12 @@ In `make`, after `const memberLock = …`:
             ${target.transport === "https" ? target.url : null},
             ${target.transport === "ssh" ? target.sshTarget : null},
             ${target.transport === "https" && target.url.startsWith("https:") ? target.certSha256 : null},
-            ${secretName}, 'online', ${now}, ${now}, NULL
+            ${secretName}, 'offline', ${now}, ${now}, NULL
           )
           ON CONFLICT (environment_id) DO UPDATE SET
             transport = excluded.transport, url = excluded.url, ssh_target = excluded.ssh_target,
             cert_sha256 = excluded.cert_sha256, secret_name = excluded.secret_name,
-            status = 'online', last_reached_at = excluded.last_reached_at, last_error = NULL
+            status = 'offline', last_reached_at = excluded.last_reached_at, last_error = NULL
         `;
         if (previous !== undefined) {
           tokens.delete(previous.secret_name);
@@ -2976,7 +2919,7 @@ In `make`, after `const memberLock = …`:
             ),
           ),
         ),
-        Effect.timeout(PROBE_TIMEOUT),
+        Effect.timeout(REQUEST_TIMEOUT),
         Effect.as(true),
         Effect.orElseSucceed(() => false),
       );
@@ -3005,10 +2948,7 @@ In `make`, after `const memberLock = …`:
   // Clients would otherwise list members the proxy answers 403 for.
   const members = Stream.zipLatestWith(
     SubscriptionRef.changes(rowsRef),
-    Stream.concat(
-      Stream.fromEffect(enabled),
-      serverSettings.streamChanges.pipe(Stream.map((settings) => settings.clusterEnabled)),
-    ).pipe(Stream.changes),
+    enabledChanges,
     (rows, on) => (on ? rows.map(toMember) : []),
   );
 
@@ -3021,19 +2961,6 @@ In `make`, after `const memberLock = …`:
       Stream.take(1),
       Stream.runDrain,
     );
-
-  const probeAll = Effect.gen(function* () {
-    if (!(yield* enabled)) return;
-    yield* reload;
-    const rows = yield* SubscriptionRef.get(rowsRef);
-    yield* Effect.forEach(rows, (row) => probe(row.environment_id).pipe(Effect.ignore), {
-      concurrency: 4,
-      discard: true,
-    });
-  }).pipe(Effect.ignore, Effect.withSpan("ClusterService.probeAll"));
-
-  const start: ClusterService["Service"]["start"] = () =>
-    probeAll.pipe(Effect.repeat(Schedule.spaced(PROBE_INTERVAL)), Effect.forkScoped, Effect.asVoid);
 ```
 
 and return:
@@ -3049,29 +2976,26 @@ and return:
     removeMember,
     renameMember,
     connect,
-    probe,
-    recordStatus,
     awaitGone,
-    start,
   });
 ```
 
-`apps/server/src/server.ts` — import `* as ClusterUpstream from "./cluster/ClusterUpstream.ts"`, `* as SshAuth from "@t3tools/ssh/auth"`, `* as SshTunnel from "@t3tools/ssh/tunnel"`, and change the Task 6 provide to:
+`apps/server/src/server.ts` — import `* as ClusterUpstream from "./cluster/ClusterUpstream.ts"`, `* as SshAuth from "@t3tools/ssh/auth"`, `* as SshTunnel from "@t3tools/ssh/tunnel"`, and change the `ClusterService` line Task 6 put inside the `PeerForwarding` provide to:
 
 ```ts
-  Layer.provide(
-    ClusterService.layer.pipe(
-      Layer.provide(ServerTls.layer),
-      Layer.provide(
-        ClusterUpstream.layer.pipe(
-          Layer.provide(SshTunnel.SshEnvironmentManager.layer()),
-          // Headless: ssh keys or an agent; desktop prompting stays with the desktop's own connections.
-          Layer.provide(SshAuth.SshPasswordPrompt.disabledLayer),
-          Layer.provide(NetService.layer),
+      Layer.provideMerge(
+        ClusterService.layer.pipe(
+          Layer.provide(ServerTls.layer),
+          Layer.provide(
+            ClusterUpstream.layer.pipe(
+              Layer.provide(SshTunnel.SshEnvironmentManager.layer()),
+              // The server's own ssh keys or agent; no client answers its prompts, desktop included.
+              Layer.provide(SshAuth.SshPasswordPrompt.disabledLayer),
+              Layer.provide(NetService.layer),
+            ),
+          ),
         ),
       ),
-    ),
-  ),
 ```
 
 - [ ] **Step 4: Run the tests to verify they pass**
@@ -3086,14 +3010,691 @@ Expected: no errors.
 
 ```bash
 git add apps/server/src/cluster/ClusterService.ts apps/server/src/cluster/ClusterService.testkit.ts apps/server/src/cluster/ClusterService.test.ts apps/server/src/server.ts
-git commit -m "feat(server): main host adds, probes and removes cluster members
+git commit -m "feat(server): main host adds, renames and removes cluster members
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ---
 
-## Task 8: Proxy route `/cluster/:memberId/*`
+## Task 8: Control link — status and the host channel
+
+**Files:**
+
+- Modify: `packages/contracts/src/cluster.ts` (host channel schemas)
+- Modify: `packages/contracts/src/rpc.ts:20-28` (imports), `:546-549` (`WS_METHODS`), after `:902-905` (Rpc definitions, `ClusterLinkRpcs`), `:2294-2297` (group)
+- Modify: `apps/server/src/auth/RpcAuthorization.ts:95` (scopes)
+- Modify: `apps/server/src/cluster/ClusterService.ts` (imports, module scope, interface, `make`)
+- Modify: `apps/server/src/cluster/ClusterService.testkit.ts` (members serve the link's `/ws`; `awaitStatus`)
+- Modify: `apps/server/src/ws.ts:10` (import), `:1556` (service), `:2693-2701` (handlers), `:3606` and `:3705` (provide)
+- Modify: `apps/server/src/ws.test.ts:845` (mock)
+- Modify: `apps/server/src/server.ts:864-868` (start the links)
+- Test: `apps/server/src/cluster/ClusterService.test.ts`
+
+**Interfaces:**
+
+- Consumes: `ClusterService.connect`, `reload`, `rowsRef`, `enabledChanges`, `clientFor`, `isCompatible`, `CERTIFICATE_CHANGED`, `REQUEST_TIMEOUT` (Task 7); `readMembership`, `random` (Tasks 6, 7); `EnvironmentAuth.authenticateWebSocketUpgrade`, `SessionStore.awaitInvalidation`; `RpcClient.makeProtocolSocket`, `RpcServer.makeProtocolWithHttpEffectWebsocket`, `FiberMap`.
+- Produces:
+  - Contracts: `ClusterHostRequest`, `ClusterHostChannelEvent`, `ClusterHostResult`, `ClusterHostReplyInput`; `WS_METHODS.clusterHostChannel` (`cluster.hostChannel`, stream) and `WS_METHODS.clusterHostReply` (`cluster.hostReply`), both `orchestration:operate` on the server and refused by `ClusterService` to any session but the member's current `cluster-host` one; `ClusterLinkRpcs` (the group of those two).
+  - `ClusterService["Service"]`: `start(serve: ClusterHostServe): Effect<void, never, Scope>`, `hostChannel(session)`, `hostReply(session, input)`, `hostCall(call: ClusterHostCall): Effect<ClusterHostResult, ClusterError>`.
+  - `ClusterService.ts` exports: types `ClusterHostServe`, `ClusterHostCall`; `clusterHostUnreachable(hostLabel)`; `refuseHostRequests`.
+  - Testkit: members serve `/ws` with the link's two RPCs; `awaitStatus(main, memberId, status)`.
+  - Link behaviour: `start` resets every `online` row to `offline`, then runs one fiber per member while `clusterEnabled` is on. Each attempt runs the preflight (descriptor and `/api/auth/session` with the member's token: wrong environment or no answer is `offline`, another protocol is `incompatible`, unauthenticated is `revoked`), opens `<member>/ws?orchestrationProtocol=<v>` with the token, and subscribes to `cluster.hostChannel`. The member's `ready` event records `online`. A socket that drops records `offline` and reconnects at once; an attempt that never came up records why and retries after 1 s, doubling to at most 30 s. A member's link restarts only when its token, address or pin changes.
+
+- [ ] **Step 1: Write the failing tests**
+
+`apps/server/src/cluster/ClusterService.testkit.ts` — add imports:
+
+```ts
+import {
+  ClusterLinkRpcs,
+  type ClusterMemberStatus,
+  type EnvironmentId,
+  WS_METHODS,
+} from "@t3tools/contracts";
+import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import { RpcSerialization, RpcServer } from "effect/rpc";
+import * as SessionStore from "../auth/SessionStore.ts";
+```
+
+Add above `memberRoutes`:
+
+```ts
+/** A member's `/ws` as its main host's control link uses it, ending with the session as `ws.ts` does. */
+const layerLinkSocket = HttpRouter.add(
+  "GET",
+  "/ws",
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const auth = yield* EnvironmentAuth.EnvironmentAuth;
+    const sessions = yield* SessionStore.SessionStore;
+    const cluster = yield* ClusterService.ClusterService;
+    const session = yield* auth.authenticateWebSocketUpgrade(request, "rpc");
+    const { protocol, httpEffect } = yield* RpcServer.makeProtocolWithHttpEffectWebsocket;
+    yield* RpcServer.make(ClusterLinkRpcs).pipe(
+      Effect.provideService(RpcServer.Protocol, protocol),
+      Effect.provide(
+        ClusterLinkRpcs.toLayer({
+          [WS_METHODS.clusterHostChannel]: () => cluster.hostChannel(session),
+          [WS_METHODS.clusterHostReply]: (input) => cluster.hostReply(session, input),
+        }),
+      ),
+      Effect.forkScoped,
+    );
+    return yield* Effect.raceFirst(
+      httpEffect,
+      sessions.awaitInvalidation(session.sessionId).pipe(Effect.as(HttpServerResponse.empty())),
+    );
+  }).pipe(
+    Effect.provide(RpcSerialization.layerJson),
+    Effect.catch(() => Effect.succeed(HttpServerResponse.empty({ status: 401 }))),
+  ),
+);
+```
+
+Replace `memberRoutes` with:
+
+```ts
+const memberRoutes = (context: ClusterEnvironment["context"]) =>
+  Layer.mergeAll(
+    HttpApiBuilder.layer(MemberTestApi).pipe(
+      Layer.provide(ClusterHttp.layer),
+      Layer.provide(AuthHttp.layer),
+      Layer.provide(ServerHttp.layerServerEnvironmentHttpApi),
+      Layer.provide(AuthHttp.layerAuthenticatedAuth),
+    ),
+    layerLinkSocket,
+  ).pipe(Layer.provide(Layer.succeedContext(context)));
+```
+
+Append:
+
+```ts
+/** The member as `main` lists it, once its status is `status`. */
+export const awaitStatus = (
+  main: ClusterEnvironment,
+  memberId: EnvironmentId,
+  status: ClusterMemberStatus,
+) =>
+  main.cluster.members.pipe(
+    Stream.flatMap((members) => Stream.fromIterable(members)),
+    Stream.filter((member) => member.environmentId === memberId && member.status === status),
+    Stream.runHead,
+    Effect.map(Option.getOrThrow),
+  );
+```
+
+Append to `apps/server/src/cluster/ClusterService.test.ts` (add imports `type ClusterHostRequest` from `@t3tools/contracts`, `* as Deferred from "effect/Deferred"`, `* as Exit from "effect/Exit"`, `* as Fiber from "effect/Fiber"`, `* as Queue from "effect/Queue"`, `* as Scope from "effect/Scope"`, `* as ClusterService from "./ClusterService.ts"`, and `awaitStatus` from the testkit):
+
+```ts
+const readCall = {
+  tool: "t3_thread_read",
+  arguments: { environmentId: "environment-other", threadId: "thread-1" },
+  limits: { runtimeMode: "full-access", interactionMode: "default" },
+} satisfies ClusterService.ClusterHostCall;
+
+const UNREACHABLE =
+  'Cluster host unreachable: "Studio" is not connected, so other environments in the cluster cannot be reached. Work here continues.';
+
+it.effect(
+  "the control link carries a member's calls, fails them when it drops, and never sends one twice",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const member = yield* serveMember(box);
+        const main = yield* makeEnvironment(studioDescriptor);
+        const invite = yield* member.cluster.invite({ url: member.url });
+        yield* main.cluster.addMember({ target: invite.joinString ?? "" });
+        // No link yet: an agent's call fails at once instead of waiting for one.
+        expect(yield* member.cluster.hostCall(readCall).pipe(Effect.flip)).toMatchObject({
+          reason: "unreachable",
+          message: UNREACHABLE,
+        });
+
+        const served = yield* Queue.unbounded<ClusterHostRequest>();
+        const interrupted = yield* Deferred.make<string>();
+        const serve: ClusterService.ClusterHostServe = (from, request) =>
+          Queue.offer(served, request).pipe(
+            Effect.andThen(
+              request.tool === "slow"
+                ? Effect.never.pipe(
+                    Effect.onInterrupt(() => Deferred.succeed(interrupted, request.requestId)),
+                  )
+                : Effect.succeed({
+                    isError: false,
+                    text: JSON.stringify({ from: from.environmentId }),
+                  }),
+            ),
+          );
+        const firstRun = yield* Scope.make();
+        yield* main.cluster.start(serve).pipe(Effect.provideService(Scope.Scope, firstRun));
+        expect(yield* awaitStatus(main, box.environmentId, "online")).toMatchObject({
+          lastError: null,
+        });
+
+        expect(yield* member.cluster.hostCall(readCall)).toEqual({
+          isError: false,
+          text: JSON.stringify({ from: box.environmentId }),
+        });
+        expect(yield* Queue.take(served)).toMatchObject(readCall);
+
+        // The main host stops with a call in flight: the member hears so, the work there stops.
+        const slow = yield* member.cluster
+          .hostCall({ ...readCall, tool: "slow" })
+          .pipe(Effect.flip, Effect.forkScoped);
+        const inFlight = yield* Queue.take(served);
+        yield* Scope.close(firstRun, Exit.void);
+        expect(yield* Deferred.await(interrupted)).toBe(inFlight.requestId);
+        expect(yield* Fiber.join(slow)).toMatchObject({ reason: "unreachable", message: UNREACHABLE });
+
+        // It starts again: nothing is online until its link is, and the old call never comes back.
+        yield* main.cluster.start(serve);
+        yield* awaitStatus(main, box.environmentId, "online");
+        yield* member.cluster.hostCall(readCall);
+        const next = yield* Queue.take(served);
+        expect(next.tool).toBe("t3_thread_read");
+        expect(next.requestId).not.toBe(inFlight.requestId);
+      }),
+    ),
+);
+
+it.effect("a member that leaves shows revoked over its link, and only its host opens the channel", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const member = yield* serveMember(box);
+      const main = yield* makeEnvironment(studioDescriptor);
+      const invite = yield* member.cluster.invite({ url: member.url });
+      yield* main.cluster.addMember({ target: invite.joinString ?? "" });
+      yield* main.cluster.start(ClusterService.refuseHostRequests);
+      yield* awaitStatus(main, box.environmentId, "online");
+      expect(yield* member.cluster.hostCall(readCall)).toMatchObject({ isError: true });
+      expect(
+        yield* member.cluster
+          .hostChannel({ sessionId: "session-someone-else" })
+          .pipe(Stream.runDrain, Effect.flip),
+      ).toMatchObject({ reason: "forbidden" });
+
+      yield* member.cluster.leave;
+      expect(yield* awaitStatus(main, box.environmentId, "revoked")).toMatchObject({
+        lastError: "It no longer accepts this host. Invite it again.",
+      });
+      yield* main.cluster.removeMember(box.environmentId);
+      expect(yield* memberCount(main)).toEqual(Option.some(0));
+    }),
+  ),
+);
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `vp test run apps/server/src/cluster/ClusterService.test.ts -t "link"`
+Expected: FAIL — `member.cluster.hostCall is not a function`; typecheck reports `ClusterLinkRpcs` and `WS_METHODS.clusterHostChannel` missing from `@t3tools/contracts`.
+
+- [ ] **Step 3: Implement**
+
+`packages/contracts/src/cluster.ts` — add imports `{ ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts"` and `{ OrchestrationV2LinkedSender } from "./orchestrationV2.ts"`, then append:
+
+```ts
+/** One call a member's agent makes through its main host, over the control link. */
+export const ClusterHostRequest = Schema.Struct({
+  requestId: TrimmedNonEmptyString,
+  /** A T3 MCP tool; `arguments.environmentId` names the target unless it is the main host. */
+  tool: TrimmedNonEmptyString,
+  arguments: Schema.Record(Schema.String, Schema.Unknown),
+  /** The calling agent's modes, which cap the call as `T3-Mode-Limit` does on `/mcp`. */
+  limits: Schema.Struct({ runtimeMode: RuntimeMode, interactionMode: ProviderInteractionMode }),
+  /** The member's thread the call is made for, as `T3-Sender-Thread` carries it. */
+  sender: Schema.optionalKey(OrchestrationV2LinkedSender),
+});
+export type ClusterHostRequest = typeof ClusterHostRequest.Type;
+
+/** `cluster.hostChannel`: `ready` once the member listens, then each call to run. */
+export const ClusterHostChannelEvent = Schema.Union([
+  Schema.TaggedStruct("ready", {}),
+  Schema.TaggedStruct("request", { request: ClusterHostRequest }),
+]);
+export type ClusterHostChannelEvent = typeof ClusterHostChannelEvent.Type;
+
+/** A tool's answer as `/mcp` gives it: its joined text, and whether it is a refusal. */
+export const ClusterHostResult = Schema.Struct({ isError: Schema.Boolean, text: Schema.String });
+export type ClusterHostResult = typeof ClusterHostResult.Type;
+
+export const ClusterHostReplyInput = Schema.Struct({
+  requestId: TrimmedNonEmptyString,
+  result: ClusterHostResult,
+});
+export type ClusterHostReplyInput = typeof ClusterHostReplyInput.Type;
+```
+
+`packages/contracts/src/rpc.ts` — import `ClusterError`, `ClusterHostChannelEvent`, `ClusterHostReplyInput` from `./cluster.ts`. In `WS_METHODS` after `peerLinksAnswerRequest`:
+
+```ts
+  clusterHostChannel: "cluster.hostChannel",
+  clusterHostReply: "cluster.hostReply",
+```
+
+After `WsPeerLinksAnswerRequestRpc`:
+
+```ts
+const ClusterRpcError = Schema.Union([ClusterError, EnvironmentAuthorizationError]);
+
+const WsClusterHostChannelRpc = Rpc.make(WS_METHODS.clusterHostChannel, {
+  payload: Schema.Struct({}),
+  success: ClusterHostChannelEvent,
+  stream: true,
+  error: ClusterRpcError,
+});
+
+const WsClusterHostReplyRpc = Rpc.make(WS_METHODS.clusterHostReply, {
+  payload: ClusterHostReplyInput,
+  error: ClusterRpcError,
+});
+
+/** What a main host calls on a member's `/ws`: its control link. */
+export const ClusterLinkRpcs = RpcGroup.make(WsClusterHostChannelRpc, WsClusterHostReplyRpc);
+```
+
+and in `WsRpcGroup` after `WsPeerLinksAnswerRequestRpc,`:
+
+```ts
+  WsClusterHostChannelRpc,
+  WsClusterHostReplyRpc,
+```
+
+`apps/server/src/auth/RpcAuthorization.ts`, after `[WS_METHODS.peerLinksList]`:
+
+```ts
+  // The main host's control link; ClusterService refuses every session but the member's host.
+  [WS_METHODS.clusterHostChannel]: AuthOrchestrationOperateScope,
+  [WS_METHODS.clusterHostReply]: AuthOrchestrationOperateScope,
+```
+
+`apps/server/src/cluster/ClusterService.ts` — add to the `@t3tools/contracts` import `type ClusterHostChannelEvent`, `type ClusterHostReplyInput`, `type ClusterHostRequest`, `type ClusterHostResult`, `ClusterLinkRpcs`, `ORCHESTRATION_PROTOCOL_QUERY_PARAM`, `WS_METHODS`, and add:
+
+```ts
+import type * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
+import * as FiberMap from "effect/FiberMap";
+import * as Queue from "effect/Queue";
+import * as Schedule from "effect/Schedule";
+import type * as Scope from "effect/Scope";
+import * as Socket from "effect/socket/Socket";
+import { RpcClient, RpcSerialization } from "effect/rpc";
+```
+
+Module scope, after `MemberConnection`:
+
+```ts
+const REVOKED = "It no longer accepts this host. Invite it again.";
+const INCOMPATIBLE = "It speaks another T3 Code protocol. Update both environments.";
+const NOT_ANSWERING = "It did not answer.";
+const LINK_DROPPED = "Its control link dropped. Reconnecting.";
+// Quick after a blip; a member that stays away is tried every 30 s at most.
+const LINK_BACKOFF = Schedule.min([
+  Schedule.exponential("1 second", 2),
+  Schedule.spaced("30 seconds"),
+]);
+const ROWS_RELOAD_INTERVAL = Duration.seconds(30);
+
+/** Why a member's control link is not up. */
+interface LinkDown {
+  readonly status: Exclude<ClusterMemberStatus, "online">;
+  readonly message: string;
+}
+
+/** A member agent's call before the member numbers it. */
+export type ClusterHostCall = Omit<ClusterHostRequest, "requestId">;
+
+/** Runs one member agent's call on the main host. */
+export type ClusterHostServe = (
+  member: ClusterMember,
+  request: ClusterHostRequest,
+) => Effect.Effect<ClusterHostResult>;
+
+/** What a member's agents hear while its control link is down. */
+export const clusterHostUnreachable = (hostLabel: string) =>
+  new ClusterError({
+    reason: "unreachable",
+    message: `Cluster host unreachable: "${hostLabel}" is not connected, so other environments in the cluster cannot be reached. Work here continues.`,
+  });
+
+/** `serve` for a main host that runs no member agent calls. */
+export const refuseHostRequests: ClusterHostServe = () =>
+  Effect.succeed({
+    isError: true,
+    text: JSON.stringify({
+      code: "capability_denied",
+      message: "This main host does not run its members' agent calls.",
+    }),
+  });
+
+/** The main host's subscription on a member, and the calls waiting for its answers. */
+interface HostChannel {
+  readonly sessionId: string;
+  readonly events: Queue.Queue<ClusterHostChannelEvent, Cause.Done>;
+  readonly pending: Map<string, Deferred.Deferred<ClusterHostResult, ClusterError>>;
+}
+```
+
+Add to the `ClusterService` interface:
+
+```ts
+    /** Main side: one control link per member while the scope lasts; `serve` runs their agents' calls. */
+    readonly start: (serve: ClusterHostServe) => Effect.Effect<void, never, Scope.Scope>;
+    /** Member side: the main host's link subscribes here; any other session is refused. */
+    readonly hostChannel: (session: {
+      readonly sessionId: string;
+    }) => Stream.Stream<ClusterHostChannelEvent, ClusterError>;
+    /** Member side: the main host's answer to one call; a late one is dropped. */
+    readonly hostReply: (
+      session: { readonly sessionId: string },
+      input: ClusterHostReplyInput,
+    ) => Effect.Effect<void>;
+    /** Member side: runs a call on the main host over the link; fails at once while it is down. */
+    readonly hostCall: (call: ClusterHostCall) => Effect.Effect<ClusterHostResult, ClusterError>;
+```
+
+In `make`, after `awaitGone`:
+
+```ts
+  const recordStatus = (memberId: EnvironmentId, status: ClusterMemberStatus, error: string | null) =>
+    Effect.gen(function* () {
+      const now = DateTime.formatIso(yield* DateTime.now);
+      yield* sql`
+        UPDATE cluster_members
+        SET status = ${status},
+            last_error = ${error},
+            last_reached_at = CASE WHEN ${status} = 'online' THEN ${now} ELSE last_reached_at END
+        WHERE environment_id = ${memberId}
+      `.pipe(Effect.mapError(storageError));
+      yield* reload;
+    }).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("A cluster member's status could not be saved", { cause }),
+      ),
+      Effect.withSpan("ClusterService.recordStatus"),
+    );
+
+  /** The link's connect check: it answers as this member, speaks this protocol, accepts this host. */
+  const preflight = Effect.fn("ClusterService.preflight")(function* (
+    memberId: EnvironmentId,
+    connection: ClusterUpstream.Upstream,
+    token: string,
+  ) {
+    const client = yield* clientFor(connection);
+    const [descriptor, session] = yield* Effect.all(
+      [
+        client.metadata.descriptor(),
+        client.auth.session({ headers: { authorization: `Bearer ${token}` } }),
+      ],
+      { concurrency: 2 },
+    ).pipe(
+      Effect.timeout(REQUEST_TIMEOUT),
+      Effect.mapError(
+        (cause): LinkDown => ({
+          status: "offline",
+          message: PinnedTransport.isPinMismatch(cause) ? CERTIFICATE_CHANGED : NOT_ANSWERING,
+        }),
+      ),
+    );
+    if (descriptor.environmentId !== memberId) {
+      return yield* Effect.fail<LinkDown>({
+        status: "offline",
+        message: `Its address now answers as ${descriptor.label}. Invite it again.`,
+      });
+    }
+    if (!isCompatible(descriptor)) {
+      return yield* Effect.fail<LinkDown>({ status: "incompatible", message: INCOMPATIBLE });
+    }
+    if (!session.authenticated) {
+      return yield* Effect.fail<LinkDown>({ status: "revoked", message: REVOKED });
+    }
+  });
+
+  /** One link: succeeds when a link that came up drops, fails when it never came up. */
+  const linkOnce = (memberId: EnvironmentId, serve: ClusterHostServe) =>
+    Effect.gen(function* () {
+      const { upstream: connection, token, member } = yield* connect(memberId).pipe(
+        Effect.mapError((error): LinkDown => ({ status: "offline", message: error.message })),
+      );
+      yield* preflight(memberId, connection, token);
+      const socket = yield* Socket.makeWebSocket(
+        `${connection.origin.replace(/^http/, "ws")}/ws?${ORCHESTRATION_PROTOCOL_QUERY_PARAM}=${ORCHESTRATION_PROTOCOL_VERSION}`,
+        { openTimeout: REQUEST_TIMEOUT, headers: { authorization: `Bearer ${token}` } },
+      ).pipe(Effect.provideService(Socket.WebSocketConstructor, connection.webSocket));
+      const client = yield* RpcClient.make(ClusterLinkRpcs).pipe(
+        // No retry inside: this fiber reconnects, so status and backoff stay in one place.
+        Effect.provideServiceEffect(
+          RpcClient.Protocol,
+          RpcClient.makeProtocolSocket({ retryPolicy: Schedule.recurs(0) }),
+        ),
+        Effect.provideService(Socket.Socket, socket),
+        Effect.provide(RpcSerialization.layerJson),
+      );
+      let up = false;
+      yield* client[WS_METHODS.clusterHostChannel]({}).pipe(
+        Stream.runForEach((event) =>
+          event._tag === "ready"
+            ? Effect.sync(() => {
+                up = true;
+              }).pipe(Effect.andThen(recordStatus(memberId, "online", null)))
+            : serve(member, event.request).pipe(
+                Effect.flatMap((result) =>
+                  client[WS_METHODS.clusterHostReply]({
+                    requestId: event.request.requestId,
+                    result,
+                  }),
+                ),
+                Effect.ignoreCause({ log: true }),
+                // Ends with the link: the member already told that call's agent it failed.
+                Effect.forkScoped,
+              ),
+        ),
+        Effect.ignore,
+      );
+      if (!up) return yield* Effect.fail<LinkDown>({ status: "offline", message: NOT_ANSWERING });
+    }).pipe(Effect.scoped);
+
+  const runLink = (memberId: EnvironmentId, serve: ClusterHostServe) =>
+    linkOnce(memberId, serve).pipe(
+      Effect.tapError((down) => recordStatus(memberId, down.status, down.message)),
+      Effect.retry(LINK_BACKOFF),
+      Effect.andThen(recordStatus(memberId, "offline", LINK_DROPPED)),
+      Effect.forever,
+    );
+
+  const start: ClusterService["Service"]["start"] = Effect.fn("ClusterService.start")(
+    function* (serve) {
+      // A status from before this start is stale: only a live link says online.
+      yield* sql`UPDATE cluster_members SET status = 'offline' WHERE status = 'online'`.pipe(
+        Effect.mapError(storageError),
+        Effect.andThen(reload),
+        Effect.catch((cause) => Effect.logWarning("Cluster members could not be read", { cause })),
+      );
+      const links = yield* FiberMap.make<EnvironmentId>();
+      // A member's link restarts only when its token, address or pin changes.
+      const running = new Map<EnvironmentId, string>();
+      // Untraced: it runs on every status change.
+      const reconcile = Effect.fnUntraced(function* (
+        rows: ReadonlyArray<MemberRow>,
+        on: boolean,
+      ) {
+        const wanted = new Map(
+          (on ? rows : []).map(
+            (row) =>
+              [
+                row.environment_id,
+                `${row.secret_name} ${row.url ?? row.ssh_target} ${row.cert_sha256}`,
+              ] as const,
+          ),
+        );
+        for (const memberId of [...running.keys()]) {
+          if (wanted.has(memberId)) continue;
+          running.delete(memberId);
+          yield* FiberMap.remove(links, memberId);
+        }
+        for (const [memberId, key] of wanted) {
+          if (running.get(memberId) === key) continue;
+          running.set(memberId, key);
+          yield* FiberMap.run(links, memberId, runLink(memberId, serve));
+        }
+      });
+      yield* Stream.zipLatestWith(
+        SubscriptionRef.changes(rowsRef),
+        enabledChanges,
+        (rows, on) => [rows, on] as const,
+      ).pipe(
+        Stream.runForEach(([rows, on]) => reconcile(rows, on)),
+        Effect.forkScoped,
+      );
+      // `t3 cluster add` beside a running server writes rows only this rereads.
+      yield* reload.pipe(
+        Effect.ignore,
+        Effect.delay(ROWS_RELOAD_INTERVAL),
+        Effect.forever,
+        Effect.forkScoped,
+      );
+    },
+  );
+
+  // Member side: the main host's subscription while its link is up.
+  let hostChannel: HostChannel | undefined;
+
+  const hostUnreachableHere = readMembership.pipe(
+    Effect.map((membership) => clusterHostUnreachable(membership?.host_label ?? "The main host")),
+    Effect.orElseSucceed(() => clusterHostUnreachable("The main host")),
+  );
+
+  /** Fails every call still waiting on `closing`; none is sent again on a later link. */
+  const closeHostChannel = (closing: HostChannel) =>
+    Effect.gen(function* () {
+      if (hostChannel === closing) hostChannel = undefined;
+      const unreachable = yield* hostUnreachableHere;
+      for (const reply of closing.pending.values()) yield* Deferred.fail(reply, unreachable);
+      closing.pending.clear();
+      yield* Queue.end(closing.events);
+    });
+
+  const openHostChannel: ClusterService["Service"]["hostChannel"] = (session) =>
+    Stream.unwrap(
+      Effect.gen(function* () {
+        const membership = yield* readMembership;
+        if (membership?.host_session_id !== session.sessionId) {
+          return yield* new ClusterError({
+            reason: "forbidden",
+            message: "Only this environment's cluster host can open its host channel.",
+          });
+        }
+        const opened = yield* Effect.acquireRelease(
+          Effect.gen(function* () {
+            const channel: HostChannel = {
+              sessionId: session.sessionId,
+              events: yield* Queue.unbounded<ClusterHostChannelEvent, Cause.Done>(),
+              pending: new Map(),
+            };
+            const replaced = hostChannel;
+            hostChannel = channel;
+            if (replaced !== undefined) yield* closeHostChannel(replaced);
+            return channel;
+          }),
+          closeHostChannel,
+        );
+        return Stream.concat(
+          Stream.make({ _tag: "ready" } as const),
+          Stream.fromQueue(opened.events),
+        );
+      }),
+    );
+
+  const hostReply: ClusterService["Service"]["hostReply"] = (session, input) =>
+    Effect.suspend(() => {
+      const channel = hostChannel;
+      // A reply for a dropped link, or from any other session, finds nothing to answer.
+      const reply =
+        channel?.sessionId === session.sessionId ? channel.pending.get(input.requestId) : undefined;
+      if (channel === undefined || reply === undefined) return Effect.void;
+      channel.pending.delete(input.requestId);
+      return Deferred.succeed(reply, input.result).pipe(Effect.asVoid);
+    }).pipe(Effect.withSpan("ClusterService.hostReply"));
+
+  const hostCall: ClusterService["Service"]["hostCall"] = Effect.fn("ClusterService.hostCall")(
+    function* (call) {
+      const channel = hostChannel;
+      if (channel === undefined) return yield* yield* hostUnreachableHere;
+      const requestId = Hex.encode(yield* random.randomBytes(16));
+      const reply = yield* Deferred.make<ClusterHostResult, ClusterError>();
+      channel.pending.set(requestId, reply);
+      // False once that link has dropped: a call is never queued for a later one.
+      const queued = yield* Queue.offer(channel.events, {
+        _tag: "request",
+        request: { requestId, ...call },
+      });
+      if (!queued) {
+        channel.pending.delete(requestId);
+        return yield* yield* hostUnreachableHere;
+      }
+      return yield* Deferred.await(reply).pipe(
+        Effect.ensuring(Effect.sync(() => channel.pending.delete(requestId))),
+      );
+    },
+  );
+```
+
+and add `start,`, `hostChannel: openHostChannel,`, `hostReply,` and `hostCall,` to the returned `ClusterService.of({ … })`.
+
+`apps/server/src/ws.ts` — import `* as ClusterService from "./cluster/ClusterService.ts"`; in `layerWsRpc` after line 1556 `const cluster = yield* ClusterService.ClusterService;`; after the `peerLinksAnswerRequest` handler:
+
+```ts
+        // The main host's control link; ClusterService refuses every other session.
+        [WS_METHODS.clusterHostChannel]: (_input) => cluster.hostChannel(currentSession),
+        [WS_METHODS.clusterHostReply]: (input) => cluster.hostReply(currentSession, input),
+```
+
+In `layer`, after line 3606 `const cluster = yield* ClusterService.ClusterService;`, and after line 3705:
+
+```ts
+              Layer.provide(Layer.succeed(ClusterService.ClusterService, cluster)),
+```
+
+`apps/server/src/ws.test.ts` line 845: add `Layer.mock(ClusterService.ClusterService)({}),` (with the import).
+
+`apps/server/src/server.ts`, in `layerMakeRoutes` after the `RemoteDelegation` `Layer.effectDiscard`:
+
+```ts
+  // One control link to each member while the server runs; members' agent calls ride it back.
+  Layer.effectDiscard(
+    ClusterService.ClusterService.pipe(
+      Effect.flatMap((cluster) => cluster.start(ClusterService.refuseHostRequests)),
+    ),
+  ),
+```
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `vp test run apps/server/src/cluster/ClusterService.test.ts apps/server/src/auth/RpcAuthorization.test.ts apps/server/src/ws.test.ts`
+Expected: PASS (11 tests in `ClusterService.test.ts`; "declares exactly one scope for every RPC in the server group" stays green).
+
+Run: `vp run typecheck`
+Expected: no errors.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add packages/contracts/src/cluster.ts packages/contracts/src/rpc.ts apps/server/src/auth/RpcAuthorization.ts apps/server/src/cluster/ClusterService.ts apps/server/src/cluster/ClusterService.testkit.ts apps/server/src/cluster/ClusterService.test.ts apps/server/src/ws.ts apps/server/src/ws.test.ts apps/server/src/server.ts
+git commit -m "feat(server): main host keeps a control link to each cluster member
+
+Member status comes from the link, and member agents' calls ride it back
+through cluster.hostChannel and cluster.hostReply.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+---
+
+## Task 9: Proxy route `/cluster/:memberId/*`
 
 **Files:**
 
@@ -3104,14 +3705,14 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 **Interfaces:**
 
-- Consumes: `ClusterService.connect`, `probe`, `recordStatus`, `awaitGone` (Task 7); `EnvironmentAuth.authenticateHttpRequest`, `authenticateWebSocketUpgrade`, `issueWebSocketTicket`; `SessionStore.awaitInvalidation`; `failEnvironmentAuthInvalid`, `failEnvironmentInternal` (`auth/http.ts`); `pumpFrames` (`DeviceHubProxy.ts`); `encodeOAuthScope`.
-- Produces: `ClusterProxy.layer` (`HttpRouter.add("*", "/cluster/*", …)`); the response contract listed for Plan 3.
+- Consumes: `ClusterService.connect`, `awaitGone` (Task 7), the member status the control link keeps (Task 8), `start`, `refuseHostRequests` and testkit `awaitStatus` (Task 8); `EnvironmentAuth.authenticateHttpRequest`, `authenticateWebSocketUpgrade`, `issueWebSocketTicket`; `SessionStore.awaitInvalidation`; `failEnvironmentAuthInvalid`, `failEnvironmentInternal` (`auth/http.ts`); `pumpFrames` (`DeviceHubProxy.ts`); `encodeOAuthScope`.
+- Produces: `ClusterProxy.layer` (`HttpRouter.add("*", "/cluster/*", …)`); the response contract listed for Plan 3. A client socket is piped only while the member's link is `online`; otherwise the upgrade gets `502` with the link's status. The proxy reads status and never writes it.
 
 - [ ] **Step 1: Write the failing tests**
 
 `apps/server/src/device/DeviceHubProxy.ts` line 131: change `const pumpFrames =` to `export const pumpFrames =`.
 
-`apps/server/src/cluster/ClusterService.testkit.ts` — add imports `{ CLUSTER_SCOPES_HEADER }` from `@t3tools/contracts`, `* as HttpServerRequest from "effect/http/HttpServerRequest"`, `* as HttpServerResponse from "effect/http/HttpServerResponse"`, `{ pumpFrames } from "../device/DeviceHubProxy.ts"`, then:
+`apps/server/src/cluster/ClusterService.testkit.ts` — add `CLUSTER_SCOPES_HEADER` to the `@t3tools/contracts` import and `{ pumpFrames } from "../device/DeviceHubProxy.ts"`, then:
 
 ```ts
 /** Reports the credential and scope cap the member received, then echoes. */
@@ -3144,6 +3745,7 @@ const memberRoutes = (context: ClusterEnvironment["context"]) =>
       Layer.provide(ServerHttp.layerServerEnvironmentHttpApi),
       Layer.provide(AuthHttp.layerAuthenticatedAuth),
     ),
+    layerLinkSocket,
     layerEcho,
   ).pipe(Layer.provide(Layer.succeedContext(context)));
 ```
@@ -3164,15 +3766,15 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as Socket from "effect/socket/Socket";
-import * as Stream from "effect/Stream";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
 import * as ClusterProxy from "./ClusterProxy.ts";
+import * as ClusterService from "./ClusterService.ts";
 import {
+  awaitStatus,
   type ClusterEnvironment,
   clusterDescriptor,
   makeEnvironment,
@@ -3201,11 +3803,14 @@ const clientToken = (main: ClusterEnvironment, scopes: ReadonlyArray<AuthEnviron
     Effect.map((exchanged) => exchanged.access_token),
   );
 
+/** A member with its control link up, so the proxy pipes sockets to it. */
 const joinCluster = Effect.gen(function* () {
   const member = yield* serveMember(box);
   const main = yield* serveMain;
   const invite = yield* member.cluster.invite({ url: member.url });
   yield* main.cluster.addMember({ target: invite.joinString ?? "" });
+  yield* main.cluster.start(ClusterService.refuseHostRequests);
+  yield* awaitStatus(main, box.environmentId, "online");
   return { member, main, base: `${main.url}/cluster/${box.environmentId}` };
 });
 
@@ -3215,12 +3820,6 @@ const get = (url: string, token?: string, headers: Record<string, string> = {}) 
       HttpClientRequest.setHeaders(headers),
       token === undefined ? (request) => request : HttpClientRequest.bearerToken(token),
     ),
-  );
-
-const statusOf = (main: ClusterEnvironment) =>
-  main.cluster.members.pipe(
-    Stream.runHead,
-    Effect.map(Option.map((members) => members[0]?.status)),
   );
 
 it.effect("forwards HTTP to the member under the client's scopes, never the client's header", () =>
@@ -3292,7 +3891,7 @@ it.effect(
     ).pipe(Effect.provide(FetchHttpClient.layer)),
 );
 
-it.effect("answers 502 for a member that stopped answering and marks it offline", () =>
+it.effect("answers 502 for a member that stopped answering", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const memberScope = yield* Scope.make();
@@ -3309,7 +3908,6 @@ it.effect("answers 502 for a member that stopped answering and marks it offline"
         code: "cluster_member_unreachable",
         memberId: box.environmentId,
       });
-      expect(yield* statusOf(main)).toEqual(Option.some("offline"));
     }),
   ).pipe(Effect.provide(FetchHttpClient.layer)),
 );
@@ -3326,7 +3924,6 @@ it.effect("answers 502 revoked after the member leaves, and 403 while the Labs f
         code: "cluster_member_revoked",
         memberId: box.environmentId,
       });
-      expect(yield* statusOf(main)).toEqual(Option.some("revoked"));
 
       yield* main.settings.updateSettings({ clusterEnabled: false });
       const off = yield* get(`${base}/api/auth/session`, reader);
@@ -3497,7 +4094,7 @@ const handler = Effect.gen(function* () {
         ? HttpServerResponse.text("Not Found", { status: 404 })
         : memberFailure(memberId, "offline");
   }
-  const { upstream, token } = connected.success;
+  const { upstream, token, member } = connected.success;
 
   const headers: Record<string, string> = {};
   for (const [name, value] of Object.entries(request.headers)) {
@@ -3520,10 +4117,8 @@ const handler = Effect.gen(function* () {
   );
 
   if (upgrade) {
-    // Per upstream connect: a member must answer, speak this protocol and accept this host.
-    const checked = yield* Effect.result(cluster.probe(memberId));
-    const status = Result.isSuccess(checked) ? checked.success.status : "offline";
-    if (status !== "online") return memberFailure(memberId, status);
+    // The control link vouches for the member: it answers, speaks this protocol, accepts this host.
+    if (member.status !== "online") return memberFailure(memberId, member.status);
     const protocols =
       request.headers["sec-websocket-protocol"]
         ?.split(",")
@@ -3571,14 +4166,9 @@ const handler = Effect.gen(function* () {
       ),
     )
     .pipe(Effect.option);
-  if (Option.isNone(response)) {
-    yield* cluster.recordStatus(memberId, "offline", "It did not answer through the cluster proxy.");
-    return memberFailure(memberId, "offline");
-  }
-  if (response.value.status === 401) {
-    yield* cluster.recordStatus(memberId, "revoked", "It no longer accepts this host. Invite it again.");
-    return memberFailure(memberId, "revoked");
-  }
+  // Status is the control link's to record; the proxy only answers this request.
+  if (Option.isNone(response)) return memberFailure(memberId, "offline");
+  if (response.value.status === 401) return memberFailure(memberId, "revoked");
   const responseHeaders: Record<string, string> = {};
   for (const [name, value] of Object.entries(response.value.headers)) {
     if (!DROPPED_RESPONSE_HEADERS.has(name) && value !== undefined) responseHeaders[name] = value;
@@ -3617,22 +4207,20 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
-## Task 9: Cluster RPCs, scopes, capability and server start
+## Task 10: Cluster RPCs, scopes and capability
 
 **Files:**
 
-- Modify: `packages/contracts/src/rpc.ts:20-28` (imports), `:546-549` (`WS_METHODS`), `:884-905` (Rpc definitions), `:2294-2297` (group)
+- Modify: `packages/contracts/src/rpc.ts:20-28` (imports), `WS_METHODS` (after `clusterHostReply`), Rpc definitions (after `ClusterLinkRpcs`), group (after `WsClusterHostReplyRpc`) — all added in Task 8
 - Modify: `packages/contracts/src/clientRpcPermissions.ts:83-87` (guarded scopes)
 - Modify: `apps/server/src/auth/RpcAuthorization.ts:95` (reads)
-- Modify: `apps/server/src/ws.ts:10` (import), `:1556` (service), `:2693-2701` (handlers), `:3606` and `:3705` (provide)
-- Modify: `apps/server/src/ws.test.ts:845` (mock)
+- Modify: `apps/server/src/ws.ts:2693-2701` (handlers)
 - Modify: `apps/server/src/environment/ServerEnvironment.ts:295-297` (capability)
-- Modify: `apps/server/src/server.ts:859-863` (start the probe loop)
 - Test: `apps/server/src/auth/RpcAuthorization.test.ts` (in `describe("RPC authorization scopes")`, after `:84`)
 
 **Interfaces:**
 
-- Consumes: `ClusterService` (Tasks 6–7); contracts from Task 1.
+- Consumes: `ClusterService` (Tasks 6–7), already provided to `ws.ts` by Task 8; contracts from Task 1; `ClusterRpcError` (Task 8).
 - Produces: the seven `WS_METHODS.cluster*` RPCs listed for Plan 3; capability `cluster: true`.
 
 - [ ] **Step 1: Write the failing test**
@@ -3663,7 +4251,7 @@ Expected: FAIL — `RPC method undefined has no declared authorization scope.`
 
 - [ ] **Step 3: Implement**
 
-`packages/contracts/src/rpc.ts` — import from `./cluster.ts`: `ClusterAddMemberInput, ClusterError, ClusterInvite, ClusterInviteInput, ClusterLeaveResult, ClusterMember, ClusterMemberRef, ClusterRemoveMemberResult, ClusterRenameMemberInput, ClusterStatus`. In `WS_METHODS` after `peerLinksAnswerRequest`:
+`packages/contracts/src/rpc.ts` — add to the `./cluster.ts` import: `ClusterAddMemberInput, ClusterInvite, ClusterInviteInput, ClusterLeaveResult, ClusterMember, ClusterMemberRef, ClusterRemoveMemberResult, ClusterRenameMemberInput, ClusterStatus`. In `WS_METHODS` after `clusterHostReply`:
 
 ```ts
   clusterStatus: "cluster.status",
@@ -3675,11 +4263,9 @@ Expected: FAIL — `RPC method undefined has no declared authorization scope.`
   clusterLeave: "cluster.leave",
 ```
 
-After `WsPeerLinksAnswerRequestRpc`:
+After `ClusterLinkRpcs`:
 
 ```ts
-const ClusterRpcError = Schema.Union([ClusterError, EnvironmentAuthorizationError]);
-
 const WsClusterStatusRpc = Rpc.make(WS_METHODS.clusterStatus, {
   payload: Schema.Struct({}),
   success: ClusterStatus,
@@ -3724,7 +4310,7 @@ const WsClusterLeaveRpc = Rpc.make(WS_METHODS.clusterLeave, {
 });
 ```
 
-and in `WsRpcGroup` after `WsPeerLinksAnswerRequestRpc,`:
+and in `WsRpcGroup` after `WsClusterHostReplyRpc,`:
 
 ```ts
   WsClusterStatusRpc,
@@ -3755,7 +4341,7 @@ and in `WsRpcGroup` after `WsPeerLinksAnswerRequestRpc,`:
   [WS_METHODS.clusterMembers]: AuthOrchestrationReadScope,
 ```
 
-`apps/server/src/ws.ts` — import `* as ClusterService from "./cluster/ClusterService.ts"`; after line 1556 `const cluster = yield* ClusterService.ClusterService;`; after the `peerLinksAnswerRequest` handler:
+`apps/server/src/ws.ts` — after the `clusterHostReply` handler Task 8 added (it uses the same `cluster`):
 
 ```ts
         [WS_METHODS.clusterStatus]: (_input) => cluster.status,
@@ -3767,25 +4353,10 @@ and in `WsRpcGroup` after `WsPeerLinksAnswerRequestRpc,`:
         [WS_METHODS.clusterLeave]: (_input) => cluster.leave,
 ```
 
-after line 3606 `const cluster = yield* ClusterService.ClusterService;` and after line 3705:
-
-```ts
-              Layer.provide(Layer.succeed(ClusterService.ClusterService, cluster)),
-```
-
-`apps/server/src/ws.test.ts` line 845 add `Layer.mock(ClusterService.ClusterService)({}),` (with the import).
-
 `apps/server/src/environment/ServerEnvironment.ts`, after `linkFence: true,`:
 
 ```ts
       cluster: true,
-```
-
-`apps/server/src/server.ts`, in `layerMakeRoutes` after the `RemoteDelegation` `Layer.effectDiscard`:
-
-```ts
-  // Keeps member statuses current while the server runs.
-  Layer.effectDiscard(ClusterService.ClusterService.pipe(Effect.flatMap((cluster) => cluster.start()))),
 ```
 
 - [ ] **Step 4: Run the tests to verify they pass**
@@ -3799,7 +4370,7 @@ Expected: no errors.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/contracts/src/rpc.ts packages/contracts/src/clientRpcPermissions.ts apps/server/src/auth/RpcAuthorization.ts apps/server/src/auth/RpcAuthorization.test.ts apps/server/src/ws.ts apps/server/src/ws.test.ts apps/server/src/environment/ServerEnvironment.ts apps/server/src/server.ts
+git add packages/contracts/src/rpc.ts packages/contracts/src/clientRpcPermissions.ts apps/server/src/auth/RpcAuthorization.ts apps/server/src/auth/RpcAuthorization.test.ts apps/server/src/ws.ts apps/server/src/environment/ServerEnvironment.ts
 git commit -m "feat(server): cluster RPCs
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
@@ -3807,7 +4378,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
-## Task 10: CLI `t3 cluster invite|add|leave|list`
+## Task 11: CLI `t3 cluster invite|add|leave|list`
 
 **Files:**
 
@@ -4038,7 +4609,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
-## Task 11: Internal docs
+## Task 12: Internal docs
 
 **Files:**
 
@@ -4089,13 +4660,21 @@ The main host forwards each client request with its own `cluster-host` token and
 session with that header, which only narrows, and only for `cluster-host`
 sessions; the proxy always overwrites a header the client sent. An unparseable
 header grants nothing.
+
+The main host also keeps one `cluster-host` WebSocket to each member, its
+control link. The member's status is that link's state, and calls from the
+member's agents ride it back (`cluster.hostChannel`, answered by
+`cluster.hostReply`), so a member never needs the main host's address or a
+credential for it. Only the session the member recorded at join can open that
+channel. A call waiting when the link drops fails as "cluster host unreachable"
+and is never sent again on a later link.
 ```
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add docs/internals/remote.md docs/internals/environment-auth.md
-git commit -m "docs: cluster proxy and cluster-host trust
+git commit -m "docs: cluster proxy, cluster-host trust and the control link
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
@@ -4104,7 +4683,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ## Final verification
 
-- [ ] Run: `vp test run packages/contracts/src/cluster.test.ts apps/server/src/cluster apps/server/src/auth/EnvironmentAuth.test.ts apps/server/src/auth/McpOAuth.test.ts apps/server/src/auth/RpcAuthorization.test.ts apps/server/src/peer/PeerLinks.test.ts packages/ssh/src/tunnel.test.ts apps/server/src/ws.test.ts`
+- [ ] Run: `vp test run packages/contracts/src/cluster.test.ts apps/server/src/cluster apps/server/src/auth/EnvironmentAuth.test.ts apps/server/src/auth/McpOAuth.test.ts apps/server/src/auth/RpcAuthorization.test.ts apps/server/src/peer/PeerLinks.test.ts packages/ssh/src/tunnel.test.ts apps/server/src/ws.test.ts apps/server/src/persistence/reconcileV2PreviewMigration.test.ts`
   Expected: PASS.
 - [ ] Run: `vp run check:changed`
   Expected: clean (format, lint, knip, typecheck, tests beside changes).
@@ -4116,35 +4695,44 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 | Spec item | Where |
 | --- | --- |
-| Main host proxies `/cluster/<id>/*`, HTTP forward + WS pipe, prefix stripped | Task 8 |
-| Per-client upstream socket, no multiplexer | Task 8 (`Socket.makeWebSocket` per upgrade) |
-| `cluster-host` credential + scope header, cap once per socket | Task 3 (cap), Task 8 (header) |
-| Proxy covers `/ws`, `/api/*`, `/oauth`, static | Task 8 forwards every path; ticket mint answered locally |
+| Main host proxies `/cluster/<id>/*`, HTTP forward + WS pipe, prefix stripped | Task 9 |
+| Per-client upstream socket, no multiplexer | Task 9 (`Socket.makeWebSocket` per upgrade) |
+| `cluster-host` credential + scope header, cap once per socket | Task 3 (cap), Task 9 (header) |
+| Proxy covers `/ws`, `/api/*`, `/oauth`, static | Task 9 forwards every path; ticket mint answered locally |
 | Members fully trust main host; exclusivity enforced by the member | Task 3 (pairing refusal), Task 6 (`keepOnlyHostAndLoopback`) |
 | No nesting | Task 6 (join on main host), Task 7 (add on member), tests both |
 | Join over HTTPS with pinned fingerprint, join string format | Tasks 1, 5, 7 |
-| Join over SSH, password prompt fails clearly, forward restored | Tasks 5, 7 (`ensureEnvironment` reuses or rebuilds the forward per connect) |
-| Main host hands member a `cluster-member` MCP token | Hook only: `ClusterJoinRequest.hostMcp` + columns (Task 6); minting is Plan 4 |
+| Join step 3: main host gets a `cluster-host` session (RPC, HTTP, MCP) and opens the control link | Task 3 (session, `cluster: true` on `/mcp`), Tasks 7, 8 (a new row starts its link) |
+| Join over SSH with the main host machine's keys or agent, prompts fail clearly, no client involved, forward restored | Tasks 5, 7 (`SshPasswordPrompt.disabledLayer`; `ensureEnvironment` reuses or rebuilds the forward per connect, so each link attempt restores it) |
+| Control link: one long-lived WebSocket RPC session per member, over pinned HTTPS or the SSH forward, reconnecting with backoff | Task 8 (`start`, `runLink`, `LINK_BACKOFF`) |
+| Status from the link: connected `online`, protocol mismatch `incompatible`, `401` `revoked`, else `offline`; no polling loop | Task 8 (`ready` event, preflight); the proxy only reads it (Task 9) |
+| Member→main calls ride the link: `cluster.hostChannel` + `cluster.hostReply(requestId, result)` | Task 8 (contracts, member side, link fiber) |
+| Calls queued while the link is down fail "cluster host unreachable", never delivered twice | Task 8 (`hostCall`, `closeHostChannel`), tested |
 | Member writes membership, revokes non-loopback sessions and peer links, stops minting ordinary codes | Tasks 3, 6 |
-| Leave from main host (remove) and from member | Tasks 6, 7, CLI Task 10 |
+| Leave from main host (remove) and from member | Tasks 6, 7, CLI Task 11 |
 | Refusals: peer link create/accept on clustered envs; ordinary pairing on member; add on member; join on main | Tasks 4, 3, 7, 6 |
-| Status `online/offline/incompatible/revoked`; 502 unreachable; certificate changed; 401 → revoked; protocol checked per upstream connect | Tasks 7, 8 |
-| `cluster_members` / `cluster_membership` tables | Task 2 (adds `status` and the Plan 4 MCP columns) |
-| RPCs, guarded `access:write` | Task 9 |
-| Labs `clusterEnabled` gating both sides | Task 1; main side gated in `connect`/`addMember`/proxy/probe loop (Tasks 7, 8) |
-| Capability flag | Tasks 1, 9 |
-| CLI `invite|add|leave|list` | Task 10 |
-| Docs: `remote.md` exception | Task 11 (`docs/user` moves to Plan 3) |
+| Status `online/offline/incompatible/revoked`; 502 unreachable; certificate changed; 401 → revoked; protocol checked per upstream connect | Task 8 (each link connect), Task 9 (502 bodies) |
+| `cluster_members` / `cluster_membership` tables | Task 2 (adds `status`; the reconcile lists gain 99) |
+| RPCs, guarded `access:write` | Task 10 (the host channel pair in Task 8) |
+| Labs `clusterEnabled` gating both sides | Task 1; main side gated in `connect`/`addMember`/proxy and the links, which stop while it is off (Tasks 7, 8, 9) |
+| New auth subject `cluster-host` only | Task 3 |
+| Capability flag | Tasks 1, 10 |
+| CLI `invite|add|leave|list` | Task 11 |
+| Docs: `remote.md` exception | Task 12 (`docs/user` moves to Plan 3) |
 
 Resolved ambiguities (each is a deliberate choice an implementer should not re-litigate):
 
-1. **Invite on the member is not Labs-gated server-side**; the flag gates the main side (add, proxy, probing) and Plan 3 hides the member UI behind it. Reason: SSH joins mint the invite with the remote's CLI, and a headless member cannot flip its Labs flag.
-2. **Re-invite rotates**: a member accepts a join from the host it already belongs to and revokes the old `cluster-host` session. This is the "admin re-invites" path for a changed certificate or address.
+1. **Invite on the member is not Labs-gated server-side**; the flag gates the main side (add, proxy, links) and Plan 3 hides the member UI behind it. Reason: SSH joins mint the invite with the remote's CLI, and a headless member cannot flip its Labs flag. The member side of the host channel is not gated either: membership is the gate.
+2. **Re-invite rotates**: a member accepts a join from the host it already belongs to and revokes the old `cluster-host` session. This is the "admin re-invites" path for a changed certificate or address; the new token restarts that member's link.
 3. **A main host also drops its outbound peer links on its first member**, and `/mcp` refuses linked clients on any clustered environment (403 with the existing `linked_environments_off` code so older peers degrade the same way).
 4. **Upstream 401 is surfaced to the client as `502 cluster_member_revoked`**, not 401, so clients do not discard their own valid main-host credential.
 5. **Member list and status RPCs need only `orchestration:read`**: every client must see members to drive them.
 6. **`cluster-host` sessions last 10 years** (no renewal channel); leave or removal ends them.
-7. **Desktop password prompts are not bridged** into the server's SSH joins; the server uses `SshPasswordPrompt.disabledLayer` everywhere. A desktop main host whose member needs a password needs a key or agent, as headless hosts do.
+7. **No client answers SSH prompts**: the server uses `SshPasswordPrompt.disabledLayer` everywhere, desktop included.
 8. **Join strings accept `http:` only for loopback hosts** (no pin, nothing on the network), which also lets tests run without TLS; the pinned path is tested directly in Task 5.
+9. **The link opens the member's ordinary `/ws`** with `?orchestrationProtocol=<v>`, after an HTTP preflight. The preflight is what tells `incompatible` and `revoked` apart, because a WebSocket client cannot read the status of a refused upgrade.
+10. **`ready` marks online**, not the socket opening: a member's agent call can only succeed once the member has installed the channel, so status and `hostCall` agree.
+11. **A main host restart resets every `online` row to `offline`** before its links start; a revoked member keeps retrying at the 30 s cap until it is removed or re-added.
+12. **Proxied sockets need an `online` link**: a member that is up while its link is still reconnecting gets `502` for that moment, and the client retries.
 
-Known limits worth a reviewer's eye: the main host mirrors `cluster_members` in memory, so a `t3 cluster add` run beside a live server shows up in the server within one probe round (30 s); proxied WebSocket upgrades pay one probe (two small requests) each, which is what makes the protocol check "per upstream connect".
+Known limits worth a reviewer's eye: the main host mirrors `cluster_members` in memory and rereads it every 30 s (only rows; status never polls), so a `t3 cluster add` run beside a live server reaches the proxy and gets its link within 30 s; `reload` publishes only when the rows changed, so clients hear no repeats. A call the main host started before its link dropped may still have run on the target although the member's agent heard "unreachable"; Plan 4 keeps `clientRequestId` stable so the agent's retry lands once.

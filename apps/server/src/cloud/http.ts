@@ -2,6 +2,7 @@ import {
   AuthRelayReadScope,
   AuthRelayConfigureScope,
   AuthRelayWriteScope,
+  type ClusterError,
   EnvironmentCloudEndpointUnavailableError,
   EnvironmentHttpApi,
   EnvironmentHttpBadRequestError,
@@ -70,6 +71,8 @@ const connectErrorCases = {
   CloudLinkTunnelSupersededError: conflict,
   ManagedPolicyRefusedError: (error: ManagedLimits.ManagedPolicyRefusedError) =>
     Effect.fail(new EnvironmentHttpForbiddenError({ message: error.message })),
+  ClusterError: (error: ClusterError) =>
+    Effect.fail(new EnvironmentHttpForbiddenError({ message: error.message })),
   CloudLinkInternalError: (error: CloudLink.CloudLinkInternalError) =>
     internalServerError(error, error.cause),
   RelayRequestError: relayFailure,
@@ -79,6 +82,7 @@ type ConnectFailure =
   | Exclude<CloudLink.CloudLinkError, CloudLink.CloudLinkEndpointUnavailableError>
   | EnvironmentAuth.ServerAuthInternalError
   | ManagedLimits.ManagedPolicyRefusedError
+  | ClusterError
   | RelayRequestError;
 
 const toHttpError = <A, R>(effect: Effect.Effect<A, ConnectFailure, R>) =>

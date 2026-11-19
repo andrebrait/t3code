@@ -23,6 +23,9 @@ import {
 export const MCP_APPROVAL_SUBJECT_PREFIX = "mcp-approval:";
 export const PEER_LINK_PAIRING_SUBJECT_PREFIX = `${MCP_APPROVAL_SUBJECT_PREFIX}peer-link:`;
 
+/** A one-time code that lets a main host add this environment to its cluster. */
+export const CLUSTER_MEMBER_PAIRING_SUBJECT = `${MCP_APPROVAL_SUBJECT_PREFIX}cluster-member`;
+
 const SqliteFlag = Schema.Literals([0, 1]);
 
 export const AuthPairingLinkRecord = Schema.Struct({

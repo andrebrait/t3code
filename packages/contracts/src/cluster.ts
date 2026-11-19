@@ -3,6 +3,8 @@ import * as Schema from "effect/Schema";
 import { PAIRING_CODE_ALPHABET, PAIRING_CODE_LENGTH } from "./auth.ts";
 import { EnvironmentId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
+export const CLUSTER_SCOPES_HEADER = "x-t3-cluster-scopes";
+
 const CLUSTER_ROUTE_PREFIX = "/cluster";
 
 export const ClusterMemberStatus = Schema.Literals([

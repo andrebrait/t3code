@@ -995,21 +995,24 @@ it.effect("a member reaches another member through the main host, which never lo
           "That environmentId is the calling environment's own. Leave out environmentId to act there.",
       });
       // ...and a member never sends on a call its main host already forwarded.
-      const bounced = yield* a.callAs(
-        {
-          ...a.scopeOf("thread:unused"),
-          thread: undefined,
-          client: {
-            sessionId: "cluster-host-session",
-            label: "Cluster host · Studio",
-            access: "full-access",
-            cluster: true,
-          },
+      const fromHost = {
+        ...a.scopeOf("thread:unused"),
+        thread: undefined,
+        client: {
+          sessionId: "cluster-host-session",
+          label: "Cluster host · Studio",
+          access: "full-access" as const,
+          cluster: true,
         },
-        "t3_thread_read",
-        { environmentId: box.environmentId, threadId: boxThread },
-      );
+      };
+      const bounced = yield* a.callAs(fromHost, "t3_thread_read", {
+        environmentId: box.environmentId,
+        threadId: boxThread,
+      });
       expect(failureOf(bounced)).toMatchObject({ code: "invalid_request" });
+      // Listing asks the main host too, so its own call is refused the same way.
+      const relisted = yield* a.callAs(fromHost, "t3_environment_links", {});
+      expect(failureOf(relisted)).toMatchObject({ code: "invalid_request" });
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

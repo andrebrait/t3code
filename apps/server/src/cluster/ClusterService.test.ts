@@ -31,6 +31,15 @@ it.effect("a member keeps only its cluster host and loopback sessions after join
         );
       yield* pair("192.168.1.40");
       yield* pair("127.0.0.1");
+      const agent = (ipAddress: string) =>
+        member.auth.issueMcpClientSession({
+          label: "Agent",
+          access: "read-only",
+          peerLink: false,
+          client: { deviceType: "bot", ipAddress },
+        });
+      yield* agent("127.0.0.1");
+      yield* agent("192.168.1.41");
       const unspent = yield* member.auth.issuePairingCredential();
       yield* member.sql`
         INSERT INTO peer_environment_links (environment_id, secret_name, label, urls_json, access, linked_at, expires_at)
@@ -51,6 +60,7 @@ it.effect("a member keeps only its cluster host and loopback sessions after join
           .toSorted(),
       ).toEqual([
         [EnvironmentAuth.CLUSTER_HOST_SUBJECT, "192.168.1.10"],
+        ["mcp-client", "127.0.0.1"],
         ["one-time-token", "127.0.0.1"],
       ]);
       expect(yield* member.auth.listPairingLinks({ includePurposeBound: true })).toEqual([]);
@@ -78,6 +88,11 @@ it.effect("a member refuses another cluster and itself; a main host refuses to j
       const member = yield* makeEnvironment(box);
       const first = yield* member.cluster.invite({});
       yield* member.cluster.acceptJoin({ code: first.code, host: studio }, bot);
+      expect(
+        yield* member.cluster
+          .acceptJoin({ code: "K7M2Q9RZ3NWD", host: other }, bot)
+          .pipe(Effect.flip),
+      ).toMatchObject({ reason: "pairing_rejected" });
       const second = yield* member.cluster.invite({});
       expect(
         yield* member.cluster.acceptJoin({ code: second.code, host: other }, bot).pipe(Effect.flip),
@@ -86,16 +101,18 @@ it.effect("a member refuses another cluster and itself; a main host refuses to j
         message:
           "This environment is already a member of the cluster hosted by Studio. Leave it there first.",
       });
+      const third = yield* member.cluster.invite({});
       expect(
         yield* member.cluster
           .acceptJoin(
-            { code: second.code, host: { environmentId: box.environmentId, label: "Box" } },
+            { code: third.code, host: { environmentId: box.environmentId, label: "Box" } },
             bot,
           )
           .pipe(Effect.flip),
       ).toMatchObject({ reason: "self" });
 
       const main = yield* makeEnvironment(studioDescriptor);
+      const unspent = yield* main.cluster.invite({});
       yield* main.sql`
         INSERT INTO cluster_members (environment_id, label, transport, url, cert_sha256, secret_name, status, joined_at)
         VALUES ('environment-x', 'X', 'https', 'https://x:3773', ${FINGERPRINT}, 'cluster-member-1', 'online', '2026-11-19T00:00:00.000Z')
@@ -107,7 +124,39 @@ it.effect("a member refuses another cluster and itself; a main host refuses to j
         yield* main.cluster
           .acceptJoin({ code: "K7M2Q9RZ3NWD", host: other }, bot)
           .pipe(Effect.flip),
+      ).toMatchObject({ reason: "pairing_rejected" });
+      expect(
+        yield* main.cluster.acceptJoin({ code: unspent.code, host: other }, bot).pipe(Effect.flip),
       ).toMatchObject({ reason: "is_main_host" });
+      expect(
+        (yield* main.auth.listSessions()).filter(
+          (session) => session.subject === EnvironmentAuth.CLUSTER_HOST_SUBJECT,
+        ),
+      ).toEqual([]);
+    }),
+  ),
+);
+
+it.effect("rejoining from the same host rotates its token and keeps the join time", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const member = yield* makeEnvironment(box);
+      const first = yield* member.cluster.invite({});
+      const joined = yield* member.cluster.acceptJoin({ code: first.code, host: studio }, bot);
+      const before = yield* member.cluster.status;
+      const second = yield* member.cluster.invite({});
+      const rejoined = yield* member.cluster.acceptJoin({ code: second.code, host: studio }, bot);
+
+      expect(
+        yield* member.auth.authenticateHttpRequest(bearer(joined.token)).pipe(Effect.flip),
+      ).toMatchObject({ _tag: "ServerAuthInvalidCredentialError" });
+      yield* member.auth.authenticateHttpRequest(bearer(rejoined.token));
+      expect(
+        (yield* member.auth.listSessions()).filter(
+          (session) => session.subject === EnvironmentAuth.CLUSTER_HOST_SUBJECT,
+        ),
+      ).toHaveLength(1);
+      expect((yield* member.cluster.status).host?.joinedAt).toEqual(before.host?.joinedAt);
     }),
   ),
 );
@@ -126,8 +175,9 @@ it.effect("two hosts racing to join one member: one wins", () =>
         { concurrency: 2, mode: "result" },
       );
       expect(results.filter(Result.isSuccess)).toHaveLength(1);
+      // The winner revokes every outstanding invite, so the loser's code is gone.
       expect(results.filter(Result.isFailure).map((result) => result.failure.reason)).toEqual([
-        "is_member",
+        "pairing_rejected",
       ]);
       expect(
         (yield* member.auth.listSessions()).filter(

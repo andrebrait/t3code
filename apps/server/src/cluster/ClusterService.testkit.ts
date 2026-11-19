@@ -15,7 +15,6 @@ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import * as PeerLinks from "../peer/PeerLinks.ts";
 import { descriptorOf } from "../peer/PeerLinks.testkit.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
@@ -33,7 +32,6 @@ export const clusterDescriptor = (environmentId: string, label: string) => ({
 /** One environment with its own database, as a member or a main host. */
 const layerClusterEnvironment = (descriptor: ExecutionEnvironmentDescriptor) =>
   ClusterService.layer.pipe(
-    Layer.provideMerge(PeerLinks.layer),
     Layer.provideMerge(EnvironmentAuth.layer),
     Layer.provide(ManagedPolicy.layerTest()),
     Layer.provideMerge(ServerSettings.layerTest({ clusterEnabled: true })),

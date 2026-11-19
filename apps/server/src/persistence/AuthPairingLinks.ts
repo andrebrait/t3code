@@ -68,6 +68,7 @@ export const ConsumeAuthPairingLinkInput = Schema.Struct({
   requiredScopes: Schema.optionalKey(AuthEnvironmentScopes),
   /** Allow a purpose-bound code only when its subject matches the request. */
   allowedSubject: Schema.optionalKey(Schema.String),
+  exactSubject: Schema.optionalKey(Schema.String),
   consumedAt: Schema.DateTimeUtcFromString,
   now: Schema.DateTimeUtcFromString,
 });
@@ -236,6 +237,7 @@ export const make = Effect.gen(function* () {
       requestedScopes,
       requiredScopes,
       allowedSubject,
+      exactSubject,
       consumedAt,
       now,
     }) =>
@@ -246,6 +248,7 @@ export const make = Effect.gen(function* () {
           AND revoked_at IS NULL
           AND consumed_at IS NULL
           AND expires_at > ${now}
+          AND (${exactSubject === undefined ? 1 : 0} OR subject = ${exactSubject ?? null})
           AND (
             subject NOT LIKE ${`${MCP_APPROVAL_SUBJECT_PREFIX}%`}
             OR subject = ${allowedSubject ?? null}

@@ -92,6 +92,24 @@ it.live("sends a request only once the server presents the pinned certificate", 
   ),
 );
 
+it.live("accepts a CA-valid certificate whatever the pin, and still refuses an untrusted one", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const tls = yield* serveTls;
+      // The fixture is its own CA here, standing in for a certificate T3 Connect or Tailscale would issue.
+      const trusted = yield* PinnedTransport.makeAgent("0".repeat(64), 10_000, cert);
+      const response = yield* trusted.httpClient.execute(HttpClientRequest.get(`${tls.origin}/ca`));
+      expect(yield* response.text).toBe("ok");
+      const untrusted = yield* PinnedTransport.makeAgent("0".repeat(64));
+      const refused = yield* untrusted.httpClient
+        .execute(HttpClientRequest.get(`${tls.origin}/nope`))
+        .pipe(Effect.flip);
+      expect(PinnedTransport.isPinMismatch(refused)).toBe(true);
+      expect(tls.seen).toEqual(["GET /ca "]);
+    }),
+  ),
+);
+
 const serveSilentTcp = Effect.acquireRelease(
   Effect.callback<{
     readonly origin: string;

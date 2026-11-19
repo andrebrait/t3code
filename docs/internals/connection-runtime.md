@@ -61,6 +61,17 @@ so an open connection does not disappear from connection management. This does
 not extend the credential's lifetime. New HTTP requests and socket upgrades still
 require valid credentials.
 
+## Cluster members
+
+Cluster members are ephemeral registry entries, never saved. Their connection
+borrows the main host's current one
+([`clusterHosts.ts`](../../packages/client-runtime/src/connection/clusterHosts.ts)),
+so a member re-prepares only when the borrowed part changes: the address, or
+the Bearer token (DPoP hosts only the address). It is dropped only when the
+host is removed or disabled, loses the cluster capability, or reports an empty
+member list, never on a plain reconnect. A saved or platform entry for the same
+environment wins.
+
 ## Transport health and data freshness are separate
 
 A socket opening is insufficient evidence that the environment is usable. The

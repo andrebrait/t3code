@@ -491,6 +491,48 @@ ends, as for any delegated task. It keeps following the task across restarts.
 If the other machine revokes the link, or the link is removed here, the task
 fails with that reason.
 
+## Cluster
+
+A cluster puts several machines behind one **main host**. Connect any app to
+the main host and every member shows up as an ordinary environment, marked
+**via** the main host: threads, diffs, terminals and previews work there
+without pairing anything with the member. Agents on any member reach the other
+members through the main host.
+
+Cluster is a beta. Turn on **Clusters** in **Settings → Labs** on the main host
+and on each machine you add. With it off, **Invite to cluster** and **Add
+member** are hidden, but **Remove** and **Leave cluster** still work. Manage a
+cluster in **Settings → Environments → Cluster** on web, desktop and mobile.
+
+To add a machine over HTTPS:
+
+1. On that machine, choose **Invite to cluster**, or run
+   `t3 cluster invite --url https://<address>`. Enter the address the main host
+   can reach it at. It shows a join string: the address, a one-time code and
+   the machine's certificate fingerprint.
+2. On the main host, choose **Add member** and paste the join string, or run
+   `t3 cluster add <join-string>`. The main host pins that certificate; if
+   it changes later, the member shows **certificate changed**. Invite the
+   machine again.
+
+To add a machine over SSH instead, enter `user@host` in **Add member** on the
+desktop app, or run `t3 cluster add ssh://user@host`. The main host needs an SSH
+key or a running ssh-agent; password prompts are not supported. The main host
+never stops a member's server. The mobile app adds members by join string only.
+
+- Joining signs out the member's other remote clients and ends its linked
+  environments. From then on it accepts only its main host and apps on its own
+  machine, so pair your devices with the main host.
+- A member that stops answering stays listed with the reason. One on a
+  different T3 Code version shows as incompatible until both match.
+- While the main host is offline, its apps cannot reach the members; work
+  already running on a member continues.
+
+To take a machine out, choose **Remove** next to it on the main host, or run
+`t3 cluster remove <id>`. On the member, choose **Leave cluster** or run
+`t3 cluster leave`. It becomes a standalone environment again, and you pair
+apps with it as usual.
+
 ## Manage or revoke access
 
 On the host, **Settings → Sharing & access** lets authorized administrators create

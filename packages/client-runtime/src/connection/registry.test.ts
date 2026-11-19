@@ -1,4 +1,5 @@
 import {
+  type ClusterMember,
   type DesktopSshEnvironmentTarget,
   EnvironmentId,
   type OrchestrationV2ShellSnapshot,
@@ -8,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -47,6 +49,7 @@ import {
   ConnectionTransientError,
   ConnectionBlockedError,
   BearerConnectionTarget,
+  ClusterConnectionTarget,
   PrimaryConnectionTarget,
   RelayConnectionTarget,
   SshConnectionTarget,
@@ -2027,6 +2030,142 @@ describe("EnvironmentRegistry", () => {
         );
         expect(yield* Ref.get(harness.disconnectedSshTargets)).toEqual([SSH_TARGET]);
       }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+});
+
+const clusterMember = (environmentId: EnvironmentId, label = "Box"): ClusterMember => ({
+  environmentId,
+  label,
+  transport: "https",
+  address: "https://box.example.test:3773",
+  status: "online",
+  joinedAt: DateTime.makeUnsafe(0),
+  lastReachedAt: null,
+  lastError: null,
+});
+const MEMBER_ID = EnvironmentId.make("environment-box");
+
+describe("EnvironmentRegistry cluster members", () => {
+  it.effect(
+    "lists a main host's members without saving them, and a replayed list changes nothing",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness([TARGET]);
+        yield* Effect.gen(function* () {
+          const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+          const reconcile = (members: ReadonlyArray<ClusterMember>) =>
+            registry.reconcileCluster({
+              hostEnvironmentId: TARGET.environmentId,
+              hostLabel: "Studio",
+              members,
+            });
+
+          yield* reconcile([clusterMember(MEMBER_ID)]);
+          yield* awaitConnectionState(registry, MEMBER_ID, (state) => state.phase === "connected");
+          const target = (yield* SubscriptionRef.get(registry.entries)).get(MEMBER_ID)?.target;
+          expect(target).toBeInstanceOf(ClusterConnectionTarget);
+          expect(target).toMatchObject({
+            hostEnvironmentId: TARGET.environmentId,
+            hostLabel: "Studio",
+          });
+          expect(hasRoutes(yield* Ref.get(harness.storedTargets), MEMBER_ID)).toBe(false);
+          const sessionsBefore = (yield* Ref.get(harness.sessions)).length;
+          const entriesBefore = yield* SubscriptionRef.get(registry.entries);
+
+          // The subscription replays the whole list on every reconnect of the main host.
+          yield* reconcile([clusterMember(MEMBER_ID)]);
+          yield* reconcile([clusterMember(MEMBER_ID)]);
+
+          expect(yield* SubscriptionRef.get(registry.entries)).toBe(entriesBefore);
+          expect(entriesBefore.size).toBe(2);
+          expect((yield* Ref.get(harness.sessions)).length).toBe(sessionsBefore);
+          expect((yield* registry.state(MEMBER_ID)).phase).toBe("connected");
+
+          yield* reconcile([]);
+          expect((yield* SubscriptionRef.get(registry.entries)).has(MEMBER_ID)).toBe(false);
+          expect(yield* Ref.get(harness.cacheClears)).toContain(MEMBER_ID);
+          expect(yield* Ref.get(harness.ownedDataClears)).toContain(MEMBER_ID);
+        }).pipe(Effect.provide(harness.layer), Effect.scoped);
+      }),
+  );
+
+  it.effect("a member saved on this device keeps its saved entry until the user removes it", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness(
+        [TARGET, BEARER_TARGET],
+        [BEARER_PROFILE],
+        [[BEARER_TARGET.connectionId, BEARER_CREDENTIAL]],
+      );
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        const reconcile = (members: ReadonlyArray<ClusterMember>) =>
+          registry.reconcileCluster({
+            hostEnvironmentId: TARGET.environmentId,
+            hostLabel: "Studio",
+            members,
+          });
+
+        yield* reconcile([clusterMember(BEARER_TARGET.environmentId)]);
+        expect(
+          (yield* SubscriptionRef.get(registry.entries)).get(BEARER_TARGET.environmentId)?.target,
+        ).toBe(BEARER_TARGET);
+        yield* reconcile([]);
+        expect(hasRoutes(yield* Ref.get(harness.storedTargets), BEARER_TARGET.environmentId)).toBe(
+          true,
+        );
+
+        yield* registry.remove(BEARER_TARGET.environmentId);
+        yield* reconcile([clusterMember(BEARER_TARGET.environmentId)]);
+        expect(
+          (yield* SubscriptionRef.get(registry.entries)).get(BEARER_TARGET.environmentId)?.target,
+        ).toBeInstanceOf(ClusterConnectionTarget);
+        expect(hasRoutes(yield* Ref.get(harness.storedTargets), BEARER_TARGET.environmentId)).toBe(
+          false,
+        );
+        expect(
+          Exit.isFailure(yield* Effect.exit(registry.remove(BEARER_TARGET.environmentId))),
+        ).toBe(true);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("a member that leaves the list ends streams that follow it", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([TARGET]);
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.reconcileCluster({
+          hostEnvironmentId: TARGET.environmentId,
+          hostLabel: "Studio",
+          members: [clusterMember(MEMBER_ID)],
+        });
+        const started = yield* Deferred.make<void>();
+        const interrupted = yield* Deferred.make<void>();
+        // Stands in for an open thread view's durable subscription.
+        yield* registry
+          .followStream(
+            MEMBER_ID,
+            Stream.fromEffect(
+              Deferred.succeed(started, undefined).pipe(
+                Effect.andThen(Effect.never),
+                Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined)),
+              ),
+            ),
+          )
+          .pipe(Stream.runDrain, Effect.forkScoped);
+        yield* Deferred.await(started);
+
+        yield* registry.reconcileCluster({
+          hostEnvironmentId: TARGET.environmentId,
+          hostLabel: "Studio",
+          members: [],
+        });
+
+        yield* Deferred.await(interrupted);
+        const after = yield* Effect.flip(registry.run(MEMBER_ID, Effect.void));
+        expect(after._tag).toBe("EnvironmentNotRegisteredError");
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );
 });

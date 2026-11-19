@@ -1,6 +1,6 @@
 import { msg } from "gt-i18n";
 import { translatableDetail } from "../errors/translatable.ts";
-import { EnvironmentId } from "@t3tools/contracts";
+import { type ClusterMember, EnvironmentId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
@@ -35,7 +35,7 @@ import type {
   PersistedConnectionTarget,
   SupervisorConnectionState,
 } from "./model.ts";
-import { ConnectionBlockedError } from "./model.ts";
+import { ClusterConnectionTarget, ConnectionBlockedError } from "./model.ts";
 import * as Persistence from "../platform/persistence.ts";
 import * as EnvironmentSupervisor from "./supervisor.ts";
 import * as ConnectionDriver from "./driver.ts";
@@ -120,6 +120,15 @@ export class EnvironmentRegistry extends Context.Service<
     readonly reconcilePlatform: (
       registrations: ReadonlyArray<PlatformConnectionRegistration>,
     ) => Effect.Effect<void>;
+    /**
+     * Shows a main host's members as environments that are never saved. A saved or platform
+     * entry for the same environment wins; members missing from `members` are dropped.
+     */
+    readonly reconcileCluster: (input: {
+      readonly hostEnvironmentId: EnvironmentId;
+      readonly hostLabel: string;
+      readonly members: ReadonlyArray<ClusterMember>;
+    }) => Effect.Effect<void>;
     readonly remove: (
       environmentId: EnvironmentId,
     ) => Effect.Effect<
@@ -275,6 +284,14 @@ export const make = Effect.gen(function* () {
     ReadonlyMap<EnvironmentId, EnvironmentServiceScope>
   >(new Map());
   const platformEnvironmentIds = yield* Ref.make<ReadonlySet<EnvironmentId>>(new Set());
+  // Member environment -> the main host that lists it.
+  const clusterMembers = yield* Ref.make<ReadonlyMap<EnvironmentId, EnvironmentId>>(new Map());
+  const forgetClusterMember = (environmentId: EnvironmentId) =>
+    Ref.update(clusterMembers, (current) => {
+      const next = new Map(current);
+      next.delete(environmentId);
+      return next;
+    });
   const persistedEnvironmentIds = yield* Ref.make<ReadonlySet<EnvironmentId>>(
     new Set(persistedRoutesByEnvironment.keys()),
   );
@@ -547,7 +564,11 @@ export const make = Effect.gen(function* () {
     route: ConnectionRoute,
   ) {
     const environmentId = route.target.environmentId;
-    if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) return;
+    if (
+      (yield* Ref.get(platformEnvironmentIds)).has(environmentId) ||
+      (yield* Ref.get(clusterMembers)).has(environmentId)
+    )
+      return;
     const saved = (yield* SubscriptionRef.get(entries)).get(environmentId);
     if (
       saved !== undefined &&
@@ -581,7 +602,12 @@ export const make = Effect.gen(function* () {
         if (options?.knownAddressOnly === true) {
           yield* assertKnownAddress(route);
         }
-        const previous = (yield* SubscriptionRef.get(entries)).get(environmentId);
+        // Pairing a member directly saves it; the saved entry replaces the cluster one.
+        const clustered = (yield* Ref.get(clusterMembers)).has(environmentId);
+        if (clustered) yield* forgetClusterMember(environmentId);
+        const previous = clustered
+          ? undefined
+          : (yield* SubscriptionRef.get(entries)).get(environmentId);
         let entry = registered;
         if (previous !== undefined) {
           const existing = connectionRoutes(previous);
@@ -623,7 +649,10 @@ export const make = Effect.gen(function* () {
   const userEntry = Effect.fn("EnvironmentRegistry.userEntry")(function* (
     environmentId: EnvironmentId,
   ) {
-    if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) {
+    if (
+      (yield* Ref.get(platformEnvironmentIds)).has(environmentId) ||
+      (yield* Ref.get(clusterMembers)).has(environmentId)
+    ) {
       return yield* new PlatformEnvironmentRemovalError({ environmentId });
     }
     return yield* getEntry(environmentId);
@@ -860,11 +889,85 @@ export const make = Effect.gen(function* () {
     }
   }, reconcileLock.withPermits(1));
 
+  const removeClusterMemberLocked = Effect.fn("EnvironmentRegistry.removeClusterMember")(function* (
+    environmentId: EnvironmentId,
+  ) {
+    yield* forgetClusterMember(environmentId);
+    yield* closeServiceScope(environmentId);
+    yield* SubscriptionRef.update(entries, (current) => {
+      const next = new Map(current);
+      next.delete(environmentId);
+      return next;
+    });
+    yield* Effect.all(
+      [
+        cache.clear(environmentId).pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("Could not clear cached data of a former cluster member.", {
+              environmentId,
+              error,
+            }),
+          ),
+        ),
+        ownedDataCleanup.clear(environmentId),
+      ],
+      { concurrency: "unbounded", discard: true },
+    );
+  });
+
+  const reconcileCluster = Effect.fn("EnvironmentRegistry.reconcileCluster")(function* (input: {
+    readonly hostEnvironmentId: EnvironmentId;
+    readonly hostLabel: string;
+    readonly members: ReadonlyArray<ClusterMember>;
+  }) {
+    const listed = new Set(input.members.map((member) => member.environmentId));
+    const owned = [...(yield* Ref.get(clusterMembers))].flatMap(([memberId, hostId]) =>
+      hostId === input.hostEnvironmentId && !listed.has(memberId) ? [memberId] : [],
+    );
+    for (const memberId of owned) {
+      yield* withLeaseLock(memberId, removeClusterMemberLocked(memberId));
+    }
+    for (const member of input.members) {
+      const environmentId = member.environmentId;
+      yield* withLeaseLock(
+        environmentId,
+        Effect.gen(function* () {
+          const owner = (yield* Ref.get(clusterMembers)).get(environmentId);
+          const previous = (yield* SubscriptionRef.get(entries)).get(environmentId);
+          if (owner === undefined ? previous !== undefined : owner !== input.hostEnvironmentId) {
+            return;
+          }
+          yield* Ref.update(clusterMembers, (current) =>
+            new Map(current).set(environmentId, input.hostEnvironmentId),
+          );
+          yield* installEntryLocked(
+            {
+              target: new ClusterConnectionTarget({
+                environmentId,
+                label: member.label,
+                hostEnvironmentId: input.hostEnvironmentId,
+                hostLabel: input.hostLabel,
+                status: member.status,
+                statusDetail: member.lastError,
+              }),
+              profile: Option.none(),
+              enabled: previous?.enabled ?? true,
+            },
+            { retainEquivalentRuntime: true },
+          );
+        }),
+      );
+    }
+  });
+
   /** Callers hold its lease lock. */
   const removeLocked = Effect.fn("EnvironmentRegistry.removeLocked")(function* (
     environmentId: EnvironmentId,
   ) {
-    if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) {
+    if (
+      (yield* Ref.get(platformEnvironmentIds)).has(environmentId) ||
+      (yield* Ref.get(clusterMembers)).has(environmentId)
+    ) {
       return yield* new PlatformEnvironmentRemovalError({
         environmentId,
       });
@@ -1082,7 +1185,10 @@ export const make = Effect.gen(function* () {
         if (entry.enabled === enabled && !retryUnsupported) {
           return;
         }
-        if (!(yield* Ref.get(platformEnvironmentIds)).has(environmentId)) {
+        if (
+          !(yield* Ref.get(platformEnvironmentIds)).has(environmentId) &&
+          !(yield* Ref.get(clusterMembers)).has(environmentId)
+        ) {
           yield* registrations.setEnabled(environmentId, enabled);
         }
         // A cached rejection can outlive a server update.
@@ -1201,6 +1307,7 @@ export const make = Effect.gen(function* () {
     register,
     assertKnownAddress,
     reconcilePlatform,
+    reconcileCluster,
     remove,
     removeRoute,
     reorderRoutes,

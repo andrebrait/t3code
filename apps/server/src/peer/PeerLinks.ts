@@ -36,6 +36,7 @@ import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 import { isLocalLoopbackHost, isTailnetHost } from "@t3tools/shared/hostClassification";
 
+import * as ClusterRole from "../cluster/ClusterRole.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -110,6 +111,8 @@ export class PeerLinks extends Context.Service<
     ) => Effect.Effect<Option.Option<PeerLink>, PeerLinkError>;
     /** Forgets the link here. The peer still lists the session until it is revoked there. */
     readonly unlink: (environmentId: EnvironmentId) => Effect.Effect<boolean, PeerLinkError>;
+    /** Forgets every link here, as joining or hosting a cluster does. */
+    readonly unlinkAll: Effect.Effect<number, PeerLinkError>;
     /** An address that answers as the linked peer, with its token, ready to call. */
     readonly resolve: (
       environmentId: EnvironmentId,
@@ -241,6 +244,7 @@ const make = Effect.gen(function* () {
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const isOwnLoopback = yield* LoopbackHost;
+  const clusterRole = yield* ClusterRole.ClusterRole;
   const enabled = serverSettings.getSettings.pipe(
     Effect.map((settings) => settings.linkedEnvironmentsEnabled),
     Effect.orElseSucceed(() => false),
@@ -504,6 +508,13 @@ const make = Effect.gen(function* () {
     if (!(yield* enabled)) {
       return yield* new PeerLinkError({ reason: "disabled", message: LINKED_ENVIRONMENTS_OFF });
     }
+    yield* clusterRole
+      .refuseIfClustered("Linking environments")
+      .pipe(
+        Effect.mapError(
+          (error) => new PeerLinkError({ reason: "clustered", message: error.message }),
+        ),
+      );
     const urls = [input.url, ...(input.alternateUrls ?? [])];
     // The user picked a machine: link through the addresses that answer as
     // it, so one that now answers as another never receives the pairing code.
@@ -660,6 +671,16 @@ const make = Effect.gen(function* () {
     },
   );
 
+  const unlinkAll: PeerLinks["Service"]["unlinkAll"] = Effect.gen(function* () {
+    const deleted = yield* sql<{ secret_name: string }>`
+      DELETE FROM peer_environment_links RETURNING secret_name
+    `.pipe(Effect.catch(failStorage));
+    for (const row of deleted) {
+      yield* secrets.remove(row.secret_name).pipe(Effect.catch(failStorage));
+    }
+    return deleted.length;
+  }).pipe(Effect.withSpan("PeerLinks.unlinkAll"));
+
   const resolve: PeerLinks["Service"]["resolve"] = Effect.fn("PeerLinks.resolve")(
     function* (environmentId) {
       const notLinked = new PeerLinkError({
@@ -752,6 +773,7 @@ const make = Effect.gen(function* () {
     list,
     get,
     unlink,
+    unlinkAll,
     resolve,
     recordOutcome,
     recordExpiry,

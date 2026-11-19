@@ -88,6 +88,21 @@ describe("serveTlsOnSamePort", () => {
   });
 });
 
+describe("serveTlsOnSamePort shutdown", () => {
+  it("closes without waiting on a client that never sent a byte", async () => {
+    const server = serveTlsOnSamePort(NodeHttp.createServer(), await secureContext());
+    const port = await listen(server);
+    const connected = Promise.withResolvers<void>();
+    server.once("connection", () => connected.resolve());
+    const client = NodeNet.connect(port, "127.0.0.1");
+    cleanups.push(() => client.destroy());
+    await connected.promise;
+    const closed = Promise.withResolvers<void>();
+    server.close(() => closed.resolve());
+    await closed.promise;
+  });
+});
+
 describe("routeByFirstByte", () => {
   it("routes on a one-byte first chunk and keeps that byte for the chosen server", async () => {
     const routed = Promise.withResolvers<string>();

@@ -388,12 +388,20 @@ const make = Effect.gen(function* () {
         : Effect.fail(new ClusterError({ reason: "disabled", message: CLUSTER_OFF })),
     ),
   );
-  const enabledChanges = Stream.concat(
-    Stream.fromEffect(enabled),
-    serverSettings.streamChanges.pipe(Stream.map((settings) => settings.clusterEnabled)),
+  // Subscribed before the read, so a toggle in between is not lost.
+  const enabledChanges = Stream.unwrap(
+    Effect.gen(function* () {
+      const changes = yield* serverSettings.subscribeChanges;
+      return Stream.concat(
+        Stream.fromEffect(enabled),
+        changes.pipe(Stream.map((settings) => settings.clusterEnabled)),
+      );
+    }),
   ).pipe(Stream.changes);
 
   let lastRows = "";
+  // Serialized, so an older read is never published after a newer one.
+  const reloadLock = yield* Semaphore.make(1);
   const reload = sql`SELECT * FROM cluster_members ORDER BY label, environment_id`.pipe(
     Effect.flatMap((raw) => {
       const serialized = JSON.stringify(raw);
@@ -405,6 +413,7 @@ const make = Effect.gen(function* () {
       );
     }),
     Effect.mapError(storageError),
+    reloadLock.withPermits(1),
     Effect.withSpan("ClusterService.reload"),
   );
   yield* reload.pipe(
@@ -423,6 +432,16 @@ const make = Effect.gen(function* () {
     }
     return row;
   });
+
+  // The row no longer names it, so a failure only leaves an unused secret behind.
+  const forgetSecret = (secretName: string) =>
+    secrets.remove(secretName).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("A removed cluster member's credential could not be deleted", {
+          cause,
+        }),
+      ),
+    );
 
   const tokenOf = Effect.fn("ClusterService.tokenOf")(function* (secretName: string) {
     const cached = tokens.get(secretName);
@@ -444,17 +463,20 @@ const make = Effect.gen(function* () {
       Effect.provideService(HttpClient.HttpClient, connection.httpClient),
     );
 
+  const connectRow = Effect.fn("ClusterService.connectRow")(function* (row: MemberRow) {
+    const token = yield* tokenOf(row.secret_name);
+    const connection = yield* upstream.connect(
+      row.transport === "https"
+        ? { transport: "https", url: row.url ?? "", certSha256: row.cert_sha256 }
+        : { transport: "ssh", sshTarget: row.ssh_target ?? "" },
+    );
+    return { upstream: connection, token, member: toMember(row) };
+  });
+
   const connect: ClusterService["Service"]["connect"] = Effect.fn("ClusterService.connect")(
     function* (memberId) {
       yield* requireEnabled;
-      const row = yield* findRow(memberId);
-      const token = yield* tokenOf(row.secret_name);
-      const connection = yield* upstream.connect(
-        row.transport === "https"
-          ? { transport: "https", url: row.url ?? "", certSha256: row.cert_sha256 }
-          : { transport: "ssh", sshTarget: row.ssh_target ?? "" },
-      );
-      return { upstream: connection, token, member: toMember(row) };
+      return yield* connectRow(yield* findRow(memberId));
     },
   );
 
@@ -536,14 +558,14 @@ const make = Effect.gen(function* () {
             cert_sha256 = excluded.cert_sha256, secret_name = excluded.secret_name,
             status = 'offline', last_reached_at = excluded.last_reached_at, last_error = NULL
         `;
-        if (previous !== undefined) {
-          tokens.delete(previous.secret_name);
-          yield* secrets.remove(previous.secret_name);
-        }
       }).pipe(
         Effect.mapError(storageError),
         Effect.onError(() => secrets.remove(secretName).pipe(Effect.ignore)),
       );
+      if (previous !== undefined) {
+        tokens.delete(previous.secret_name);
+        yield* forgetSecret(previous.secret_name);
+      }
       // A main host reaches other environments through its members, not its own peer links.
       if (wasStandalone) yield* peerLinks.unlinkAll.pipe(Effect.mapError(storageError));
       yield* reload;
@@ -560,7 +582,7 @@ const make = Effect.gen(function* () {
         (candidate) => candidate.environment_id === memberId,
       );
       if (row === undefined) return { removed: false, memberNotified: false };
-      const memberNotified = yield* connect(memberId).pipe(
+      const memberNotified = yield* connectRow(row).pipe(
         Effect.flatMap(({ upstream: connection, token }) =>
           clientFor(connection).pipe(
             Effect.flatMap((client) =>
@@ -572,12 +594,14 @@ const make = Effect.gen(function* () {
         Effect.as(true),
         Effect.orElseSucceed(() => false),
       );
-      yield* sql`DELETE FROM cluster_members WHERE environment_id = ${memberId}`.pipe(
-        Effect.mapError(storageError),
-      );
-      tokens.delete(row.secret_name);
-      yield* secrets.remove(row.secret_name).pipe(Effect.mapError(storageError));
-      yield* reload;
+      yield* Effect.gen(function* () {
+        yield* sql`DELETE FROM cluster_members WHERE environment_id = ${memberId}`.pipe(
+          Effect.mapError(storageError),
+        );
+        tokens.delete(row.secret_name);
+        yield* forgetSecret(row.secret_name);
+        if (row.ssh_target !== null) yield* upstream.closeSsh(row.ssh_target);
+      }).pipe(Effect.ensuring(reload.pipe(Effect.ignore)));
       return { removed: true, memberNotified };
     },
     (effect) => hostLock.withPermits(1)(effect),

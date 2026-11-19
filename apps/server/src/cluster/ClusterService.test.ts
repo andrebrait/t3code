@@ -313,6 +313,15 @@ it.effect("removal tells a reachable member, and forgets one that already left",
       });
       expect(yield* member.cluster.status).toMatchObject({ role: "standalone", host: null });
       expect(yield* memberCount(main)).toEqual(Option.some(0));
+
+      // Turning the cluster off still lets a removal reach the member.
+      yield* add;
+      yield* main.settings.updateSettings({ clusterEnabled: false });
+      expect(yield* main.cluster.removeMember(box.environmentId)).toEqual({
+        removed: true,
+        memberNotified: true,
+      });
+      expect(yield* member.cluster.status).toMatchObject({ role: "standalone", host: null });
     }),
   ),
 );

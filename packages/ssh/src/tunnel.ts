@@ -118,6 +118,9 @@ export interface SshEnvironmentManagerOptions {
   readonly resolveCliRunner?: Effect.Effect<RemoteT3RunnerOptions>;
   // Identifies this install to the remote across edits of a connection; null when unknown.
   readonly resolveLauncherId?: Effect.Effect<string | null>;
+  // Closing or disconnecting drops only the tunnel, and the server launches marked kept, so no
+  // client's stop ends it: a cluster host's member must outlive its host and other clients.
+  readonly keepRemoteServer?: boolean;
 }
 
 interface SshTunnelEntry {
@@ -615,6 +618,7 @@ const REMOTE_LAUNCH_SCRIPT = `set -eu
 @@T3_NODE_ENV_SCRIPT@@
 STATE_KEY="$1"
 LAUNCHER_ID="\${2:-}"
+KEEP_SERVER="@@T3_KEEP_SERVER@@"
 STATE_DIR="$HOME/.t3/ssh-launch/$STATE_KEY"
 DEFAULT_SERVER_HOME="$HOME/.t3"
 DEFAULT_RUNTIME_FILE="$DEFAULT_SERVER_HOME/userdata/server-runtime.json"
@@ -1016,7 +1020,7 @@ if [ -z "$REMOTE_PORT" ]; then
   fi
   # Start this launch's log empty. Unlink rather than truncate: a process from an
   # earlier launch can still hold the old log open and keep writing to it.
-  rm -f "$LOG_FILE"
+  rm -f "$LOG_FILE" "$STATE_DIR/kept"
   nohup env T3CODE_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$DEFAULT_SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
   REMOTE_PID="$!"
   printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
@@ -1060,6 +1064,9 @@ if [ -z "$REMOTE_PORT" ]; then
     sleep 0.1
   done
 fi
+if [ "$KEEP_SERVER" = "1" ]; then
+  : >"$STATE_DIR/kept"
+fi
 printf '{"remotePort":%s,"serverKind":"%s"}\\n' "$REMOTE_PORT" "\${REMOTE_MANAGED:-managed}"
 `;
 
@@ -1090,6 +1097,10 @@ PORT_FILE="$STATE_DIR/port"
 MANAGED_FILE="$STATE_DIR/managed"
 REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
 REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
+if [ -f "$STATE_DIR/kept" ]; then
+  printf '{"kept":true}\\n'
+  exit 0
+fi
 @@T3_MANAGED_SERVER_RUNNING_SCRIPT@@
 if [ "$REMOTE_MANAGED" != "external" ] && managed_server_running "$REMOTE_PID"; then
   kill "$REMOTE_PID" 2>/dev/null || true
@@ -1174,8 +1185,9 @@ export function buildRemoteNodeEnvScript(input?: RemoteT3RunnerOptions): string 
   );
 }
 
-export function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
+export function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions, keepServer = false): string {
   return applyScriptPlaceholders(REMOTE_LAUNCH_SCRIPT, {
+    T3_KEEP_SERVER: keepServer ? "1" : "",
     T3_UPDATE_MARKER_FILE: DESKTOP_UPDATE_IN_PROGRESS_MARKER_FILE,
     T3_UPDATE_TTL_MS: String(DESKTOP_UPDATE_IN_PROGRESS_TTL_MS),
     T3_UPDATE_TTL_SECONDS: String(DESKTOP_UPDATE_IN_PROGRESS_TTL_MS / 1000),
@@ -1211,7 +1223,7 @@ export function buildRemotePairingScript(
   });
 }
 
-function buildRemoteStopScript(stateKey: string): string {
+export function buildRemoteStopScript(stateKey: string): string {
   return applyScriptPlaceholders(REMOTE_STOP_SCRIPT, {
     T3_STATE_KEY: stateKey,
     T3_MANAGED_SERVER_RUNNING_SCRIPT: REMOTE_MANAGED_SERVER_RUNNING_SCRIPT,
@@ -1240,6 +1252,7 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
     input?: SshAuth.SshAuthOptions,
     runner?: RemoteT3RunnerOptions,
     launcherId?: string | null,
+    keepServer = false,
   ): Effect.fn.Return<
     { readonly remotePort: number; readonly remoteServerKind: "external" | "managed" | null },
     SshCommandError | SshInvalidTargetError | SshLaunchError,
@@ -1258,7 +1271,7 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
     });
     const result = yield* runSshCommand(target, {
       remoteCommandArgs: remoteLoginShellArgs(launchArgs),
-      stdin: buildRemoteLaunchScript(runner),
+      stdin: buildRemoteLaunchScript(runner, keepServer),
       timeoutMs: isNodeScriptRunner(runner)
         ? REMOTE_LAUNCH_TIMEOUT_MS
         : REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS,
@@ -1969,7 +1982,13 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       key: input.key,
       target: input.resolvedTarget,
       operation: (authOptions) =>
-        launchOrReuseRemoteServer(input.resolvedTarget, authOptions, input.runner, launcherId),
+        launchOrReuseRemoteServer(
+          input.resolvedTarget,
+          authOptions,
+          input.runner,
+          launcherId,
+          options.keepRemoteServer,
+        ),
     });
     const remotePort = remoteLaunch.remotePort;
     yield* Effect.logDebug("ssh.environment.remotePort.ready", {
@@ -2040,7 +2059,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
             forceKillAfter: TUNNEL_SHUTDOWN_TIMEOUT_MS,
           })
           .pipe(Effect.ignore);
-        if (!stopRemote) {
+        if (!stopRemote || options.keepRemoteServer === true) {
           return;
         }
         yield* Effect.logDebug("ssh.environment.tunnel.finalizer.start", {
@@ -2275,11 +2294,13 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
             yield* closeTunnelEntry(entry);
           }).pipe(Effect.uninterruptible);
         }
-        yield* runWithSshAuth({
-          key,
-          target: resolvedTarget,
-          operation: (authOptions) => stopRemoteServer(resolvedTarget, authOptions),
-        });
+        if (options.keepRemoteServer !== true) {
+          yield* runWithSshAuth({
+            key,
+            target: resolvedTarget,
+            operation: (authOptions) => stopRemoteServer(resolvedTarget, authOptions),
+          });
+        }
         yield* Effect.logInfo("ssh.environment.disconnect.succeeded", {
           ...sshTargetLogFields(resolvedTarget),
           key,

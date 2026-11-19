@@ -37,6 +37,8 @@ export class ClusterUpstream extends Context.Service<
     readonly inviteOverSsh: (
       sshTarget: string,
     ) => Effect.Effect<{ readonly origin: string; readonly code: string }, ClusterError>;
+    /** Closes the ssh tunnel to a removed member; its server keeps running. */
+    readonly closeSsh: (sshTarget: string) => Effect.Effect<void>;
   }
 >()("t3/cluster/ClusterUpstream") {}
 
@@ -133,7 +135,19 @@ const make = Effect.gen(function* () {
     return { origin: new URL(bootstrap.httpBaseUrl).origin, code: bootstrap.pairingToken };
   });
 
-  return ClusterUpstream.of({ connect, inviteOverSsh });
+  const closeSsh: ClusterUpstream["Service"]["closeSsh"] = (sshTarget) => {
+    const parsed = parseClusterSshTarget(sshTarget);
+    if (parsed === undefined) return Effect.void;
+    return ssh.disconnectEnvironment({ alias: parsed.hostname, ...parsed }).pipe(
+      Effect.provideContext(sshContext),
+      Effect.catch((cause) =>
+        Effect.logWarning("Could not close a cluster member's ssh tunnel", { cause }),
+      ),
+      Effect.withSpan("ClusterUpstream.closeSsh"),
+    );
+  };
+
+  return ClusterUpstream.of({ connect, inviteOverSsh, closeSsh });
 });
 
 export const layer = Layer.effect(ClusterUpstream, make);

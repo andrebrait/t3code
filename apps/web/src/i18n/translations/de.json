@@ -467,7 +467,10 @@
   "7eabeed193759388": "Die Routenreihenfolge muss jede gespeicherte Route genau einmal enthalten.",
   "18de69e3b6ac3891": "Verbindungsprofil {connectionId} ist keine Bearer-Verbindung.",
   "0a84ce2f4fb90d82": "Verbindungsprofil {connectionId} ist keine SSH-Verbindung.",
+  "77541accaf263427": "Warte darauf, dass {host} sich verbindet.",
+  "ebe7f7eb3cb3a8b5": "Cluster",
   "4d022ee84149d47f": "Remote-Verbindung",
+  "2536d3eddc51db07": "über {host}",
   "0b367ce72b45a911": "Die Verbindung zu {host} ist unerwartet fehlgeschlagen.",
   "91ca7e48f40bfa3c": "{host} hat während der Verbindungseinrichtung nicht geantwortet.",
   "8e611f2e7c10956b": "{host} hat auf eine Verbindungsprüfung nicht geantwortet.",
@@ -622,6 +625,10 @@
   "a242fe71fb5f579e": "{count} KB",
   "dda5dec2ba19575c": "{count, plural, one {{count} Byte} other {{count} Bytes}}",
   "133aaa0f98c2ea49": "„{name}“ überschreitet das Anhanglimit von {size}.",
+  "209197562551a237": "Online",
+  "d1dc5d5f8f723d2f": "Verbinde…",
+  "6da26c8c02873d20": "Führt eine T3-Code-Version aus, die {host} nicht steuern kann. Aktualisiere beide auf dieselbe Version.",
+  "1f1df7efb4b1c68f": "Akzeptiert {host} nicht mehr. Entferne es hier und lade es erneut ein.",
   "16ebaeabe59a4857": "Diese Umgebung war mit diesem Konto über T3 Connect nicht erreichbar.",
   "7e19512f1ce2b686": "Die Versionen der Geräte-Tools wurden nicht geprüft.",
   "7bdc8e41c92e24b7": "Geräte-Hub",
@@ -7814,6 +7821,71 @@
     },
     " verwenden"
   ],
+  "0b3ad417b53a6883": "Cluster konnte nicht geladen werden",
+  "5ac786986a3563b6": "Cluster wird geladen…",
+  "3202e5e7e3ac64f4": "Clustermitglieder konnten nicht geladen werden",
+  "20ec2553636ff8b6": "Clustermitglieder werden geladen…",
+  "185c47873cbc3a58": "Noch keine Mitglieder",
+  "31f940519e37de6c": "Lade einen Rechner über dessen eigene Einstellungen → Umgebungen → Cluster ein und füge seine Beitrittszeichenfolge dann hier hinzu.",
+  "e83d7e0f8edc2a67": "Nie erreicht",
+  "6e5bd943c29069ba": "Zuletzt gesehen {time}",
+  "4b8e5df2cc93095e": "{label} aus dem Cluster entfernen? Es wird wieder zu einer eigenständigen Umgebung.",
+  "77786d60b52150dd": "{label} konnte nicht entfernt werden",
+  "273389bda2366710": "{label} hier entfernt",
+  "372d2d33a8ca8db8": "Keine Antwort. Führe zum Abschluss auf dem Rechner t3 cluster leave aus.",
+  "c7902d95bd57a25f": "Wird entfernt…",
+  "2c5674665579a329": "Entfernen",
+  "707546d9421447e5": "Mitgliedsname",
+  "f924c86d559777c8": "{label} hinzugefügt",
+  "f81ac6a7cad64430": "Mitglied hinzufügen",
+  "a1d2b25c161ee6f4": "Zum Cluster einladen",
+  "fc682c73f0d0043b": "Einladung erstellen",
+  "7bc13a4ad376ef6b": "Beitrittszeichenfolge kopieren",
+  "90ae616e9cb53922": "Den Cluster von {host} verlassen? Koppel danach Clients erneut mit diesem Rechner.",
+  "cd600c8a4e87d47d": "Cluster konnte nicht verlassen werden",
+  "2ed706790c2b5d0a": "Mitglied von {host}",
+  "7cfb1640fbeceaf3": "{host} verwaltet diese Umgebung und ist der einzige Rechner außer diesem, der sie erreichen kann.",
+  "9ff2b973feb1f701": "Verlasse…",
+  "102b7b49ef3cdee1": "Cluster verlassen",
+  "63d400aa1e2ea276": "Mitglied umbenennen",
+  "32b30e32d451d005": "Mitglied hinzufügen",
+  "8aba1e766d94fc7f": "Füge die Beitrittszeichenfolge aus „Zum Cluster einladen“ des Rechners ein oder gib user@host ein, um ihn per SSH hinzuzufügen. SSH benötigt einen Schlüssel oder einen laufenden ssh-agent auf diesem Rechner.",
+  "7310ad79a8ffca7d": "Beitrittszeichenfolge oder SSH-Ziel",
+  "3953d1cccd71ab7e": "Name (optional)",
+  "4428cf603470025c": [
+    "Erlaubt es einem anderen Rechner, diesen als Mitglied hinzuzufügen. Zertifikat-SHA-256:",
+    " ",
+    {
+      "t": "code",
+      "i": 1,
+      "c": {
+        "i": 2,
+        "k": "_gt_value_2",
+        "v": "v"
+      }
+    }
+  ],
+  "9a897f12238cc846": "Zum Cluster einladen",
+  "c3d0edea2211cbbd": "Beim Beitritt werden die anderen Clients dieses Rechners abgemeldet und die verknüpften Umgebungen beendet. Danach ist er über den Haupthost erreichbar.",
+  "a7e90c3ca71d8a2b": "Adresse, unter der der Haupthost diesen Rechner erreicht",
+  "886a1cd5518d7bb5": [
+    "Code ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ". Füge eine Adresse hinzu, um eine Beitrittszeichenfolge zu erhalten."
+  ],
+  "c4a1872f647cca8f": [
+    "Füge sie beim Haupthost unter „Mitglied hinzufügen“ ein. Zertifikat-SHA-256:",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
   "cd67d110c09bfdf4": "Sichtbarkeit der Konto-E-Mail umschalten",
   "6b2ce50ea6a13f57": "Klicken, um die E-Mail anzuzeigen",
   "34ce8910007bfaf1": "Klicken, um die E-Mail auszublenden",
@@ -8420,7 +8492,6 @@
   "8fef1ad9234284f7": "Standard",
   "ca384fd1a1d6e1bb": "Optionen für {name}",
   "8b45e296e25933cb": "Verbinde dich mit einer Umgebung, um Profildaten zu löschen",
-  "c7902d95bd57a25f": "Wird entfernt…",
   "4a42ed8f9a4c6750": "Profil entfernen",
   "90eae6ed93306de1": "Systemeinstellungen konnten nicht geöffnet werden",
   "e80b0936736a6dd8": "Öffne „Datenschutz & Sicherheit → Festplattenvollzugriff“ manuell.",
@@ -8648,6 +8719,16 @@
     },
     ". Solange es aus ist, startet nichts Neues über eine Verknüpfung; laufende Aufgaben werden beendet."
   ],
+  "587d0375e01bca60": [
+    "Steuere deine anderen Rechner über diesen. Aktiviere es hier und auf jedem hinzugefügten Rechner und richte es dann unter",
+    " ",
+    {
+      "t": "Link",
+      "i": 1,
+      "c": "Environments"
+    },
+    " ein. Solange es deaktiviert ist, fügt dieser Rechner keine Mitglieder hinzu und leitet nichts an sie weiter."
+  ],
   "ce6a3933a976ac7e": [
     "Lass den Gerätebereich Simulatoren und Emulatoren aus deinem eigenen",
     " ",
@@ -8687,6 +8768,8 @@
   "c2553b323479499a": "Diese App kennt keine anderen Rechner. Füge sie zuerst unter „Umgebungen“ hinzu.",
   "18b1d4d42b945b34": "Rechner",
   "03860d65c4052ab5": "Es wird geprüft, welche Rechner bereits verknüpft sind…",
+  "7c01e07f8acb120c": "Verwaltet vom Cluster {name}",
+  "9f4df8a8737cc552": "Umgebungen in einem Cluster werden nicht mit anderen Umgebungen verknüpft. Agenten hier erreichen die anderen Mitglieder über den Haupthost.",
   "4cea6be0fe6be16f": "Verknüpfte Umgebungen konnten nicht geladen werden",
   "58cb9c075da185fb": "Verknüpfte Umgebungen werden geladen…",
   "25b74062dc03079e": "Keine verknüpften Umgebungen",
@@ -10911,7 +10994,6 @@
   ],
   "2e487089c231536b": "Dienst",
   "c732b08a5fa8c3d7": "Basis-URL",
-  "3953d1cccd71ab7e": "Name (optional)",
   "304d6712ac5d3a89": [
     {
       "i": 1,
@@ -11524,6 +11606,7 @@
   "d443390c4d2dcfd4": "barrierefreiheit a11y screenreader nvda jaws voiceover orca sprachausgabe fenstertitel tab-titel alt tab taskleiste thread status reihenfolge arbeitet genehmigung",
   "6826fa9579c22035": "beta teilen gast einladen link teammitglied zuschauen t3 connect tunnel",
   "f10c06cba0cdf7fe": "beta anderen rechner verknüpfen vps peer agenten dort arbeiten delegieren",
+  "7bf0c7a8f778a1c2": "beta cluster haupthost mitglieder gruppe rechner proxy einladung beitreten",
   "4a21cf825a2045b0": "beta tab autovervollständigung nächste nachricht vorhersagen claude codex ghost text",
   "fea2dc36585c4a20": "Simlock-Geräte-Hosts (Alpha)",
   "9d834d178130180e": "beta alpha simlock callstack simulator emulator ios android pool lease gateway",
@@ -11660,6 +11743,7 @@
   "8ed7c2a2226f4663": "localhost loopback portweiterleitung auf diesem gerät öffnen browser tabs streamen sicherheit port forwarding",
   "1c3e0ac06c8a1f1e": "verbindungen server backend lokal remote zugriff administrativ berechtigungen bereich kopplungslinks qr-code autorisierte clients sitzungen widerrufen endpunkt",
   "744fd34e8049efeb": "verknüpfen peer anderer rechner vps agenten dort arbeiten übergabe kopplungscode",
+  "c6ef7aebb3a4dc2c": "cluster haupthost mitglied einladung beitritt zeichenfolge fingerabdruck ssh verlassen entfernen",
   "3d00c452287f50bd": "hinzufügen koppeln backend host code ssh konfiguration agent tunnel gespeichert t3 connect",
   "cbf49f84e7f456e5": "Lastverteilung",
   "6f1a769805a28197": "automatisch rechner umgebung ressourcen cpu speicher kapazität präferenz gewichtung gemeinsame projekte",

@@ -467,7 +467,10 @@
   "7eabeed193759388": "El orden de rutas debe incluir cada ruta guardada una vez.",
   "18de69e3b6ac3891": "El perfil de conexión {connectionId} no es una conexión bearer.",
   "0a84ce2f4fb90d82": "El perfil de conexión {connectionId} no es una conexión SSH.",
+  "77541accaf263427": "Esperando a que {host} se conecte.",
+  "ebe7f7eb3cb3a8b5": "Clúster",
   "4d022ee84149d47f": "Enlace remoto",
+  "2536d3eddc51db07": "a través de {host}",
   "0b367ce72b45a911": "La conexión con {host} falló de forma inesperada.",
   "91ca7e48f40bfa3c": "{host} no respondió durante la configuración de la conexión.",
   "8e611f2e7c10956b": "{host} no respondió a una comprobación de estado de la conexión.",
@@ -622,6 +625,10 @@
   "a242fe71fb5f579e": "{count} KB",
   "dda5dec2ba19575c": "{count, plural, one {{count} byte} other {{count} bytes}}",
   "133aaa0f98c2ea49": "''{name}'' supera el límite de adjuntos de {size}.",
+  "209197562551a237": "Online",
+  "d1dc5d5f8f723d2f": "Conectando…",
+  "6da26c8c02873d20": "Ejecuta una versión de T3 Code que {host} no puede controlar. Actualiza ambos a la misma versión.",
+  "1f1df7efb4b1c68f": "Ya no acepta a {host}. Quítalo aquí y vuelve a invitarlo.",
   "16ebaeabe59a4857": "No se pudo llegar a ese entorno a través de T3 Connect con esta cuenta.",
   "7e19512f1ce2b686": "No se han comprobado las versiones de las herramientas del dispositivo.",
   "7bdc8e41c92e24b7": "Device hub",
@@ -7813,6 +7820,71 @@
       "v": "v"
     }
   ],
+  "0b3ad417b53a6883": "No se pudo cargar el clúster",
+  "5ac786986a3563b6": "Cargando el clúster…",
+  "3202e5e7e3ac64f4": "No se pudieron cargar los miembros del clúster",
+  "20ec2553636ff8b6": "Cargando los miembros del clúster…",
+  "185c47873cbc3a58": "Aún no hay miembros",
+  "31f940519e37de6c": "Invita a una máquina desde sus propios Ajustes → Entornos → Clúster y luego añade aquí su cadena de unión.",
+  "e83d7e0f8edc2a67": "Nunca alcanzado",
+  "6e5bd943c29069ba": "Visto por última vez {time}",
+  "4b8e5df2cc93095e": "¿Quitar {label} del clúster? Volverá a ser un entorno independiente.",
+  "77786d60b52150dd": "No se pudo quitar {label}",
+  "273389bda2366710": "{label} quitado aquí",
+  "372d2d33a8ca8db8": "No respondió. Ejecuta t3 cluster leave en él para terminar.",
+  "c7902d95bd57a25f": "Quitando…",
+  "2c5674665579a329": "Quitar",
+  "707546d9421447e5": "Nombre del miembro",
+  "f924c86d559777c8": "{label} añadido",
+  "f81ac6a7cad64430": "Añadir miembro",
+  "a1d2b25c161ee6f4": "Invitar al clúster",
+  "fc682c73f0d0043b": "Crear invitación",
+  "7bc13a4ad376ef6b": "Copiar cadena de unión",
+  "90ae616e9cb53922": "¿Salir del clúster de {host}? Después, vuelve a emparejar los clientes con esta máquina.",
+  "cd600c8a4e87d47d": "No se pudo salir del clúster",
+  "2ed706790c2b5d0a": "Miembro de {host}",
+  "7cfb1640fbeceaf3": "{host} gestiona este entorno y es la única máquina, además de esta, que puede acceder a él.",
+  "9ff2b973feb1f701": "Saliendo…",
+  "102b7b49ef3cdee1": "Salir del clúster",
+  "63d400aa1e2ea276": "Renombrar miembro",
+  "32b30e32d451d005": "Añadir un miembro",
+  "8aba1e766d94fc7f": "Pega la cadena de unión de Invitar al clúster de la máquina, o introduce user@host para añadirla por SSH. SSH necesita una clave o un ssh-agent en ejecución en esta máquina.",
+  "7310ad79a8ffca7d": "Cadena de unión o destino SSH",
+  "3953d1cccd71ab7e": "Nombre (opcional)",
+  "4428cf603470025c": [
+    "Permite que otra máquina añada esta como miembro. SHA-256 del certificado:",
+    " ",
+    {
+      "t": "code",
+      "i": 1,
+      "c": {
+        "i": 2,
+        "k": "_gt_value_2",
+        "v": "v"
+      }
+    }
+  ],
+  "9a897f12238cc846": "Invitar al clúster",
+  "c3d0edea2211cbbd": "Al unirse, se cierra la sesión de los demás clientes de esta máquina y se terminan sus entornos vinculados. Después se accede a ella a través del host principal.",
+  "a7e90c3ca71d8a2b": "Dirección con la que el host principal accede a esta máquina",
+  "886a1cd5518d7bb5": [
+    "Código ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ". Añade una dirección para obtener una cadena de unión."
+  ],
+  "c4a1872f647cca8f": [
+    "Pégala en Añadir miembro del host principal. SHA-256 del certificado:",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
   "cd67d110c09bfdf4": "Mostrar u ocultar el correo de la cuenta",
   "6b2ce50ea6a13f57": "Clic para mostrar el correo",
   "34ce8910007bfaf1": "Clic para ocultar el correo",
@@ -8418,7 +8490,6 @@
   "8fef1ad9234284f7": "Predeterminado",
   "ca384fd1a1d6e1bb": "Opciones de {name}",
   "8b45e296e25933cb": "Conéctate a un entorno para borrar los datos del perfil",
-  "c7902d95bd57a25f": "Quitando…",
   "4a42ed8f9a4c6750": "Quitar perfil",
   "90eae6ed93306de1": "No se pudo abrir Ajustes del Sistema",
   "e80b0936736a6dd8": "Abre manualmente Privacidad y seguridad → Acceso total al disco.",
@@ -8646,6 +8717,16 @@
     },
     ". Mientras esté desactivado, no se inicia nada nuevo a través de un vínculo; las tareas en curso terminan."
   ],
+  "587d0375e01bca60": [
+    "Controla tus otras máquinas a través de esta. Actívalo aquí y en cada máquina que añadas, y luego configúralo en",
+    " ",
+    {
+      "t": "Link",
+      "i": 1,
+      "c": "Environments"
+    },
+    ". Mientras esté desactivado, esta máquina no añade miembros ni les reenvía nada."
+  ],
   "ce6a3933a976ac7e": [
     "Permite que el panel Dispositivo alquile simuladores y emuladores de tu propio",
     " ",
@@ -8685,6 +8766,8 @@
   "c2553b323479499a": "Esta app no conoce otras máquinas. Añádelas primero en Entornos.",
   "18b1d4d42b945b34": "Máquinas",
   "03860d65c4052ab5": "Comprobando qué máquinas ya están vinculadas…",
+  "7c01e07f8acb120c": "Gestionado por el clúster {name}",
+  "9f4df8a8737cc552": "Los entornos de un clúster no se vinculan a otros entornos. Los agentes de aquí acceden a los demás miembros a través del host principal.",
   "4cea6be0fe6be16f": "No se pudieron cargar los entornos vinculados",
   "58cb9c075da185fb": "Cargando entornos vinculados…",
   "25b74062dc03079e": "No hay entornos vinculados",
@@ -10906,7 +10989,6 @@
   ],
   "2e487089c231536b": "Servicio",
   "c732b08a5fa8c3d7": "URL base",
-  "3953d1cccd71ab7e": "Nombre (opcional)",
   "304d6712ac5d3a89": [
     {
       "i": 1,
@@ -11517,6 +11599,7 @@
   "d443390c4d2dcfd4": "accesibilidad a11y lector de pantalla nvda jaws voiceover orca narrador título de ventana título de pestaña alt tab barra de tareas estado del hilo orden en curso aprobación",
   "6826fa9579c22035": "beta compartir invitado invitar enlace compañero ver t3 connect túnel",
   "f10c06cba0cdf7fe": "beta vincular otra máquina vps agentes pares trabajar allí delegar",
+  "7bf0c7a8f778a1c2": "beta clúster host principal miembros grupo máquinas proxy invitación unirse",
   "4a21cf825a2045b0": "beta tab autocompletar predecir siguiente mensaje claude codex texto fantasma",
   "fea2dc36585c4a20": "Hosts de dispositivos Simlock (alfa)",
   "9d834d178130180e": "beta alfa simlock callstack simulador emulador ios android grupo préstamo gateway",
@@ -11653,6 +11736,7 @@
   "8ed7c2a2226f4663": "localhost loopback reenvío de puertos abrir en este dispositivo pestañas navegador transmitir seguridad port forwarding",
   "1c3e0ac06c8a1f1e": "conexiones servidor backend local remoto acceso administrativo permisos ámbito enlaces de emparejamiento código qr clientes autorizados sesiones revocar endpoint",
   "744fd34e8049efeb": "vincular par otra máquina vps agentes trabajar allí traspaso código de emparejamiento",
+  "c6ef7aebb3a4dc2c": "clúster host principal miembro invitación cadena de unión huella ssh salir quitar",
   "3d00c452287f50bd": "añadir emparejar backend host código ssh config agente túnel guardado t3 connect",
   "cbf49f84e7f456e5": "Equilibrio de carga",
   "6f1a769805a28197": "automático máquina entorno recursos cpu memoria capacidad preferencia peso proyectos compartidos",

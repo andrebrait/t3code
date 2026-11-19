@@ -46,15 +46,28 @@ export function serveTlsOnSamePort<T extends NodeHttp.Server>(
     throw new Error("serveTlsOnSamePort needs a freshly created http.Server.");
   }
   server.off("connection", serveHttp);
-  server.on("connection", (socket: NodeNet.Socket) =>
+  // http.Server does not track a socket before it is routed, so close() would wait out its timeout.
+  const unrouted = new Set<NodeNet.Socket>();
+  const closeIdleConnections = server.closeIdleConnections.bind(server);
+  server.closeIdleConnections = () => {
+    for (const socket of unrouted) socket.destroy();
+    closeIdleConnections();
+  };
+  server.on("connection", (socket: NodeNet.Socket) => {
+    unrouted.add(socket);
+    socket.once("close", () => unrouted.delete(socket));
     routeByFirstByte(socket, {
-      plain: (plain) => serveHttp.call(server, plain),
+      plain: (plain) => {
+        unrouted.delete(plain);
+        serveHttp.call(server, plain);
+      },
       tls: (raw) => {
+        unrouted.delete(raw);
         const secure = new NodeTls.TLSSocket(raw, { isServer: true, secureContext });
         secure.on("error", () => secure.destroy());
         serveHttp.call(server, secure);
       },
-    }),
-  );
+    });
+  });
   return server;
 }

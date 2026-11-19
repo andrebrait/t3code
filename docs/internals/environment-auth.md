@@ -129,6 +129,46 @@ transaction](../../apps/server/src/persistence/AuthSessions.ts); a failed
 replacement must leave the old credential usable. Pairing and browser sessions
 do not follow this replacement rule.
 
+### A cluster member trusts only its main host
+
+A member's one remote client is its main host's `cluster-host` session, minted
+by spending a cluster invite ([ClusterService](../../apps/server/src/cluster/ClusterService.ts)).
+Invites use the purpose-bound `mcp-approval:` subject prefix, so ordinary token
+exchange, Connections and older servers never spend or list them. Join spends
+the invite before any role check, so a refusal reveals nothing about the
+invite. One transaction holds the spend, the session and the membership.
+Revoking every remote session, ordinary code and peer link runs after the
+commit, because revocation events must publish after it (reads go to a WAL
+reader worker), and again on member start. Afterwards the member mints only
+invites and its startup link, so exclusivity needs no per-request address check.
+
+The main host forwards each client request with its own `cluster-host` token and
+`x-t3-cluster-scopes` naming the client's scopes. The member intersects its
+session with that header, which only narrows, and only for `cluster-host`
+sessions; the proxy always overwrites a client-sent value. An unparseable header
+grants nothing. WebSocket tickets from a `cluster-host` session carry the capped
+scopes in a `scp` claim. The proxy refuses `/api/cluster/*` and strips hop-by-hop
+and origin-affecting headers.
+
+The proxy decides on a canonical path (cut at `;`, decoded, slashes collapsed,
+trailing slash trimmed, lowercased) and forwards that same cut path. The
+member's FindMyWay router normalizes the same way; forwarding the raw path would
+let a request pass the decision as one route and reach another.
+
+The main host holds one request open on each member, the control link, an SSE
+doorbell: `GET /api/cluster/events`. Its state is the member's status. A
+member's agent call rings a doorbell carrying only an id; the main host fetches
+it once with `GET /api/cluster/host-request/<id>` and answers with
+`POST /api/cluster/host-reply`, so a member never needs the main host's address
+or credential and no payload waits behind another on the stream. Only the
+session recorded at join may use these routes. The member sends a heartbeat
+every 15 s; 40 s of silence counts as a drop. At most 32 calls per member are
+in flight, a call is bounded at 5 min, and a call pending when the link drops
+fails as "cluster host unreachable" and is never fetched again.
+
+The server's SSH manager uses `keepRemoteServer`, so the main host never stops a
+member's server when it closes a tunnel.
+
 ### Reusable dev credential
 
 Web development environments can accept one `T3CODE_DEV_AUTH_TOKEN` across

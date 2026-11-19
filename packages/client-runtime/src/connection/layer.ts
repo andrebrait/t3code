@@ -1,20 +1,25 @@
+import { WS_METHODS, type EnvironmentId } from "@t3tools/contracts";
 import type { RelayEnvironmentStatusResponse } from "@t3tools/contracts/relay";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as Option from "effect/Option";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { orchestrationProtocolCompatibilityError } from "./compatibility.ts";
 
+import * as ClusterHosts from "./clusterHosts.ts";
 import * as ConnectionResolver from "./resolver.ts";
 import * as ConnectionDriver from "./driver.ts";
 import * as EnvironmentRegistry from "./registry.ts";
 import * as ConnectionOnboarding from "./onboarding.ts";
 import { connectionRoutes, hasRelayRoute } from "./routes.ts";
+import * as EnvironmentSupervisor from "./supervisor.ts";
 import * as PlatformConnectionSource from "../platform/source.ts";
 import * as RelayEnvironmentDiscovery from "../relay/discovery.ts";
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import * as RpcSession from "../rpc/session.ts";
+import { subscribe } from "../rpc/client.ts";
 
 export const watchDiscoveredCompatibility = Effect.fn("connection.watchDiscoveredCompatibility")(
   function* () {
@@ -71,6 +76,84 @@ export const watchDiscoveredCompatibility = Effect.fn("connection.watchDiscovere
   },
 );
 
+/**
+ * Publishes each main host's connection for its members to borrow and lists its members while it
+ * is connected. A changed or lost host connection drops the members, so none keeps a stale route
+ * or credential; the next subscription replays the list and they prepare again.
+ */
+export const watchClusterMembers = Effect.fn("connection.watchClusterMembers")(function* () {
+  const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+  const hosts = yield* ClusterHosts.ClusterHosts;
+  const dropMembers = (hostEnvironmentId: EnvironmentId) =>
+    registry.reconcileCluster({ hostEnvironmentId, hostLabel: "", members: [] });
+  const followHost = (hostEnvironmentId: EnvironmentId) =>
+    registry
+      .followStream(
+        hostEnvironmentId,
+        Stream.unwrap(
+          EnvironmentSupervisor.EnvironmentSupervisor.pipe(
+            Effect.map((supervisor) =>
+              SubscriptionRef.changes(supervisor.prepared).pipe(
+                Stream.map(ClusterHosts.clusterHostConnection),
+                Stream.switchMap((host) =>
+                  Stream.unwrap(
+                    Effect.gen(function* () {
+                      // followStream restarts on any entry change; only a new connection drops.
+                      const previous = yield* hosts.get(hostEnvironmentId);
+                      if (Option.getOrNull(previous) !== Option.getOrNull(host)) {
+                        yield* hosts.set(hostEnvironmentId, host);
+                        yield* dropMembers(hostEnvironmentId);
+                      }
+                      if (Option.isNone(host)) return Stream.empty;
+                      return subscribe(WS_METHODS.clusterMembers, {}).pipe(
+                        Stream.tap((members) =>
+                          registry.reconcileCluster({
+                            hostEnvironmentId,
+                            hostLabel: host.value.target.label,
+                            members,
+                          }),
+                        ),
+                      );
+                    }),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      )
+      .pipe(
+        Stream.runDrain,
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Stopped following a main host's cluster members.", {
+            hostEnvironmentId,
+            cause,
+          }),
+        ),
+      );
+  const followed = new Map<EnvironmentId, Fiber.Fiber<void>>();
+  yield* SubscriptionRef.changes(registry.entries).pipe(
+    Stream.runForEach((entries) =>
+      Effect.gen(function* () {
+        for (const [environmentId, entry] of entries) {
+          if (entry.target._tag === "ClusterConnectionTarget" || followed.has(environmentId)) {
+            continue;
+          }
+          followed.set(environmentId, yield* followHost(environmentId).pipe(Effect.forkScoped));
+        }
+        for (const [environmentId, fiber] of followed) {
+          const entry = entries.get(environmentId);
+          if (entry !== undefined && entry.target._tag !== "ClusterConnectionTarget") continue;
+          followed.delete(environmentId);
+          yield* Fiber.interrupt(fiber);
+          yield* hosts.set(environmentId, Option.none());
+          yield* dropMembers(environmentId);
+        }
+      }),
+    ),
+  );
+});
+
 export function layerWithOptions(options: RpcSession.RpcSessionOptions) {
   const layerDriver = ConnectionDriver.layer.pipe(
     Layer.provide(Layer.mergeAll(ConnectionResolver.layer, RpcSession.layer(options))),
@@ -88,6 +171,7 @@ export function layerWithOptions(options: RpcSession.RpcSessionOptions) {
       const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
       const platformSource = yield* PlatformConnectionSource.PlatformConnectionSource;
       yield* watchDiscoveredCompatibility().pipe(Effect.forkScoped);
+      yield* watchClusterMembers().pipe(Effect.forkScoped);
       yield* registry.start;
       yield* platformSource.registrations.pipe(
         Stream.runForEach(registry.reconcilePlatform),
@@ -98,6 +182,7 @@ export function layerWithOptions(options: RpcSession.RpcSessionOptions) {
   return layerConnectionStartup.pipe(
     Layer.provideMerge(layerConnectionServices),
     Layer.provideMerge(RemoteEnvironmentAuthorization.layer),
+    Layer.provideMerge(ClusterHosts.layer),
   );
 }
 

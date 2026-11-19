@@ -134,6 +134,20 @@ created in Settings can only be copied from the client that created them while
 its Sharing & access page stays open. If you leave or reload that page, create
 another link to share.
 
+### HTTPS on your network
+
+The server also answers HTTPS on the same port, with a self-signed certificate it
+creates on first start. Open `https://<address>:<port>` and accept the browser's
+certificate warning once.
+
+To keep other devices on your network off plain HTTP, turn on **Redirect network
+HTTP to HTTPS** in **Settings → Sharing & access**, or on mobile in the
+environment's details under **Settings → Environments**. Browsers move to HTTPS;
+apps and scripts that call the server over plain HTTP get an `https_required`
+error. This machine, Tailscale, and T3 Connect are not affected. The desktop and
+mobile apps do not accept the self-signed certificate yet, so leave this off while
+they connect over your LAN by IP address.
+
 ### Reach one machine several ways
 
 A machine can have more than one route: LAN, Tailscale, another VPN, a public

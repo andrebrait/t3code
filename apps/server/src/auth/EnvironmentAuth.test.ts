@@ -762,6 +762,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
           })
           .pipe(Effect.flip);
         expect(notAnInvite._tag).toBe("ServerAuthInvalidCredentialError");
+        yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+          pairing.credential,
+          undefined,
+          requestMetadata,
+        );
 
         const session = yield* serverAuth.authenticateHttpRequest(makeBearerRequest(host.token));
         expect(session.subject).toBe(EnvironmentAuth.CLUSTER_HOST_SUBJECT);
@@ -799,6 +804,41 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
       }).pipe(Effect.provide(layerEnvironmentAuth())),
     );
 
+    it.effect("keeps the cluster scope cap on a websocket ticket redeemed without the header", () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const invite = yield* serverAuth.createPairingLink({
+          subject: CLUSTER_MEMBER_PAIRING_SUBJECT,
+        });
+        const host = yield* serverAuth.consumeClusterInvite(invite.credential, {
+          hostLabel: "Studio",
+          client: requestMetadata,
+        });
+        const capped = yield* serverAuth.authenticateHttpRequest(
+          withHeaders(makeBearerRequest(host.token), {
+            [CLUSTER_SCOPES_HEADER]: "orchestration:read",
+          }),
+        );
+        const ticket = yield* serverAuth.issueWebSocketTicket(capped, { use: "rpc" });
+        const upgrade = (headers: Record<string, string>) =>
+          withHeaders(
+            {
+              cookies: {},
+              headers: {},
+              url: `/ws?wsTicket=${Redacted.value(ticket.ticket)}`,
+            } as unknown as ReturnType<typeof makeBearerRequest>,
+            headers,
+          );
+        const bare = yield* serverAuth.authenticateWebSocketUpgrade(upgrade({}), "rpc");
+        expect(bare.scopes).toEqual(["orchestration:read"]);
+        const narrower = yield* serverAuth.authenticateWebSocketUpgrade(
+          upgrade({ [CLUSTER_SCOPES_HEADER]: "terminal:read" }),
+          "rpc",
+        );
+        expect(narrower.scopes).toEqual([]);
+      }).pipe(Effect.provide(layerEnvironmentAuth())),
+    );
+
     it.effect("ignores the cluster scope header on any other session", () =>
       Effect.gen(function* () {
         const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
@@ -825,6 +865,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         Effect.gen(function* () {
           const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
           const sql = yield* SqlClient.SqlClient;
+          yield* serverAuth.issueConnectCredential({
+            proofKeyThumbprint: "thumb",
+            requireApproval: true,
+          });
           yield* sql`
           INSERT INTO cluster_membership (singleton, host_environment_id, host_label, joined_at, host_session_id)
           VALUES (1, 'environment-studio', 'Studio', '2026-11-19T00:00:00.000Z', 'session-1')
@@ -835,6 +879,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
             message:
               "Pairing a client is not available here: this environment is a member of the cluster hosted by Studio.",
           });
+          expect(
+            yield* serverAuth
+              .issueConnectCredential({ proofKeyThumbprint: "thumb", requireApproval: true })
+              .pipe(Effect.flip),
+          ).toMatchObject({ _tag: "ClusterError" });
           yield* serverAuth.createPairingLink({ subject: CLUSTER_MEMBER_PAIRING_SUBJECT });
           yield* serverAuth.issueStartupPairingCredential();
 

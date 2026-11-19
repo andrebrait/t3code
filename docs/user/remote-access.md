@@ -499,7 +499,7 @@ the main host and every member shows up as an ordinary environment, marked
 without pairing anything with the member. Agents on any member reach the other
 members through the main host.
 
-Cluster is a beta. Turn on **Clusters** in **Settings → Labs** on the main host
+Cluster is a beta. Turn on **Cluster** in **Settings → Labs** on the main host
 and on each machine you add. With it off, **Invite to cluster** and **Add
 member** are hidden, but **Remove** and **Leave cluster** still work. Manage a
 cluster in **Settings → Environments → Cluster** on web, desktop and mobile.
@@ -516,9 +516,8 @@ To add a machine over HTTPS:
    machine again.
 
 To add a machine over SSH instead, enter `user@host` in **Add member** on the
-desktop app, or run `t3 cluster add ssh://user@host`. The main host needs an SSH
-key or a running ssh-agent; password prompts are not supported. The main host
-never stops a member's server. The mobile app adds members by join string only.
+web or desktop app, or run `t3 cluster add ssh://user@host`. The main host needs an SSH
+key or a running ssh-agent; password prompts are not supported. The mobile app adds members by join string only.
 
 - Joining signs out the member's other remote clients and ends its linked
   environments. From then on it accepts only its main host and apps on its own

@@ -1,4 +1,5 @@
 import {
+  type ClusterError,
   type EnvironmentCloudLinkStateResult,
   type EnvironmentCloudPreferencesRequest,
   type EnvironmentCloudRelayConfigResult,
@@ -461,6 +462,7 @@ export class CloudLink extends Context.Service<
       | CloudLinkInternalError
       | EnvironmentAuth.ServerAuthInternalError
       | ManagedLimits.ManagedPolicyRefusedError
+      | ClusterError
     >;
     readonly mintCredential: (
       request: RelayCloudMintCredentialRequest,
@@ -471,6 +473,7 @@ export class CloudLink extends Context.Service<
       | CloudLinkInternalError
       | EnvironmentAuth.ServerAuthInternalError
       | ManagedLimits.ManagedPolicyRefusedError
+      | ClusterError
     >;
     readonly reconcileDesiredLinkIfStillDesired: (
       localOrigin: string,

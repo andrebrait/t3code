@@ -1,13 +1,22 @@
 import { EnvironmentId } from "@t3tools/contracts";
+import { SshCommandError } from "@t3tools/ssh/errors";
+import * as SshTunnel from "@t3tools/ssh/tunnel";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ClusterService from "./ClusterService.ts";
-import { clusterDescriptor, FINGERPRINT, makeEnvironment } from "./ClusterService.testkit.ts";
+import {
+  clusterDescriptor,
+  FINGERPRINT,
+  makeEnvironment,
+  serveMember,
+} from "./ClusterService.testkit.ts";
 
 const box = clusterDescriptor("environment-box", "Box");
 const studioDescriptor = clusterDescriptor("environment-studio", "Studio");
@@ -228,6 +237,184 @@ it.effect("a member leaves without its main host and is standalone again", () =>
       expect(yield* member.cluster.status).toMatchObject({ role: "standalone", host: null });
       yield* member.auth.issuePairingCredential();
       expect(yield* member.cluster.leave).toEqual({ left: false });
+    }),
+  ),
+);
+
+const memberCount = (main: { cluster: { members: Stream.Stream<ReadonlyArray<unknown>> } }) =>
+  main.cluster.members.pipe(Stream.runHead, Effect.map(Option.map((members) => members.length)));
+
+it.effect("adds a member with its join string, and neither side nests", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const member = yield* serveMember(box);
+      const main = yield* makeEnvironment(studioDescriptor);
+      const joinString = (yield* member.cluster.invite({ url: member.url })).joinString ?? "";
+      const added = yield* main.cluster.addMember({ target: joinString });
+      // Online once its control link is up (Task 8).
+      expect(added).toMatchObject({
+        environmentId: box.environmentId,
+        label: "Box",
+        transport: "https",
+        address: member.url,
+        status: "offline",
+      });
+      expect(yield* member.cluster.status).toMatchObject({
+        role: "member",
+        host: { environmentId: studio.environmentId, label: "Studio" },
+      });
+      expect(yield* main.cluster.status).toMatchObject({ role: "main", host: null });
+
+      expect(
+        yield* member.cluster.addMember({ target: joinString }).pipe(Effect.flip),
+      ).toMatchObject({ reason: "is_member" });
+      expect(yield* main.cluster.invite({}).pipe(Effect.flip)).toMatchObject({
+        reason: "is_main_host",
+      });
+
+      const renamed = yield* main.cluster.renameMember({
+        memberId: box.environmentId,
+        label: "Build box",
+      });
+      expect(renamed.label).toBe("Build box");
+      expect(yield* main.cluster.members.pipe(Stream.runHead)).toEqual(Option.some([renamed]));
+
+      yield* main.settings.updateSettings({ clusterEnabled: false });
+      expect(yield* main.cluster.members.pipe(Stream.runHead)).toEqual(Option.some([]));
+      expect(yield* main.cluster.addMember({ target: joinString }).pipe(Effect.flip)).toMatchObject(
+        { reason: "disabled" },
+      );
+    }),
+  ),
+);
+
+it.effect("removal tells a reachable member, and forgets one that already left", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const member = yield* serveMember(box);
+      const main = yield* makeEnvironment(studioDescriptor);
+      const add = member.cluster
+        .invite({ url: member.url })
+        .pipe(
+          Effect.flatMap((invite) => main.cluster.addMember({ target: invite.joinString ?? "" })),
+        );
+      yield* add;
+      yield* member.cluster.leave;
+      expect(yield* main.cluster.removeMember(box.environmentId)).toEqual({
+        removed: true,
+        memberNotified: false,
+      });
+      expect(yield* main.cluster.status).toMatchObject({ role: "standalone" });
+
+      yield* add;
+      expect(yield* main.cluster.removeMember(box.environmentId)).toEqual({
+        removed: true,
+        memberNotified: true,
+      });
+      expect(yield* member.cluster.status).toMatchObject({ role: "standalone", host: null });
+      expect(yield* memberCount(main)).toEqual(Option.some(0));
+    }),
+  ),
+);
+
+it.effect(
+  "re-adding a member at a new address moves the proxy there and retires the old token",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const member = yield* serveMember(box);
+        const main = yield* makeEnvironment(studioDescriptor);
+        const addAt = (url: string) =>
+          member.cluster
+            .invite({ url })
+            .pipe(
+              Effect.flatMap((invite) =>
+                main.cluster.addMember({ target: invite.joinString ?? "" }),
+              ),
+            );
+        yield* addAt(member.url);
+        const before = yield* main.cluster.connect(box.environmentId);
+
+        const moved = yield* member.serveAgain;
+        expect(yield* addAt(moved)).toMatchObject({ address: moved });
+        const after = yield* main.cluster.connect(box.environmentId);
+        expect(after.upstream.origin).toBe(moved);
+        expect(after.token).not.toBe(before.token);
+        expect(
+          yield* member.auth.authenticateHttpRequest(bearer(before.token)).pipe(Effect.flip),
+        ).toMatchObject({ _tag: "ServerAuthInvalidCredentialError" });
+        expect(yield* memberCount(main)).toEqual(Option.some(1));
+      }),
+    ),
+);
+
+it.effect("two adds of one member racing leave the stored token the live one", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const member = yield* serveMember(box);
+      const main = yield* makeEnvironment(studioDescriptor);
+      const first = (yield* member.cluster.invite({ url: member.url })).joinString ?? "";
+      const second = (yield* member.cluster.invite({ url: member.url })).joinString ?? "";
+      const results = yield* Effect.all(
+        [main.cluster.addMember({ target: first }), main.cluster.addMember({ target: second })],
+        { concurrency: 2, mode: "result" },
+      );
+      // The winning join revokes the member's other invites.
+      expect(results.filter(Result.isFailure).map((result) => result.failure.reason)).toEqual([
+        "pairing_rejected",
+      ]);
+      const { token } = yield* main.cluster.connect(box.environmentId);
+      expect((yield* member.auth.authenticateHttpRequest(bearer(token))).subject).toBe(
+        EnvironmentAuth.CLUSTER_HOST_SUBJECT,
+      );
+      expect(
+        (yield* member.auth.listSessions()).filter(
+          (session) => session.subject === EnvironmentAuth.CLUSTER_HOST_SUBJECT,
+        ),
+      ).toHaveLength(1);
+    }),
+  ),
+);
+
+it.effect("adds a member over ssh, and a password prompt fails with a clear error", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const member = yield* serveMember(box);
+      const ssh = SshTunnel.SshEnvironmentManager.of({
+        ensureEnvironment: (target, options) =>
+          target.username === "nokey"
+            ? Effect.fail(
+                new SshCommandError({
+                  message: "Permission denied (publickey,password).",
+                  command: ["ssh"],
+                  exitCode: 255,
+                  stderr: "",
+                }),
+              )
+            : member.cluster.invite({}).pipe(
+                Effect.orDie,
+                Effect.map((invite) => ({
+                  target,
+                  httpBaseUrl: member.url,
+                  wsBaseUrl: member.url.replace(/^http/, "ws"),
+                  pairingToken: options?.pairingPurpose === "cluster-member" ? invite.code : null,
+                })),
+              ),
+        disconnectEnvironment: () => Effect.void,
+        closeAllTunnels: Effect.void,
+      });
+      const main = yield* makeEnvironment(studioDescriptor, ssh);
+      expect(yield* main.cluster.addMember({ target: "ssh://me@box:2222" })).toMatchObject({
+        transport: "ssh",
+        address: "me@box:2222",
+      });
+      expect(
+        yield* main.cluster.addMember({ target: "nokey@other" }).pipe(Effect.flip),
+      ).toMatchObject({
+        reason: "ssh",
+        message:
+          "SSH to nokey@other needs a key or a running ssh-agent; this server cannot answer password prompts.",
+      });
     }),
   ),
 );

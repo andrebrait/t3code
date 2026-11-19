@@ -211,7 +211,7 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
         } else {
           const current = yield* remote.value
             .authorizeDpopHttp({
-              expectedEnvironmentId: input.prepared.environmentId,
+              expectedEnvironmentId: authorization.issuedFor ?? input.prepared.environmentId,
               ...(rejectedAccessToken === undefined ? {} : { rejectedAccessToken }),
             })
             .pipe(Effect.mapError(authFetchError));

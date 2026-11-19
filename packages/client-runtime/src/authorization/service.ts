@@ -87,6 +87,8 @@ export class RemoteEnvironmentAuthorization extends Context.Service<
        * environment's LAN or tailnet address.
        */
       readonly directEndpoint?: { readonly httpBaseUrl: string; readonly wsBaseUrl: string };
+      /** The member behind `expectedEnvironmentId`'s cluster proxy that `directEndpoint` reaches. */
+      readonly clusterMemberId?: EnvironmentId;
     }) => Effect.Effect<AuthorizedRemoteEnvironment, ConnectionAttemptError>;
     /** A saved address paired with this device's DPoP key, which renews with the host itself. */
     readonly authorizeDirectDpop: (input: {
@@ -688,7 +690,7 @@ export const make = Effect.gen(function* () {
       endpoint === undefined
         ? undefined
         : yield* verifyDirectEndpoint({
-            expectedEnvironmentId: input.expectedEnvironmentId,
+            expectedEnvironmentId: input.clusterMemberId ?? input.expectedEnvironmentId,
             httpBaseUrl: endpoint.httpBaseUrl,
             connectionMethod: "direct",
           });

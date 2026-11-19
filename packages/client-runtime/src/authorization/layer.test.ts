@@ -683,6 +683,38 @@ describe("RemoteEnvironmentAuthorization", () => {
     }),
   );
 
+  it.effect("reaches a cluster member with the main host's token under its path", () =>
+    Effect.gen(function* () {
+      const memberId = EnvironmentId.make("environment-box");
+      const member = "https://environment.example.test/cluster/environment-box";
+      const harness = yield* makeHarness({
+        initialToken: persistedToken({ accessToken: "cached-access-token" }),
+        responses: [
+          Response.json({ ...DESCRIPTOR, environmentId: memberId }),
+          websocketTicket("member-ticket"),
+        ],
+      });
+
+      const authorized = yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        return yield* remote.authorizeDpop({
+          expectedEnvironmentId: ENVIRONMENT_ID,
+          clusterMemberId: memberId,
+          directEndpoint: { httpBaseUrl: member, wsBaseUrl: `${member.replace(/^http/, "ws")}/ws` },
+        });
+      }).pipe(Effect.provide(harness.layer));
+
+      expect(authorized.socketUrl).toMatch(
+        /^wss:\/\/environment\.example\.test\/cluster\/environment-box\/ws\?/,
+      );
+      expect(yield* Ref.get(harness.bootstrapCalls)).toBe(0);
+      expect(harness.fetch.calls.map(([url]) => String(url))).toEqual([
+        `${member}/.well-known/t3/environment`,
+        `${member}/api/auth/websocket-ticket/rpc`,
+      ]);
+    }),
+  );
+
   it.effect("sends no token to a direct address that answers as another machine", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({

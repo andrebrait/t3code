@@ -252,7 +252,7 @@ export const make = Effect.gen(function* () {
         if (prepared.httpAuthorization?._tag === "Dpop") {
           yield* remote
             .renewDpopBeforeExpiry({
-              expectedEnvironmentId: prepared.environmentId,
+              expectedEnvironmentId: prepared.httpAuthorization.issuedFor ?? prepared.environmentId,
               expiresAtEpochMs: prepared.httpAuthorization.expiresAtEpochMs,
               ...(prepared.httpAuthorization.directConnection
                 ? { directConnection: prepared.httpAuthorization.directConnection }

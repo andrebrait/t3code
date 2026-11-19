@@ -85,6 +85,21 @@ describe("RPC authorization scopes", () => {
     expect(requiredScopeForRpcMethod("server.getSettings")).toBe(AuthOrchestrationReadScope);
   });
 
+  it("keeps cluster membership changes behind access write and lets readers see members", () => {
+    for (const method of [
+      WS_METHODS.clusterInvite,
+      WS_METHODS.clusterAddMember,
+      WS_METHODS.clusterRemoveMember,
+      WS_METHODS.clusterRenameMember,
+      WS_METHODS.clusterLeave,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthAccessWriteScope);
+    }
+    for (const method of [WS_METHODS.clusterStatus, WS_METHODS.clusterMembers]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+    }
+  });
+
   it("rejects unknown RPC method names", () => {
     for (const method of ["server.notRegistered", "toString", "constructor"]) {
       expect(() => requiredScopeForRpcMethod(method)).toThrow(

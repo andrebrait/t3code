@@ -1,4 +1,6 @@
 import {
+  type ClusterError,
+  type ClusterStatus,
   type EnvironmentId,
   OrchestratorMcpFailure,
   type OrchestratorMcpEnvironmentLinksResult,
@@ -19,8 +21,10 @@ import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import type * as Tool from "effect/ai/Tool";
 
+import * as ClusterService from "../cluster/ClusterService.ts";
 import { runtimeModeRank } from "../mcp/delegatedTaskModes.ts";
 import { assertNotLinked } from "../mcp/linkOrigin.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
@@ -36,16 +40,15 @@ const MAX_WAIT_TIMEOUT_MS = 45_000;
 type Scope = McpInvocationContext.McpInvocationScope;
 
 /**
- * Runs T3 MCP tools in a linked environment for an agent here. The tool's own
- * declaration checks the agent here first; the linked environment then holds
- * the call to the link's access, narrowed to the agent's modes, which every
- * forwarded call carries.
+ * Runs T3 MCP tools in another environment for an agent here, over a peer link or the
+ * cluster. The tool's declaration checks the agent here first; the other environment holds
+ * the call to the link's access (or full trust in a cluster), narrowed to the agent's modes.
  */
 export class PeerForwarding extends Context.Service<
   PeerForwarding,
   {
     /**
-     * Runs `tool` in the linked environment `environmentId` with `params`. A
+     * Runs `tool` in the environment `environmentId` with `params`. A
      * `t3_thread_wait` goes in pieces short enough to survive any route.
      */
     readonly call: <T extends Tool.Any>(
@@ -72,10 +75,14 @@ export class PeerForwarding extends Context.Service<
       environmentId: EnvironmentId,
       input: OrchestratorMcpThreadWaitInput,
     ) => Effect.Effect<OrchestratorMcpThreadWaitResult, OrchestratorMcpFailure>;
-    /** The environments this one links to, as an agent sees them. */
+    /** The environments this one reaches, as an agent sees them. */
     readonly links: (
       scope: Scope,
     ) => Effect.Effect<OrchestratorMcpEnvironmentLinksResult, OrchestratorMcpFailure>;
+    /** The name of an environment calls can reach from here; none when no route leads there. */
+    readonly routeLabel: (
+      environmentId: EnvironmentId,
+    ) => Effect.Effect<Option.Option<string>, OrchestratorMcpFailure>;
   }
 >()("t3/peer/PeerForwarding") {}
 
@@ -91,6 +98,34 @@ const isRuntimeMode = Schema.is(RuntimeMode);
 const linkStorageFailure = (error: PeerLinkError) =>
   new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message });
 
+/** A removed member is final: a task there fails rather than retries. An unreachable host is not. */
+const fromClusterError = (error: ClusterError) =>
+  new OrchestratorMcpFailure({
+    code: error.reason === "unknown_member" ? "capability_denied" : "orchestration_error",
+    message:
+      error.reason === "unknown_member"
+        ? `${error.message} t3_environment_links lists this cluster's environments.`
+        : error.message,
+  });
+
+const membershipUnreadable = new OrchestratorMcpFailure({
+  code: "orchestration_error",
+  message: "This environment's cluster membership could not be read. The server log has details.",
+});
+
+const callerItself = new OrchestratorMcpFailure({
+  code: "invalid_request",
+  message:
+    "That environmentId is the calling environment's own. Leave out environmentId to act there.",
+});
+
+/** The main host sends calls on without environmentId, so one naming another environment would bounce. */
+const clusterLoop = new OrchestratorMcpFailure({
+  code: "invalid_request",
+  message:
+    "This call came from the cluster's main host and names another environment. The main host routes calls between members; send it there without environmentId.",
+});
+
 /** The linked environment a call names, or nothing when it names this one. */
 export const remoteTarget = (scope: Scope, environmentId: EnvironmentId | undefined) =>
   environmentId === scope.environmentId ? undefined : environmentId;
@@ -100,6 +135,17 @@ const make = Effect.gen(function* () {
   const links = yield* PeerLinks.PeerLinks;
   const crypto = yield* Digest.Digest;
   const threads = yield* ThreadManagement.ThreadManagementService;
+  // Optional, so environments built without clusters (tests, in-process hosts) route only over links.
+  const cluster = Option.getOrUndefined(yield* Effect.serviceOption(ClusterService.ClusterService));
+
+  /** This environment's place in a cluster, or undefined when it is in none. */
+  const clusterState: Effect.Effect<ClusterStatus | undefined, OrchestratorMcpFailure> =
+    cluster === undefined
+      ? Effect.undefined
+      : cluster.status.pipe(
+          Effect.map((status) => (status.role === "standalone" ? undefined : status)),
+          Effect.mapError(fromClusterError),
+        );
 
   /**
    * The caller's own limits and thread, which travel with every forwarded call: the peer sees only the
@@ -147,6 +193,61 @@ const make = Effect.gen(function* () {
     });
   });
 
+  // While the beta is off, agents start nothing over links. Tasks already running there keep
+  // following through readThread, waitForThread and interruptThread, so they still finish.
+  const requireEnabled = links.enabled.pipe(
+    Effect.flatMap((enabled) => (enabled ? Effect.void : Effect.fail(linkedEnvironmentsOff))),
+  );
+
+  const memberRoute = (connection: ClusterService.MemberConnection): PeerMcpClient.McpRoute => {
+    const name = `Cluster member "${connection.member.label}"`;
+    return {
+      key: `cluster ${connection.member.environmentId} ${connection.upstream.origin}`,
+      origin: connection.upstream.origin,
+      token: connection.token,
+      httpClient: connection.upstream.httpClient,
+      messages: {
+        name,
+        revoked: `${name} no longer accepts this main host. Remove it in Settings → Cluster and add it again.`,
+        off: `${name} has clusters turned off. Turn them on in its Settings → Labs.`,
+        unreachable: `${name} is not answering. Work there resumes once it is back.`,
+      },
+      // The member's control link records its status; one call says nothing more.
+      recordOutcome: () => Effect.void,
+    };
+  };
+
+  /**
+   * How a call for `environmentId` leaves a clustered environment: straight to a member's /mcp
+   * from the main host, or over this member's control link to the main host. Undefined outside a
+   * cluster, where it goes over a peer link. Cluster traffic is full trust: no link fence, only
+   * the caller's modes.
+   */
+  const clusterRoute = Effect.fn("PeerForwarding.clusterRoute")(function* (
+    scope: Scope,
+    environmentId: EnvironmentId,
+  ) {
+    const state = yield* clusterState;
+    if (state === undefined || cluster === undefined) return undefined;
+    if (state.role === "main") {
+      if (scope.client?.clusterMember === environmentId) return yield* callerItself;
+      const connection = yield* cluster
+        .connect(environmentId)
+        .pipe(Effect.mapError(fromClusterError));
+      return { kind: "member", route: memberRoute(connection) } as const;
+    }
+    if (scope.client?.cluster === true) return yield* clusterLoop;
+    const host = state.host;
+    if (host === null) return yield* membershipUnreadable;
+    return {
+      kind: "host",
+      label: host.label,
+      // The main host runs a call for itself; one for another member it sends on.
+      passTarget: environmentId !== host.environmentId,
+      send: cluster.hostCall,
+    } as const;
+  });
+
   /** Tool and contract schemas are plain data: they encode and decode without services. */
   const forward = Effect.fn("PeerForwarding.forward")(function* <A>(
     scope: Scope,
@@ -155,13 +256,17 @@ const make = Effect.gen(function* () {
     success: Schema.Top,
     environmentId: EnvironmentId,
     params: unknown,
+    /** Starting work over a link needs the beta on; following it does not. */
+    gated: boolean,
   ) {
+    const viaCluster = yield* clusterRoute(scope, environmentId);
+    if (viaCluster === undefined && gated) yield* requireEnabled;
     const { caller, limits } = yield* forwardingCaller(scope);
     const encoded = (yield* Schema.encodeUnknownEffect(parameters as Schema.Encoder<unknown>)(
       params,
     ).pipe(Effect.mapError(unavailable))) as Record<string, unknown>;
     const { environmentId: _target, ...args } = encoded;
-    yield* assertWithinLinkAccess(environmentId, args.runtimeMode);
+    if (viaCluster === undefined) yield* assertWithinLinkAccess(environmentId, args.runtimeMode);
     // A pending upload lives here, so it cannot go with the call.
     if (Array.isArray(args.attachments) && args.attachments.length > 0) {
       return yield* new OrchestratorMcpFailure({
@@ -172,17 +277,32 @@ const make = Effect.gen(function* () {
     if (typeof args.clientRequestId === "string") {
       args.clientRequestId = yield* scopedRequestId(scope.requestNamespace, args.clientRequestId);
     }
-    // So a message sent there names the thread that sent it, even to a client that cannot reach here.
+    // So a message sent there names the thread that sent it, even to a client that cannot reach
+    // here; a main host passes on the thread a member named.
     const sender =
-      caller === undefined
-        ? undefined
-        : {
-            environmentId: scope.environmentId,
-            threadId: caller.id,
-            title: caller.title,
-          };
+      caller !== undefined
+        ? { environmentId: scope.environmentId, threadId: caller.id, title: caller.title }
+        : viaCluster === undefined
+          ? undefined
+          : scope.client?.senderThread;
+    if (viaCluster?.kind === "host") {
+      const answer = yield* viaCluster
+        .send({
+          tool: toolName,
+          arguments: viaCluster.passTarget ? { ...args, environmentId } : args,
+          limits,
+          ...(sender === undefined ? {} : { sender }),
+        })
+        .pipe(Effect.mapError(fromClusterError));
+      return yield* PeerMcpClient.decodeToolResult(
+        answer,
+        success as Schema.Decoder<A>,
+        `The cluster's main host "${viaCluster.label}"`,
+      ).pipe(Effect.flatMap(Effect.fromResult));
+    }
     return yield* peers.call({
       environmentId,
+      ...(viaCluster === undefined ? {} : { route: viaCluster.route }),
       tool: toolName,
       arguments: args,
       limits,
@@ -199,6 +319,7 @@ const make = Effect.gen(function* () {
       OrchestratorMcpThreadReadResult,
       environmentId,
       input,
+      false,
     );
 
   const interruptThread: PeerForwarding["Service"]["interruptThread"] = (
@@ -213,9 +334,15 @@ const make = Effect.gen(function* () {
       OrchestratorMcpThreadInterruptResult,
       environmentId,
       input,
+      false,
     );
 
-  const waitForThread: PeerForwarding["Service"]["waitForThread"] = (scope, environmentId, input) =>
+  const waitThere = (
+    scope: Scope,
+    environmentId: EnvironmentId,
+    input: OrchestratorMcpThreadWaitInput,
+    gated: boolean,
+  ) =>
     forward<OrchestratorMcpThreadWaitResult>(
       scope,
       "t3_thread_wait",
@@ -229,27 +356,46 @@ const make = Effect.gen(function* () {
           Math.max(1, input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS),
         ),
       },
+      gated,
     );
 
-  // While the beta is off, agents start nothing over links. Tasks already running there keep
-  // following through readThread, waitForThread and interruptThread, so they still finish.
-  const requireEnabled = links.enabled.pipe(
-    Effect.flatMap((enabled) => (enabled ? Effect.void : Effect.fail(linkedEnvironmentsOff))),
-  );
+  const waitForThread: PeerForwarding["Service"]["waitForThread"] = (scope, environmentId, input) =>
+    waitThere(scope, environmentId, input, false);
 
-  const call: PeerForwarding["Service"]["call"] = (scope, tool, environmentId, params) => {
-    const forwarded: Effect.Effect<
-      Tool.Success<typeof tool>,
-      OrchestratorMcpFailure
-    > = tool.name === "t3_thread_wait"
-      ? (waitForThread(
+  const call: PeerForwarding["Service"]["call"] = (scope, tool, environmentId, params) =>
+    (tool.name === "t3_thread_wait"
+      ? waitThere(scope, environmentId, params as OrchestratorMcpThreadWaitInput, true)
+      : forward(
           scope,
+          tool.name,
+          tool.parametersSchema,
+          tool.successSchema,
           environmentId,
-          params as OrchestratorMcpThreadWaitInput,
-        ) as Effect.Effect<Tool.Success<typeof tool>, OrchestratorMcpFailure>)
-      : forward(scope, tool.name, tool.parametersSchema, tool.successSchema, environmentId, params);
-    return Effect.andThen(requireEnabled, forwarded);
-  };
+          params,
+          true,
+        )) as Effect.Effect<Tool.Success<typeof tool>, OrchestratorMcpFailure>;
+
+  const routeLabel: PeerForwarding["Service"]["routeLabel"] = Effect.fn(
+    "PeerForwarding.routeLabel",
+  )(function* (environmentId) {
+    const state = yield* clusterState;
+    if (state !== undefined && cluster !== undefined) {
+      if (state.role === "member") {
+        // Every environment is reached through the main host; only its name is known here.
+        const host = state.host;
+        return Option.some(
+          host !== null && host.environmentId === environmentId ? host.label : environmentId,
+        );
+      }
+      const members = Option.getOrElse(yield* Stream.runHead(cluster.members), () => []);
+      return Option.map(
+        Option.fromNullishOr(members.find((member) => member.environmentId === environmentId)),
+        (member) => member.label,
+      );
+    }
+    const link = yield* links.get(environmentId).pipe(Effect.mapError(linkStorageFailure));
+    return Option.map(link, (found) => found.label);
+  });
 
   /**
    * The next step for an agent whose machine is not linked: without it, an
@@ -284,6 +430,7 @@ const make = Effect.gen(function* () {
     interruptThread,
     waitForThread,
     links: listLinks,
+    routeLabel,
   });
 });
 

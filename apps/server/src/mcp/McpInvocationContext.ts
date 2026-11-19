@@ -47,11 +47,18 @@ export interface McpClientCaller {
   /** When a peer link's session ends unless it is used again, answered as `T3-Link-Expires-At`. */
   readonly linkExpiresAt?: DateTime.Utc | undefined;
   /**
+   * Came over a cluster: the main host on a member, or a member's agent on the main host.
+   * Cluster traffic is full trust, so nothing it starts is fenced (`linkOrigin.ts`).
+   */
+  readonly cluster?: boolean | undefined;
+  /** On the main host: the member whose agent sent this call over its control link. */
+  readonly clusterMember?: EnvironmentId | undefined;
+  /**
    * Narrower modes the client asked for on this request (`T3-Mode-Limit`):
    * another environment passing on the limits of the agent it calls for.
    */
   readonly narrowedTo?: ClientModes | undefined;
-  /** A linked environment's thread this request is made for (`T3-Sender-Thread`). */
+  /** Another environment's thread this request is made for (`T3-Sender-Thread`). */
   readonly senderThread?: OrchestrationV2LinkedSender | undefined;
   /** An outside client's thread links go through this hosted app, as Copy thread's do. */
   readonly hostedAppUrl?: string | undefined;
@@ -74,7 +81,7 @@ export const LINK_EXPIRES_AT_HEADER = "t3-link-expires-at";
 /**
  * `T3-Sender-Thread: <environmentId>/<threadId>/<title>`, each URI-encoded: the
  * thread another environment makes a request for, so what it sends here can name
- * it. Read only from a linked client.
+ * it. Read only from a linked or cluster client.
  */
 export const SENDER_THREAD_HEADER = "t3-sender-thread";
 
@@ -152,6 +159,8 @@ export interface McpInvocationScope {
   readonly client: McpClientCaller | undefined;
   /** False while the Linked environments beta is off here; `/mcp` reads it per request. */
   readonly linkedEnvironments?: boolean;
+  /** True while this environment is in a cluster; `/mcp` reads it per request. */
+  readonly clustered?: boolean;
   /**
    * The origin this `/mcp` request reached, e.g. a T3 Connect tunnel. Hosted clients cannot
    * see the URL they were configured with, so links they must fetch carry it. Unset in-process.

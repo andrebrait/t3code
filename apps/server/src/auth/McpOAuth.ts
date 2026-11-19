@@ -645,7 +645,9 @@ export const layerMcpClientAuthenticator = Layer.effect(
                     access: client.access,
                     linked: client.peerLink,
                     linkExpiresAt: client.linkExpiresAt,
-                    ...(client.peerLink ? {} : { hostedAppUrl }),
+                    ...(client.cluster === true ? { cluster: true } : {}),
+                    // Another T3 Code environment renders t3-thread links itself.
+                    ...(client.peerLink || client.cluster === true ? {} : { hostedAppUrl }),
                   },
                   capabilities: new Set<McpInvocationContext.McpCapability>([
                     "orchestration",

@@ -153,6 +153,9 @@ const layerEcho = HttpRouter.add(
   }).pipe(Effect.scoped, Effect.ignoreCause, Effect.as(HttpServerResponse.empty())),
 );
 
+/** Stands in for the member's MCP endpoint, which answers any caller it accepts. */
+const layerMcp = HttpRouter.add("*", "/mcp/*", HttpServerResponse.text("mcp"));
+
 const memberRoutes = Layer.mergeAll(
   HttpApiBuilder.layer(MemberTestApi).pipe(
     Layer.provide(ClusterHttp.layer),
@@ -162,6 +165,7 @@ const memberRoutes = Layer.mergeAll(
   ),
   ClusterHttp.layerEvents,
   layerEcho,
+  layerMcp,
 );
 
 /** `routes` on a real socket in the current scope; returns its `http://` origin. */

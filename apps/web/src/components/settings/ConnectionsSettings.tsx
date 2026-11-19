@@ -1370,6 +1370,24 @@ function ConnectionsSettingsContent({
             ) : canManageLocalBackend ? (
               renderDisabledNetworkAccessRow()
             ) : null}
+            {accessServerConfig?.settings.networkPlainHttp === undefined ? null : (
+              <SettingsRow
+                {...searchableSetting("network-plain-http")}
+                description={gt(
+                  "Browsers on your network switch to HTTPS, and apps on your network must use it. This device, Tailscale, and T3 Connect are unaffected.",
+                )}
+                control={
+                  <Switch
+                    checked={accessServerConfig.settings.networkPlainHttp === "redirect"}
+                    disabled={!canWriteAccess}
+                    onCheckedChange={(checked) =>
+                      updateAccessSettings({ networkPlainHttp: checked ? "redirect" : "allow" })
+                    }
+                    aria-label={gt("Redirect network HTTP to HTTPS")}
+                  />
+                }
+              />
+            )}
             {canReadRelay || canManageRelay ? (
               <CloudLinkRow
                 environmentId={accessEnvironmentId}

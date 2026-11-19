@@ -1373,6 +1373,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     managedTunnelOnly: true,
   },
   {
+    id: "network-plain-http",
+    title: msg("Redirect network HTTP to HTTPS"),
+    to: "/settings/access",
+    targetId: "connections-environment",
+    searchTerms: [msg("https tls certificate self-signed plain http redirect secure lan network")],
+  },
+  {
     id: "hold-webhooks-while-offline",
     localEnvironmentOnly: true,
     title: msg("Hold webhooks while offline"),

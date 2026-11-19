@@ -1,4 +1,8 @@
-import { ClusterError, parseClusterSshTarget } from "@t3tools/contracts";
+import {
+  ClusterError,
+  normalizeCertificateFingerprint,
+  parseClusterSshTarget,
+} from "@t3tools/contracts";
 import { isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
 import type * as NetService from "@t3tools/shared/Net";
 import * as SshAuth from "@t3tools/ssh/auth";
@@ -59,7 +63,7 @@ const make = Effect.gen(function* () {
     | SshAuth.SshPasswordPrompt
   >();
   const scope = yield* Effect.scope;
-  // Keyed by pin, so a member re-invited with a new certificate gets a new pool.
+  // Keyed by normalized pin, so a member re-invited with a new certificate gets a new pool.
   const agents = new Map<string, PinnedTransport.PinnedAgent>();
   const agentFor = (pin: string | null) => {
     const cached = agents.get(pin ?? "");
@@ -104,13 +108,15 @@ const make = Effect.gen(function* () {
       if (url.protocol === "http:" && isLocalLoopbackHost(url.hostname)) {
         return { origin: url.origin, ...(yield* agentFor(null)) };
       }
-      if (url.protocol !== "https:" || target.certSha256 === null) {
+      const pin =
+        target.certSha256 === null ? null : normalizeCertificateFingerprint(target.certSha256);
+      if (url.protocol !== "https:" || pin === null || !/^[0-9a-f]{64}$/.test(pin)) {
         return yield* new ClusterError({
           reason: "invalid_target",
           message: `${url.origin} is not an https address with a pinned certificate. Invite the member again.`,
         });
       }
-      return { origin: url.origin, ...(yield* agentFor(target.certSha256)) };
+      return { origin: url.origin, ...(yield* agentFor(pin)) };
     },
   );
 

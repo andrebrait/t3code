@@ -161,6 +161,30 @@ doorbell that is the member's status. It carries only request ids, so no
 payload waits behind another and a member needs no address or credential for
 the main host. Only the session recorded at join may use it.
 
+### Agents cross the cluster through the main host
+
+[PeerForwarding](../../apps/server/src/peer/PeerForwarding.ts) is the one seam
+that sends an `environmentId` call to a peer link or through the cluster. The
+main host calls a member's `/mcp` with its `cluster-host` token. A member's
+agents have no credential or address for the main host, so their calls ride the
+control link back and the main host runs each one with its own MCP tools as
+that member's client ([ClusterHostRequests](../../apps/server/src/mcp/ClusterHostRequests.ts)),
+forwarding it on when it names another member. Each call is bounded at 5
+minutes, and each member gets 32 in flight.
+
+Cluster calls are not `linkOrigin`-fenced, because members trust the main host.
+Peer-link callers stay fenced and are refused on clustered environments.
+
+Loop guards: a member naming itself runs locally. The main host sends calls on
+without `environmentId`, so a call from it that names another environment is
+refused. A member's call that names that member (A to main to A) is refused.
+
+Trust is effectively symmetric. A member's agent calls run on the main host as a
+full-access client, capped only by the modes the member reports and the main
+host's managed ceiling. A compromised member can therefore do what its agents
+may ask of the main host and of every other member. Treat members as trusted
+as the main host.
+
 ### Reusable dev credential
 
 Web development environments can accept one `T3CODE_DEV_AUTH_TOKEN` across

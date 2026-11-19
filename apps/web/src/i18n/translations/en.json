@@ -469,7 +469,10 @@
   "7eabeed193759388": "The route order must list every saved route once.",
   "18de69e3b6ac3891": "Connection profile {connectionId} is not a bearer connection.",
   "0a84ce2f4fb90d82": "Connection profile {connectionId} is not an SSH connection.",
+  "77541accaf263427": "Waiting for {host} to connect.",
+  "ebe7f7eb3cb3a8b5": "Cluster",
   "4d022ee84149d47f": "Remote link",
+  "2536d3eddc51db07": "via {host}",
   "0b367ce72b45a911": "{host} connection failed unexpectedly.",
   "91ca7e48f40bfa3c": "{host} did not respond during connection setup.",
   "8e611f2e7c10956b": "{host} did not respond to a connection health check.",
@@ -624,6 +627,10 @@
   "a242fe71fb5f579e": "{count} KB",
   "dda5dec2ba19575c": "{count, plural, one {{count} byte} other {{count} bytes}}",
   "133aaa0f98c2ea49": "''{name}'' exceeds the {size} attachment limit.",
+  "209197562551a237": "Online",
+  "d1dc5d5f8f723d2f": "Connecting…",
+  "6da26c8c02873d20": "Runs a T3 Code version {host} cannot drive. Update both to the same version.",
+  "1f1df7efb4b1c68f": "No longer accepts {host}. Remove it here, then invite it again.",
   "16ebaeabe59a4857": "Could not reach that environment through T3 Connect with this account.",
   "7e19512f1ce2b686": "Device tool versions have not been checked.",
   "7bdc8e41c92e24b7": "Device hub",
@@ -7823,6 +7830,71 @@
       "v": "v"
     }
   ],
+  "0b3ad417b53a6883": "Could not load the cluster",
+  "5ac786986a3563b6": "Loading the cluster…",
+  "3202e5e7e3ac64f4": "Could not load cluster members",
+  "20ec2553636ff8b6": "Loading cluster members…",
+  "185c47873cbc3a58": "No members yet",
+  "31f940519e37de6c": "Invite a machine from its own Settings → Environments → Cluster, then add its join string here.",
+  "e83d7e0f8edc2a67": "Never reached",
+  "6e5bd943c29069ba": "Last seen {time}",
+  "4b8e5df2cc93095e": "Remove {label} from the cluster? It becomes a standalone environment again.",
+  "77786d60b52150dd": "Could not remove {label}",
+  "273389bda2366710": "Removed {label} here",
+  "372d2d33a8ca8db8": "It did not answer. Run t3 cluster leave on it to finish.",
+  "c7902d95bd57a25f": "Removing…",
+  "2c5674665579a329": "Remove",
+  "707546d9421447e5": "Member name",
+  "f924c86d559777c8": "Added {label}",
+  "f81ac6a7cad64430": "Add member",
+  "a1d2b25c161ee6f4": "Invite to cluster",
+  "fc682c73f0d0043b": "Create invite",
+  "7bc13a4ad376ef6b": "Copy join string",
+  "90ae616e9cb53922": "Leave the cluster of {host}? Pair clients with this machine again afterwards.",
+  "cd600c8a4e87d47d": "Could not leave the cluster",
+  "2ed706790c2b5d0a": "Member of {host}",
+  "7cfb1640fbeceaf3": "{host} manages this environment and is the only machine besides this one that can reach it.",
+  "9ff2b973feb1f701": "Leaving…",
+  "102b7b49ef3cdee1": "Leave cluster",
+  "63d400aa1e2ea276": "Rename member",
+  "32b30e32d451d005": "Add a member",
+  "8aba1e766d94fc7f": "Paste the join string from the machine's Invite to cluster, or enter user@host to add it over SSH. SSH needs a key or a running ssh-agent on this machine.",
+  "7310ad79a8ffca7d": "Join string or SSH target",
+  "3953d1cccd71ab7e": "Name (optional)",
+  "4428cf603470025c": [
+    "Lets another machine add this one as a member. Certificate SHA-256:",
+    " ",
+    {
+      "t": "code",
+      "i": 1,
+      "c": {
+        "i": 2,
+        "k": "_gt_value_2",
+        "v": "v"
+      }
+    }
+  ],
+  "9a897f12238cc846": "Invite to cluster",
+  "c3d0edea2211cbbd": "Joining signs out this machine's other clients and ends its linked environments. Afterwards it is reached through the main host.",
+  "a7e90c3ca71d8a2b": "Address the main host reaches this machine at",
+  "886a1cd5518d7bb5": [
+    "Code ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ". Add an address to get a join string."
+  ],
+  "c4a1872f647cca8f": [
+    "Paste it in the main host's Add member. Certificate SHA-256:",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
   "cd67d110c09bfdf4": "Toggle account email visibility",
   "6b2ce50ea6a13f57": "Click to reveal email",
   "34ce8910007bfaf1": "Click to hide email",
@@ -8430,7 +8502,6 @@
   "8fef1ad9234284f7": "Default",
   "ca384fd1a1d6e1bb": "{name} options",
   "8b45e296e25933cb": "Connect to an environment to clear profile data",
-  "c7902d95bd57a25f": "Removing…",
   "4a42ed8f9a4c6750": "Remove profile",
   "90eae6ed93306de1": "Could not open System Settings",
   "e80b0936736a6dd8": "Open Privacy & Security → Full Disk Access manually.",
@@ -8658,6 +8729,16 @@
     },
     ". While off, nothing new starts over a link; running tasks finish."
   ],
+  "587d0375e01bca60": [
+    "Drive your other machines through this one. Turn it on here and on each machine you add, then set it up in",
+    " ",
+    {
+      "t": "Link",
+      "i": 1,
+      "c": "Environments"
+    },
+    ". While off, this machine adds no members and forwards nothing to them."
+  ],
   "ce6a3933a976ac7e": [
     "Let the Device panel lease simulators and emulators from your own",
     " ",
@@ -8697,6 +8778,8 @@
   "c2553b323479499a": "This app knows no other machines. Add them under Environments first.",
   "18b1d4d42b945b34": "Machines",
   "03860d65c4052ab5": "Checking which machines are already linked…",
+  "7c01e07f8acb120c": "Managed by cluster {name}",
+  "9f4df8a8737cc552": "Clustered environments do not link to other environments. Agents here reach the other members through the main host.",
   "4cea6be0fe6be16f": "Could not load linked environments",
   "58cb9c075da185fb": "Loading linked environments…",
   "25b74062dc03079e": "No linked environments",
@@ -10923,7 +11006,6 @@
   ],
   "2e487089c231536b": "Service",
   "c732b08a5fa8c3d7": "Base URL",
-  "3953d1cccd71ab7e": "Name (optional)",
   "304d6712ac5d3a89": [
     {
       "i": 1,
@@ -11534,6 +11616,7 @@
   "d443390c4d2dcfd4": "accessibility a11y screen reader nvda jaws voiceover orca narrator window title tab title alt tab taskbar thread status order working approval",
   "6826fa9579c22035": "beta share guest invite link teammate watch t3 connect tunnel",
   "f10c06cba0cdf7fe": "beta link another machine vps peer agents work there delegate",
+  "7bf0c7a8f778a1c2": "beta cluster main host members group machines proxy invite join",
   "4a21cf825a2045b0": "beta tab autocomplete predict next message claude codex ghost text",
   "fea2dc36585c4a20": "Simlock device hosts (alpha)",
   "9d834d178130180e": "beta alpha simlock callstack simulator emulator ios android pool lease gateway",
@@ -11670,6 +11753,7 @@
   "8ed7c2a2226f4663": "localhost loopback port forwarding open on this device browser tabs stream security",
   "1c3e0ac06c8a1f1e": "connections server backend local remote access administrative permissions scope pairing links qr code authorized clients sessions revoke endpoint",
   "744fd34e8049efeb": "link peer another machine vps agents work there handoff pairing code",
+  "c6ef7aebb3a4dc2c": "cluster main host member invite join string fingerprint ssh leave remove",
   "3d00c452287f50bd": "add pair backend host code ssh config agent tunnel saved t3 connect",
   "cbf49f84e7f456e5": "Load balancing",
   "6f1a769805a28197": "automatic machine environment resources cpu memory capacity preference weight shared projects",

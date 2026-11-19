@@ -469,7 +469,10 @@
   "7eabeed193759388": "Ruttordningen måste ta med varje sparad rutt en gång.",
   "18de69e3b6ac3891": "Anslutningsprofilen {connectionId} är ingen bearer-anslutning.",
   "0a84ce2f4fb90d82": "Anslutningsprofilen {connectionId} är ingen SSH-anslutning.",
+  "77541accaf263427": "Väntar på att {host} ska ansluta.",
+  "ebe7f7eb3cb3a8b5": "Kluster",
   "4d022ee84149d47f": "Fjärrlänk",
+  "2536d3eddc51db07": "via {host}",
   "0b367ce72b45a911": "Anslutningen till {host} misslyckades oväntat.",
   "91ca7e48f40bfa3c": "{host} svarade inte när anslutningen konfigurerades.",
   "8e611f2e7c10956b": "{host} svarade inte på en hälsokontroll av anslutningen.",
@@ -624,6 +627,10 @@
   "a242fe71fb5f579e": "{count} kB",
   "dda5dec2ba19575c": "{count, plural, one {{count} byte} other {{count} byte}}",
   "133aaa0f98c2ea49": "”{name}” överskrider gränsen på {size} för bilagor.",
+  "209197562551a237": "Online",
+  "d1dc5d5f8f723d2f": "Ansluter…",
+  "6da26c8c02873d20": "Kör en T3 Code-version som {host} inte kan styra. Uppdatera båda till samma version.",
+  "1f1df7efb4b1c68f": "Accepterar inte längre {host}. Ta bort den här och bjud in den igen.",
   "16ebaeabe59a4857": "Kunde inte nå den miljön via T3 Connect med det här kontot.",
   "7e19512f1ce2b686": "Versionerna av enhetsverktygen har inte kontrollerats.",
   "7bdc8e41c92e24b7": "Enhetshubb",
@@ -7821,6 +7828,71 @@
       "v": "v"
     }
   ],
+  "0b3ad417b53a6883": "Det gick inte att läsa in klustret",
+  "5ac786986a3563b6": "Läser in klustret…",
+  "3202e5e7e3ac64f4": "Det gick inte att läsa in klustermedlemmar",
+  "20ec2553636ff8b6": "Läser in klustermedlemmar…",
+  "185c47873cbc3a58": "Inga medlemmar ännu",
+  "31f940519e37de6c": "Bjud in en maskin från dess egna Inställningar → Miljöer → Kluster och lägg sedan till dess anslutningssträng här.",
+  "e83d7e0f8edc2a67": "Aldrig nådd",
+  "6e5bd943c29069ba": "Senast sedd {time}",
+  "4b8e5df2cc93095e": "Ta bort {label} från klustret? Den blir en fristående miljö igen.",
+  "77786d60b52150dd": "Det gick inte att ta bort {label}",
+  "273389bda2366710": "{label} borttagen här",
+  "372d2d33a8ca8db8": "Ingen respons. Kör t3 cluster leave på den för att slutföra.",
+  "c7902d95bd57a25f": "Tar bort…",
+  "2c5674665579a329": "Ta bort",
+  "707546d9421447e5": "Medlemsnamn",
+  "f924c86d559777c8": "{label} tillagd",
+  "f81ac6a7cad64430": "Lägg till medlem",
+  "a1d2b25c161ee6f4": "Bjud in till klustret",
+  "fc682c73f0d0043b": "Skapa inbjudan",
+  "7bc13a4ad376ef6b": "Kopiera anslutningssträng",
+  "90ae616e9cb53922": "Lämna klustret för {host}? Parkoppla klienter med den här maskinen igen efteråt.",
+  "cd600c8a4e87d47d": "Det gick inte att lämna klustret",
+  "2ed706790c2b5d0a": "Medlem i {host}",
+  "7cfb1640fbeceaf3": "{host} hanterar den här miljön och är den enda maskinen förutom denna som kan nå den.",
+  "9ff2b973feb1f701": "Lämnar…",
+  "102b7b49ef3cdee1": "Lämna klustret",
+  "63d400aa1e2ea276": "Byt namn på medlem",
+  "32b30e32d451d005": "Lägg till en medlem",
+  "8aba1e766d94fc7f": "Klistra in anslutningssträngen från maskinens Bjud in till klustret, eller ange user@host för att lägga till den via SSH. SSH kräver en nyckel eller en körande ssh-agent på den här maskinen.",
+  "7310ad79a8ffca7d": "Anslutningssträng eller SSH-mål",
+  "3953d1cccd71ab7e": "Namn (valfritt)",
+  "4428cf603470025c": [
+    "Låter en annan maskin lägga till den här som medlem. Certifikatets SHA-256:",
+    " ",
+    {
+      "t": "code",
+      "i": 1,
+      "c": {
+        "i": 2,
+        "k": "_gt_value_2",
+        "v": "v"
+      }
+    }
+  ],
+  "9a897f12238cc846": "Bjud in till klustret",
+  "c3d0edea2211cbbd": "När den ansluter loggas maskinens andra klienter ut och dess länkade miljöer avslutas. Därefter nås den via huvudvärden.",
+  "a7e90c3ca71d8a2b": "Adress som huvudvärden når den här maskinen på",
+  "886a1cd5518d7bb5": [
+    "Kod ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ". Lägg till en adress för att få en anslutningssträng."
+  ],
+  "c4a1872f647cca8f": [
+    "Klistra in den i huvudvärdens Lägg till medlem. Certifikatets SHA-256:",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
   "cd67d110c09bfdf4": "Växla synlighet för kontots e-postadress",
   "6b2ce50ea6a13f57": "Klicka för att visa e-postadressen",
   "34ce8910007bfaf1": "Klicka för att dölja e-postadressen",
@@ -8428,7 +8500,6 @@
   "8fef1ad9234284f7": "Standard",
   "ca384fd1a1d6e1bb": "Alternativ för {name}",
   "8b45e296e25933cb": "Anslut till en miljö för att rensa profildata",
-  "c7902d95bd57a25f": "Tar bort…",
   "4a42ed8f9a4c6750": "Ta bort profil",
   "90eae6ed93306de1": "Kunde inte öppna Systeminställningar",
   "e80b0936736a6dd8": "Öppna Integritet och säkerhet → Full skivåtkomst manuellt.",
@@ -8656,6 +8727,16 @@
     },
     ". När det är av startar inget nytt via en länk; pågående uppgifter slutförs."
   ],
+  "587d0375e01bca60": [
+    "Styr dina andra maskiner via den här. Aktivera det här och på varje maskin du lägger till, och ställ sedan in det i",
+    " ",
+    {
+      "t": "Link",
+      "i": 1,
+      "c": "Environments"
+    },
+    ". När det är av lägger den här maskinen inte till några medlemmar och vidarebefordrar ingenting till dem."
+  ],
   "ce6a3933a976ac7e": [
     "Låt enhetspanelen hyra simulatorer och emulatorer från din egen",
     " ",
@@ -8695,6 +8776,8 @@
   "c2553b323479499a": "Den här appen känner inte till några andra datorer. Lägg först till dem under Miljöer.",
   "18b1d4d42b945b34": "Datorer",
   "03860d65c4052ab5": "Kontrollerar vilka datorer som redan är länkade…",
+  "7c01e07f8acb120c": "Hanteras av klustret {name}",
+  "9f4df8a8737cc552": "Miljöer i ett kluster länkas inte till andra miljöer. Agenter här når de andra medlemmarna via huvudvärden.",
   "4cea6be0fe6be16f": "Kunde inte läsa in länkade miljöer",
   "58cb9c075da185fb": "Läser in länkade miljöer…",
   "25b74062dc03079e": "Inga länkade miljöer",
@@ -10921,7 +11004,6 @@
   ],
   "2e487089c231536b": "Tjänst",
   "c732b08a5fa8c3d7": "Bas-URL",
-  "3953d1cccd71ab7e": "Namn (valfritt)",
   "304d6712ac5d3a89": [
     {
       "i": 1,
@@ -11532,6 +11614,7 @@
   "d443390c4d2dcfd4": "tillgänglighet a11y skärmläsare nvda jaws voiceover orca skärmläsaren fönstertitel fliktitel alt tab aktivitetsfält trådstatus ordning arbetar godkännande",
   "6826fa9579c22035": "beta dela gäst bjud in länk kollega titta t3 connect tunnel",
   "f10c06cba0cdf7fe": "beta länka en annan dator vps peer agenter arbetar där delegera",
+  "7bf0c7a8f778a1c2": "beta kluster huvudvärd medlemmar grupp maskiner proxy inbjudan anslut",
   "4a21cf825a2045b0": "beta tabb autokomplettering förutsäg nästa meddelande claude codex spöktext",
   "fea2dc36585c4a20": "Simlock-enhetsvärdar (alfa)",
   "9d834d178130180e": "beta alpha simlock callstack simulator emulator ios android pool lån gateway",
@@ -11668,6 +11751,7 @@
   "8ed7c2a2226f4663": "localhost loopback portvidarebefordran öppna på den här enheten webbläsarflikar strömma säkerhet port forwarding",
   "1c3e0ac06c8a1f1e": "anslutningar server backend lokal fjärråtkomst administrativa behörigheter omfång parkopplingslänkar qr-kod auktoriserade klienter sessioner återkalla slutpunkt",
   "744fd34e8049efeb": "länka peer annan dator vps agenter arbetar där överlämning parkopplingskod",
+  "c6ef7aebb3a4dc2c": "kluster huvudvärd medlem inbjudan anslutningssträng fingeravtryck ssh lämna ta bort",
   "3d00c452287f50bd": "lägg till parkoppla backend värd kod ssh-konfiguration agent tunnel sparad t3 connect",
   "cbf49f84e7f456e5": "Lastbalansering",
   "6f1a769805a28197": "automatisk dator miljö resurser cpu minne kapacitet preferens vikt delade projekt",

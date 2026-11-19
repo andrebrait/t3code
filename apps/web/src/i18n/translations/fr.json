@@ -469,7 +469,10 @@
   "7eabeed193759388": "L’ordre des routes doit lister chaque route enregistrée une seule fois.",
   "18de69e3b6ac3891": "Le profil de connexion {connectionId} n’est pas une connexion bearer.",
   "0a84ce2f4fb90d82": "Le profil de connexion {connectionId} n’est pas une connexion SSH.",
+  "77541accaf263427": "En attente de la connexion de {host}.",
+  "ebe7f7eb3cb3a8b5": "Cluster",
   "4d022ee84149d47f": "Lien distant",
+  "2536d3eddc51db07": "via {host}",
   "0b367ce72b45a911": "La connexion à {host} a échoué de manière inattendue.",
   "91ca7e48f40bfa3c": "{host} n’a pas répondu pendant la configuration de la connexion.",
   "8e611f2e7c10956b": "{host} n’a pas répondu à une vérification de l’état de la connexion.",
@@ -624,6 +627,10 @@
   "a242fe71fb5f579e": "{count} Ko",
   "dda5dec2ba19575c": "{count, plural, one {{count} octet} other {{count} octets}}",
   "133aaa0f98c2ea49": "« {name} » dépasse la limite de {size} par pièce jointe.",
+  "209197562551a237": "Online",
+  "d1dc5d5f8f723d2f": "Connexion…",
+  "6da26c8c02873d20": "Exécute une version de T3 Code que {host} ne peut pas piloter. Mettez les deux à jour vers la même version.",
+  "1f1df7efb4b1c68f": "N’accepte plus {host}. Retirez-le ici, puis invitez-le de nouveau.",
   "16ebaeabe59a4857": "Impossible de joindre cet environnement via T3 Connect avec ce compte.",
   "7e19512f1ce2b686": "Les versions des outils d’appareil n’ont pas été vérifiées.",
   "7bdc8e41c92e24b7": "Hub d’appareils",
@@ -7816,6 +7823,71 @@
       "v": "v"
     }
   ],
+  "0b3ad417b53a6883": "Impossible de charger le cluster",
+  "5ac786986a3563b6": "Chargement du cluster…",
+  "3202e5e7e3ac64f4": "Impossible de charger les membres du cluster",
+  "20ec2553636ff8b6": "Chargement des membres du cluster…",
+  "185c47873cbc3a58": "Aucun membre pour l’instant",
+  "31f940519e37de6c": "Invitez une machine depuis ses propres Paramètres → Environnements → Cluster, puis ajoutez ici sa chaîne d’adhésion.",
+  "e83d7e0f8edc2a67": "Jamais joint",
+  "6e5bd943c29069ba": "Vu pour la dernière fois {time}",
+  "4b8e5df2cc93095e": "Retirer {label} du cluster ? Il redeviendra un environnement autonome.",
+  "77786d60b52150dd": "Impossible de retirer {label}",
+  "273389bda2366710": "{label} retiré ici",
+  "372d2d33a8ca8db8": "Aucune réponse. Exécutez t3 cluster leave sur cette machine pour terminer.",
+  "c7902d95bd57a25f": "Suppression…",
+  "2c5674665579a329": "Retirer",
+  "707546d9421447e5": "Nom du membre",
+  "f924c86d559777c8": "{label} ajouté",
+  "f81ac6a7cad64430": "Ajouter un membre",
+  "a1d2b25c161ee6f4": "Inviter dans le cluster",
+  "fc682c73f0d0043b": "Créer une invitation",
+  "7bc13a4ad376ef6b": "Copier la chaîne d’adhésion",
+  "90ae616e9cb53922": "Quitter le cluster de {host} ? Réappariez ensuite les clients avec cette machine.",
+  "cd600c8a4e87d47d": "Impossible de quitter le cluster",
+  "2ed706790c2b5d0a": "Membre de {host}",
+  "7cfb1640fbeceaf3": "{host} gère cet environnement et est la seule machine, hormis celle-ci, à pouvoir y accéder.",
+  "9ff2b973feb1f701": "Départ…",
+  "102b7b49ef3cdee1": "Quitter le cluster",
+  "63d400aa1e2ea276": "Renommer le membre",
+  "32b30e32d451d005": "Ajouter un membre",
+  "8aba1e766d94fc7f": "Collez la chaîne d’adhésion depuis Inviter dans le cluster de la machine, ou saisissez user@host pour l’ajouter via SSH. SSH nécessite une clé ou un ssh-agent en cours d’exécution sur cette machine.",
+  "7310ad79a8ffca7d": "Chaîne d’adhésion ou cible SSH",
+  "3953d1cccd71ab7e": "Nom (facultatif)",
+  "4428cf603470025c": [
+    "Permet à une autre machine d’ajouter celle-ci comme membre. SHA-256 du certificat :",
+    " ",
+    {
+      "t": "code",
+      "i": 1,
+      "c": {
+        "i": 2,
+        "k": "_gt_value_2",
+        "v": "v"
+      }
+    }
+  ],
+  "9a897f12238cc846": "Inviter dans le cluster",
+  "c3d0edea2211cbbd": "En rejoignant un cluster, cette machine déconnecte ses autres clients et met fin à ses environnements liés. Elle est ensuite accessible via l’hôte principal.",
+  "a7e90c3ca71d8a2b": "Adresse à laquelle l’hôte principal joint cette machine",
+  "886a1cd5518d7bb5": [
+    "Code ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ". Ajoutez une adresse pour obtenir une chaîne d’adhésion."
+  ],
+  "c4a1872f647cca8f": [
+    "Collez-la dans Ajouter un membre de l’hôte principal. SHA-256 du certificat :",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
   "cd67d110c09bfdf4": "Afficher/masquer l’adresse e-mail du compte",
   "6b2ce50ea6a13f57": "Cliquez pour afficher l’adresse e-mail",
   "34ce8910007bfaf1": "Cliquez pour masquer l’adresse e-mail",
@@ -8421,7 +8493,6 @@
   "8fef1ad9234284f7": "Par défaut",
   "ca384fd1a1d6e1bb": "Options de {name}",
   "8b45e296e25933cb": "Connectez-vous à un environnement pour effacer les données du profil",
-  "c7902d95bd57a25f": "Suppression…",
   "4a42ed8f9a4c6750": "Supprimer le profil",
   "90eae6ed93306de1": "Impossible d’ouvrir les Réglages Système",
   "e80b0936736a6dd8": "Ouvrez manuellement Confidentialité et sécurité → Accès complet au disque.",
@@ -8649,6 +8720,16 @@
     },
     ". Tant qu’elle est désactivée, rien de nouveau ne démarre via une association ; les tâches en cours se terminent."
   ],
+  "587d0375e01bca60": [
+    "Pilotez vos autres machines via celle-ci. Activez-le ici et sur chaque machine ajoutée, puis configurez-le dans",
+    " ",
+    {
+      "t": "Link",
+      "i": 1,
+      "c": "Environments"
+    },
+    ". Tant qu’il est désactivé, cette machine n’ajoute aucun membre et ne leur transmet rien."
+  ],
   "ce6a3933a976ac7e": [
     "Permet au panneau Appareils de louer des simulateurs et des émulateurs depuis votre propre pool",
     " ",
@@ -8689,6 +8770,8 @@
   "c2553b323479499a": "Cette app ne connaît aucune autre machine. Ajoutez-les d’abord dans Environnements.",
   "18b1d4d42b945b34": "Machines",
   "03860d65c4052ab5": "Vérification des machines déjà associées…",
+  "7c01e07f8acb120c": "Géré par le cluster {name}",
+  "9f4df8a8737cc552": "Les environnements d’un cluster ne se lient pas à d’autres environnements. Les agents d’ici joignent les autres membres via l’hôte principal.",
   "4cea6be0fe6be16f": "Impossible de charger les environnements associés",
   "58cb9c075da185fb": "Chargement des environnements associés…",
   "25b74062dc03079e": "Aucun environnement associé",
@@ -10913,7 +10996,6 @@
   ],
   "2e487089c231536b": "Service",
   "c732b08a5fa8c3d7": "URL de base",
-  "3953d1cccd71ab7e": "Nom (facultatif)",
   "304d6712ac5d3a89": [
     {
       "i": 1,
@@ -11524,6 +11606,7 @@
   "d443390c4d2dcfd4": "accessibilité a11y lecteur d’écran nvda jaws voiceover orca narrateur titre de fenêtre titre d’onglet alt tab barre des tâches statut du fil ordre en cours approbation",
   "6826fa9579c22035": "bêta partager invité invitation lien coéquipier regarder t3 connect tunnel",
   "f10c06cba0cdf7fe": "bêta associer une autre machine vps pair agents y travaillent déléguer",
+  "7bf0c7a8f778a1c2": "bêta cluster hôte principal membres groupe machines proxy invitation rejoindre",
   "4a21cf825a2045b0": "bêta tab autocomplétion prédire prochain message claude codex texte fantôme",
   "fea2dc36585c4a20": "Hôtes d’appareils Simlock (alpha)",
   "9d834d178130180e": "bêta alpha simlock callstack simulateur émulateur ios android pool bail passerelle",
@@ -11660,6 +11743,7 @@
   "8ed7c2a2226f4663": "localhost loopback redirection de ports ouvrir sur cet appareil onglets navigateur diffusion sécurité port forwarding",
   "1c3e0ac06c8a1f1e": "connexions serveur backend local accès distant autorisations administratives portée liens d’appairage code qr clients autorisés sessions révoquer point de terminaison",
   "744fd34e8049efeb": "associer pair autre machine vps agents y travaillent transfert code d’appairage",
+  "c6ef7aebb3a4dc2c": "cluster hôte principal membre invitation chaîne d’adhésion empreinte ssh quitter retirer",
   "3d00c452287f50bd": "ajouter appairer backend hôte code ssh config agent tunnel enregistré t3 connect",
   "cbf49f84e7f456e5": "Répartition de charge",
   "6f1a769805a28197": "automatique machine environnement ressources cpu mémoire capacité préférence poids projets partagés",

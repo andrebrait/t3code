@@ -469,7 +469,10 @@
   "7eabeed193759388": "A ordem das rotas precisa listar cada rota salva uma vez.",
   "18de69e3b6ac3891": "O perfil de conexão {connectionId} não é uma conexão bearer.",
   "0a84ce2f4fb90d82": "O perfil de conexão {connectionId} não é uma conexão SSH.",
+  "77541accaf263427": "Aguardando a conexão de {host}.",
+  "ebe7f7eb3cb3a8b5": "Cluster",
   "4d022ee84149d47f": "Link remoto",
+  "2536d3eddc51db07": "via {host}",
   "0b367ce72b45a911": "A conexão com {host} falhou inesperadamente.",
   "91ca7e48f40bfa3c": "{host} não respondeu durante a configuração da conexão.",
   "8e611f2e7c10956b": "{host} não respondeu a uma verificação de integridade da conexão.",
@@ -624,6 +627,10 @@
   "a242fe71fb5f579e": "{count} KB",
   "dda5dec2ba19575c": "{count, plural, one {{count} byte} other {{count} bytes}}",
   "133aaa0f98c2ea49": "''{name}'' excede o limite de anexo de {size}.",
+  "209197562551a237": "Online",
+  "d1dc5d5f8f723d2f": "Conectando…",
+  "6da26c8c02873d20": "Executa uma versão do T3 Code que {host} não consegue controlar. Atualize ambos para a mesma versão.",
+  "1f1df7efb4b1c68f": "Não aceita mais {host}. Remova-o aqui e convide-o novamente.",
   "16ebaeabe59a4857": "Não foi possível acessar esse ambiente pelo T3 Connect com esta conta.",
   "7e19512f1ce2b686": "As versões das ferramentas de dispositivo não foram verificadas.",
   "7bdc8e41c92e24b7": "Hub de dispositivos",
@@ -7815,6 +7822,71 @@
       "v": "v"
     }
   ],
+  "0b3ad417b53a6883": "Não foi possível carregar o cluster",
+  "5ac786986a3563b6": "Carregando o cluster…",
+  "3202e5e7e3ac64f4": "Não foi possível carregar os membros do cluster",
+  "20ec2553636ff8b6": "Carregando os membros do cluster…",
+  "185c47873cbc3a58": "Ainda não há membros",
+  "31f940519e37de6c": "Convide uma máquina pelas próprias Configurações → Ambientes → Cluster e depois adicione aqui a string de adesão dela.",
+  "e83d7e0f8edc2a67": "Nunca alcançado",
+  "6e5bd943c29069ba": "Visto pela última vez {time}",
+  "4b8e5df2cc93095e": "Remover {label} do cluster? Ele volta a ser um ambiente independente.",
+  "77786d60b52150dd": "Não foi possível remover {label}",
+  "273389bda2366710": "{label} removido aqui",
+  "372d2d33a8ca8db8": "Não respondeu. Execute t3 cluster leave nela para concluir.",
+  "c7902d95bd57a25f": "Removendo…",
+  "2c5674665579a329": "Remover",
+  "707546d9421447e5": "Nome do membro",
+  "f924c86d559777c8": "{label} adicionado",
+  "f81ac6a7cad64430": "Adicionar membro",
+  "a1d2b25c161ee6f4": "Convidar para o cluster",
+  "fc682c73f0d0043b": "Criar convite",
+  "7bc13a4ad376ef6b": "Copiar string de adesão",
+  "90ae616e9cb53922": "Sair do cluster de {host}? Depois, pareie os clientes com esta máquina novamente.",
+  "cd600c8a4e87d47d": "Não foi possível sair do cluster",
+  "2ed706790c2b5d0a": "Membro de {host}",
+  "7cfb1640fbeceaf3": "{host} gerencia este ambiente e é a única máquina, além desta, que pode acessá-lo.",
+  "9ff2b973feb1f701": "Saindo…",
+  "102b7b49ef3cdee1": "Sair do cluster",
+  "63d400aa1e2ea276": "Renomear membro",
+  "32b30e32d451d005": "Adicionar um membro",
+  "8aba1e766d94fc7f": "Cole a string de adesão de Convidar para o cluster da máquina ou informe user@host para adicioná-la por SSH. O SSH precisa de uma chave ou de um ssh-agent em execução nesta máquina.",
+  "7310ad79a8ffca7d": "String de adesão ou destino SSH",
+  "3953d1cccd71ab7e": "Nome (opcional)",
+  "4428cf603470025c": [
+    "Permite que outra máquina adicione esta como membro. SHA-256 do certificado:",
+    " ",
+    {
+      "t": "code",
+      "i": 1,
+      "c": {
+        "i": 2,
+        "k": "_gt_value_2",
+        "v": "v"
+      }
+    }
+  ],
+  "9a897f12238cc846": "Convidar para o cluster",
+  "c3d0edea2211cbbd": "Ao aderir, os outros clientes desta máquina são desconectados e seus ambientes vinculados são encerrados. Depois, ela passa a ser acessada pelo host principal.",
+  "a7e90c3ca71d8a2b": "Endereço pelo qual o host principal acessa esta máquina",
+  "886a1cd5518d7bb5": [
+    "Código ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ". Adicione um endereço para obter uma string de adesão."
+  ],
+  "c4a1872f647cca8f": [
+    "Cole em Adicionar membro no host principal. SHA-256 do certificado:",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
   "cd67d110c09bfdf4": "Alternar a visibilidade do e-mail da conta",
   "6b2ce50ea6a13f57": "Clique para revelar o e-mail",
   "34ce8910007bfaf1": "Clique para ocultar o e-mail",
@@ -8420,7 +8492,6 @@
   "8fef1ad9234284f7": "Padrão",
   "ca384fd1a1d6e1bb": "Opções de {name}",
   "8b45e296e25933cb": "Conecte-se a um ambiente para limpar os dados do perfil",
-  "c7902d95bd57a25f": "Removendo…",
   "4a42ed8f9a4c6750": "Remover perfil",
   "90eae6ed93306de1": "Não foi possível abrir os Ajustes do Sistema",
   "e80b0936736a6dd8": "Abra Privacidade e Segurança → Acesso Total ao Disco manualmente.",
@@ -8648,6 +8719,16 @@
     },
     ". Enquanto desativado, nada novo começa por um vínculo; as tarefas em execução terminam."
   ],
+  "587d0375e01bca60": [
+    "Controle suas outras máquinas por esta. Ative aqui e em cada máquina adicionada e depois configure em",
+    " ",
+    {
+      "t": "Link",
+      "i": 1,
+      "c": "Environments"
+    },
+    ". Enquanto estiver desativado, esta máquina não adiciona membros nem encaminha nada a eles."
+  ],
   "ce6a3933a976ac7e": [
     "Permite que o painel Dispositivo reserve simuladores e emuladores do seu próprio pool",
     " ",
@@ -8688,6 +8769,8 @@
   "c2553b323479499a": "Este app não conhece outras máquinas. Adicione-as primeiro em Ambientes.",
   "18b1d4d42b945b34": "Máquinas",
   "03860d65c4052ab5": "Verificando quais máquinas já estão vinculadas…",
+  "7c01e07f8acb120c": "Gerenciado pelo cluster {name}",
+  "9f4df8a8737cc552": "Ambientes em um cluster não se vinculam a outros ambientes. Os agentes aqui acessam os demais membros pelo host principal.",
   "4cea6be0fe6be16f": "Não foi possível carregar os ambientes vinculados",
   "58cb9c075da185fb": "Carregando ambientes vinculados…",
   "25b74062dc03079e": "Nenhum ambiente vinculado",
@@ -10912,7 +10995,6 @@
   ],
   "2e487089c231536b": "Serviço",
   "c732b08a5fa8c3d7": "URL base",
-  "3953d1cccd71ab7e": "Nome (opcional)",
   "304d6712ac5d3a89": [
     {
       "i": 1,
@@ -11523,6 +11605,7 @@
   "d443390c4d2dcfd4": "acessibilidade a11y leitor de tela nvda jaws voiceover orca narrador título da janela título da aba alt tab barra de tarefas status da thread ordem trabalhando aprovação",
   "6826fa9579c22035": "beta compartilhar convidado convite link colega acompanhar t3 connect túnel",
   "f10c06cba0cdf7fe": "beta vincular outra máquina vps par agentes trabalham lá delegar",
+  "7bf0c7a8f778a1c2": "beta cluster host principal membros grupo máquinas proxy convite aderir",
   "4a21cf825a2045b0": "beta tab autocompletar prever próxima mensagem claude codex texto fantasma",
   "fea2dc36585c4a20": "Hosts de dispositivos Simlock (alfa)",
   "9d834d178130180e": "beta alpha simlock callstack simulador emulador ios android pool lease gateway",
@@ -11659,6 +11742,7 @@
   "8ed7c2a2226f4663": "localhost loopback encaminhamento de portas abrir neste dispositivo abas navegador transmitir segurança port forwarding",
   "1c3e0ac06c8a1f1e": "conexões servidor backend local remoto acesso administrativo permissões escopo links de pareamento código qr clientes autorizados sessões revogar endpoint",
   "744fd34e8049efeb": "vincular par outra máquina vps agentes trabalham lá transferir código de pareamento",
+  "c6ef7aebb3a4dc2c": "cluster host principal membro convite string de adesão impressão digital ssh sair remover",
   "3d00c452287f50bd": "adicionar parear backend host código ssh config agente túnel salvo t3 connect",
   "cbf49f84e7f456e5": "Balanceamento de carga",
   "6f1a769805a28197": "automático máquina ambiente recursos cpu memória capacidade preferência peso projetos compartilhados",

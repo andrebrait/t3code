@@ -153,8 +153,11 @@ came from. A stamp without the access, from before it was recorded, is fenced.
 ## Hosted web is a client
 
 The hosted web app stores its connection catalog in the browser and connects
-directly to each environment. It does not proxy traffic or hold server-side
-pairing state. Hosting the UI over HTTPS therefore cannot make a plain HTTP LAN
+directly to each environment. It holds no server-side pairing state, and
+environments do not proxy for one another, with one exception: a cluster's main
+host forwards `/cluster/<memberId>/*` to its members
+([ClusterProxy](../../apps/server/src/cluster/ClusterProxy.ts)), so a client
+paired only with the main host can drive them. Hosting the UI over HTTPS therefore cannot make a plain HTTP LAN
 backend accessible from that browser context.
 
 A [hosted pairing URL](../../apps/web/src/hostedPairing.ts) identifies the backend

@@ -70,6 +70,12 @@ import {
   EnvironmentSpeechStatus,
   EnvironmentSpeechTranscriptionResult,
 } from "./speech.ts";
+import {
+  ClusterError,
+  ClusterJoinRequest,
+  ClusterJoinResult,
+  ClusterLeaveResult,
+} from "./cluster.ts";
 import { SecretReference } from "./secretReference.ts";
 import {
   OrchestrationV2ShellHttpSnapshot,
@@ -1072,6 +1078,22 @@ class EnvironmentWebhooksHttpApi extends HttpApiGroup.make("webhooks")
   .add(HttpApiEndpoint.patch("webhookPatch", WEBHOOK_PATH, webhookEndpoint))
   .add(HttpApiEndpoint.get("webhookGet", WEBHOOK_PATH, webhookEndpoint)) {}
 
+class EnvironmentClusterHttpApi extends HttpApiGroup.make("cluster")
+  .add(
+    HttpApiEndpoint.post("join", "/api/cluster/join", {
+      payload: ClusterJoinRequest,
+      success: ClusterJoinResult,
+      error: ClusterError,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post("leave", "/api/cluster/leave", {
+      headers: OptionalBearerHeaders,
+      success: ClusterLeaveResult,
+      error: [ClusterError, EnvironmentHttpForbiddenError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+
 export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMetadataHttpApi)
   .add(EnvironmentAuthHttpApi)
@@ -1081,4 +1103,5 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentProjectsHttpApi)
   .add(EnvironmentVoiceHttpApi)
   .add(EnvironmentConnectHttpApi)
-  .add(EnvironmentWebhooksHttpApi) {}
+  .add(EnvironmentWebhooksHttpApi)
+  .add(EnvironmentClusterHttpApi) {}

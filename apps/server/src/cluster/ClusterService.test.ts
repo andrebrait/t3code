@@ -509,6 +509,10 @@ it.effect(
         const inFlight = yield* Queue.take(served);
         yield* Scope.close(firstRun, Exit.void);
         expect(yield* Deferred.await(interrupted)).toBe(inFlight.requestId);
+        // A stopped link never leaves its member listed online.
+        expect(Option.getOrThrow(yield* main.cluster.members.pipe(Stream.runHead))[0]?.status).toBe(
+          "offline",
+        );
         expect(yield* Fiber.join(slow)).toMatchObject({
           reason: "unreachable",
           message: UNREACHABLE,
@@ -577,6 +581,67 @@ it.effect(
     ),
 );
 
+it.effect("a call its host never answers fails after 5 minutes and is forgotten", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const member = yield* makeEnvironment(box);
+      const invite = yield* member.cluster.invite({});
+      yield* member.cluster.acceptJoin({ code: invite.code, host: studio }, bot);
+      const host = yield* hostSessionOf(member);
+      const doorbells = yield* Queue.unbounded<ClusterLinkEvent>();
+      yield* member.cluster
+        .hostEvents(host)
+        .pipe(
+          Effect.flatMap(Stream.runForEach((event) => Queue.offer(doorbells, event))),
+          Effect.forkScoped,
+        );
+      expect(yield* Queue.take(doorbells)).toEqual({ _tag: "ready" });
+
+      const call = yield* member.cluster.hostCall(readCall).pipe(Effect.flip, Effect.forkScoped);
+      const ring = yield* Queue.take(doorbells);
+      if (ring._tag !== "request") return yield* Effect.die("expected a doorbell");
+      yield* TestClock.adjust("5 minutes");
+      expect(yield* Fiber.join(call)).toMatchObject({
+        reason: "unreachable",
+        message: UNREACHABLE,
+      });
+      expect(
+        yield* member.cluster.hostRequest(host, ring.requestId).pipe(Effect.flip),
+      ).toMatchObject({ reason: "unknown_request" });
+    }),
+  ),
+);
+
+it.effect("a call the main host cannot fetch or run is answered with an error at once", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const member = yield* serveMember(box, {
+        hostRequestGate: (request) =>
+          request.tool === "unfetchable" ? Effect.die("the fetch broke") : Effect.void,
+      });
+      const main = yield* makeEnvironment(studioDescriptor);
+      const invite = yield* member.cluster.invite({ url: member.url });
+      yield* main.cluster.addMember({ target: invite.joinString ?? "" });
+      yield* main.cluster.start((_from, request) =>
+        request.tool === "crash"
+          ? Effect.die("serve broke")
+          : Effect.succeed({ isError: false, text: "ok" }),
+      );
+      yield* awaitStatus(main, box.environmentId, "online");
+
+      for (const tool of ["unfetchable", "crash"]) {
+        const result = yield* member.cluster.hostCall({ ...readCall, tool });
+        expect(result.isError).toBe(true);
+        expect(JSON.parse(result.text)).toMatchObject({
+          code: "orchestration_error",
+          message: expect.stringContaining("Cluster host could not run this call"),
+        });
+      }
+      expect(yield* member.cluster.hostCall(readCall)).toEqual({ isError: false, text: "ok" });
+    }),
+  ),
+);
+
 it.effect("a member that leaves shows revoked over its link, and only its host opens it", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -603,6 +668,8 @@ it.effect("a member that leaves shows revoked over its link, and only its host o
           .pipe(Effect.flip),
       ).toMatchObject({ reason: "forbidden" });
 
+      // Up long enough not to count as flapping, so the drop reconnects at once.
+      yield* TestClock.adjust("5 seconds");
       yield* member.cluster.leave;
       expect(yield* awaitStatus(main, box.environmentId, "revoked")).toMatchObject({
         lastError: "It no longer accepts this host. Invite it again.",

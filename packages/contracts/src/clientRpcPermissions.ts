@@ -88,6 +88,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.peerLinksAnswerRequest]: AuthAccessWriteScope,
   // Reads a linked environment's thread as this one's own are read.
   [WS_METHODS.peerLinksReadThread]: AuthOrchestrationReadScope,
+  [WS_METHODS.peerLinksPairClient]: AuthAccessWriteScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 

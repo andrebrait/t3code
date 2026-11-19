@@ -69,6 +69,15 @@ import * as ClusterUpstream from "./ClusterUpstream.ts";
 import * as PinnedTransport from "./pinnedTransport.ts";
 
 const INVITE_TTL = Duration.minutes(10);
+/**
+ * Whether the main host meets this server's own certificate at `hostname`. A named address may
+ * sit behind T3 Connect or Tailscale Serve, which present a CA-issued certificate instead.
+ */
+const presentsOwnCertificate = (hostname: string) =>
+  /^[\d.]+$/.test(hostname) ||
+  hostname.startsWith("[") ||
+  hostname === "localhost" ||
+  hostname.endsWith(".local");
 const CLUSTER_OFF = "Cluster is off on this machine. Turn it on in Settings → Labs.";
 
 const storageError = (cause: unknown) =>
@@ -402,7 +411,11 @@ const make = Effect.gen(function* () {
         joinString:
           url === undefined
             ? null
-            : formatClusterJoinString({ url: url.href, code: issued.credential, fingerprint }),
+            : formatClusterJoinString({
+                url: url.href,
+                code: issued.credential,
+                fingerprint: presentsOwnCertificate(url.hostname) ? fingerprint : null,
+              }),
         expiresAt: issued.expiresAt,
       } satisfies ClusterInvite;
     },

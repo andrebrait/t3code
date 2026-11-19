@@ -70,6 +70,18 @@ it.effect("a member keeps only its cluster host and loopback sessions after join
         fingerprint: FINGERPRINT,
         joinString: `https://box.local:3773#${invite.code}.${FINGERPRINT}`,
       });
+      // A CA-issued certificate fronts a named address, so pinning this one could never match.
+      for (const [url, pinned] of [
+        ["https://192.168.1.20:3773", true],
+        ["https://[fd00::1]:3773", true],
+        ["http://localhost:3773", true],
+        ["https://box.tail1234.ts.net", false],
+        ["https://box.example.com", false],
+      ] as const) {
+        const { code, joinString } = yield* member.cluster.invite({ url });
+        const origin = new URL(url).origin;
+        expect(joinString).toBe(pinned ? `${origin}#${code}.${FINGERPRINT}` : `${origin}#${code}`);
+      }
       const joined = yield* member.cluster.acceptJoin({ code: invite.code, host: studio }, bot);
       expect(joined).toMatchObject({ environmentId: box.environmentId, label: "Box" });
 

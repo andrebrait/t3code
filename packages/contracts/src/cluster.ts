@@ -138,12 +138,13 @@ const JOIN_CODE = new RegExp(`^[${PAIRING_CODE_ALPHABET}]{${PAIRING_CODE_LENGTH}
 export const normalizeCertificateFingerprint = (value: string) =>
   value.replaceAll(":", "").toLowerCase();
 
+/** `<origin>#<code>`, plus `.<sha256>` when the main host should pin the member's certificate. */
 export const formatClusterJoinString = (input: {
   readonly url: string;
   readonly code: string;
-  readonly fingerprint: string;
+  readonly fingerprint: string | null;
 }) =>
-  `${new URL(input.url).origin}#${input.code}.${normalizeCertificateFingerprint(input.fingerprint)}`;
+  `${new URL(input.url).origin}#${input.code}${input.fingerprint === null ? "" : `.${normalizeCertificateFingerprint(input.fingerprint)}`}`;
 
 export const parseClusterJoinString = (value: string) => {
   const trimmed = value.trim();
@@ -152,10 +153,12 @@ export const parseClusterJoinString = (value: string) => {
   const url = URL.parse(trimmed.slice(0, hash));
   if (url === null || (url.protocol !== "https:" && url.protocol !== "http:")) return undefined;
   const parts = trimmed.slice(hash + 1).split(".");
-  if (parts.length !== 2) return undefined;
+  if (parts.length > 2) return undefined;
   const code = parts[0]!.toUpperCase();
-  const fingerprint = parts[1]!.toLowerCase();
-  if (!JOIN_CODE.test(code) || !SHA256_HEX.test(fingerprint)) return undefined;
+  const fingerprint = parts[1]?.toLowerCase() ?? null;
+  if (!JOIN_CODE.test(code) || (fingerprint !== null && !SHA256_HEX.test(fingerprint))) {
+    return undefined;
+  }
   return { url: url.origin, code, fingerprint };
 };
 

@@ -121,12 +121,13 @@ const make = Effect.gen(function* () {
       }
       const pin =
         target.certSha256 === null ? null : normalizeCertificateFingerprint(target.certSha256);
-      if (url.protocol !== "https:" || pin === null || !/^[0-9a-f]{64}$/.test(pin)) {
+      if (url.protocol !== "https:" || (pin !== null && !/^[0-9a-f]{64}$/.test(pin))) {
         return yield* new ClusterError({
           reason: "invalid_target",
-          message: `${url.origin} is not an https address with a pinned certificate. Invite the member again.`,
+          message: `${url.origin} is not an https address with a valid certificate pin. Invite the member again.`,
         });
       }
+      // Without a pin the certificate must chain to a trusted CA, as behind a tunnel or Tailscale Serve.
       return { origin: url.origin, ...(yield* agentFor(pin)) };
     },
   );

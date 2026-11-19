@@ -1,0 +1,100 @@
+// @effect-diagnostics nodeBuiltinImport:off - The connector owns the TLS socket so it can check the pin first.
+import * as NodeModule from "node:module";
+import * as NodeNet from "node:net";
+import * as NodeTls from "node:tls";
+
+import { normalizeCertificateFingerprint } from "@t3tools/contracts";
+import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
+import * as Effect from "effect/Effect";
+import * as Predicate from "effect/Predicate";
+import type * as HttpClient from "effect/http/HttpClient";
+import type * as Socket from "effect/socket/Socket";
+import type * as Undici from "undici";
+
+// undici is external to the CLI bundle; Node single-executables load it from disk only with require.
+const requireUndici = NodeModule.createRequire(import.meta.url);
+const PIN_MISMATCH = "CLUSTER_CERTIFICATE_MISMATCH";
+
+export interface PinnedAgent {
+  readonly httpClient: HttpClient.HttpClient;
+  readonly webSocket: Socket.WebSocketConstructor["Service"];
+}
+
+const pinnedConnector =
+  (pin: string): Undici.buildConnector.connector =>
+  (options, callback) => {
+    let settled = false;
+    const host = options.hostname.replace(/^\[(.*)\]$/, "$1");
+    const socket = NodeTls.connect({
+      host,
+      port: Number(options.port) || 443,
+      ...(NodeNet.isIP(host) === 0 ? { servername: options.servername ?? host } : {}),
+      // Members are self-signed by design; the fingerprint check below is the trust decision.
+      rejectUnauthorized: false,
+      ALPNProtocols: ["http/1.1"],
+    });
+    socket.once("secureConnect", () => {
+      if (settled) return;
+      settled = true;
+      const presented = normalizeCertificateFingerprint(
+        socket.getPeerCertificate().fingerprint256 ?? "",
+      );
+      if (presented === pin) return callback(null, socket);
+      socket.destroy();
+      callback(
+        Object.assign(
+          new Error(`The certificate presented (${presented}) is not the pinned one.`),
+          {
+            code: PIN_MISMATCH,
+          },
+        ),
+        null,
+      );
+    });
+    socket.once("error", (error) => {
+      if (settled) return;
+      settled = true;
+      callback(error, null);
+    });
+  };
+
+/** One connection pool to members; with a pin, nothing is sent until the certificate matches. */
+export const makeAgent = Effect.fn("pinnedTransport.makeAgent")(function* (pin: string | null) {
+  const undici = requireUndici("undici") as typeof Undici;
+  const dispatcher = yield* Effect.acquireRelease(
+    Effect.sync(() =>
+      pin === null
+        ? new undici.Agent()
+        : new undici.Agent({ connect: pinnedConnector(normalizeCertificateFingerprint(pin)) }),
+    ),
+    (agent) => Effect.promise(() => agent.destroy()),
+  );
+  const httpClient = yield* NodeHttpClient.makeUndici.pipe(
+    Effect.provideService(NodeHttpClient.Dispatcher, dispatcher),
+  );
+  const webSocket: Socket.WebSocketConstructor["Service"] = (url, options) => {
+    const { protocols, headers } =
+      options === undefined || typeof options === "string" || Array.isArray(options)
+        ? { protocols: options, headers: undefined }
+        : options;
+    const init = {
+      dispatcher,
+      ...(protocols === undefined ? {} : { protocols }),
+      ...(headers === undefined ? {} : { headers }),
+    };
+    const socket = new undici.WebSocket(url, init) as unknown as globalThis.WebSocket;
+    // An unhandled error on a socket still connecting would exit the server.
+    socket.addEventListener("error", () => undefined);
+    return socket;
+  };
+  return { httpClient, webSocket } satisfies PinnedAgent;
+});
+
+export const isPinMismatch = (error: unknown) => {
+  let current = error;
+  for (let depth = 0; depth < 6 && Predicate.isObject(current); depth++) {
+    if (Predicate.hasProperty(current, "code") && current.code === PIN_MISMATCH) return true;
+    current = Predicate.hasProperty(current, "cause") ? current.cause : undefined;
+  }
+  return false;
+};

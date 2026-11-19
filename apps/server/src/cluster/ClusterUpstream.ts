@@ -1,0 +1,133 @@
+import { ClusterError, parseClusterSshTarget } from "@t3tools/contracts";
+import { isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
+import type * as NetService from "@t3tools/shared/Net";
+import * as SshAuth from "@t3tools/ssh/auth";
+import * as SshTunnel from "@t3tools/ssh/tunnel";
+import * as Context from "effect/Context";
+import type * as Digest from "effect/crypto/Digest";
+import * as Effect from "effect/Effect";
+import type * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import type * as Path from "effect/Path";
+import * as Scope from "effect/Scope";
+import type * as HttpClient from "effect/http/HttpClient";
+import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+
+import * as PinnedTransport from "./pinnedTransport.ts";
+
+export type UpstreamTarget =
+  | { readonly transport: "https"; readonly url: string; readonly certSha256: string | null }
+  | { readonly transport: "ssh"; readonly sshTarget: string };
+
+export interface Upstream extends PinnedTransport.PinnedAgent {
+  /** `http(s)://host:port`, with no trailing slash. */
+  readonly origin: string;
+}
+
+/** How the main host reaches a member: a pinned TLS pool, or the ssh loopback forward. */
+export class ClusterUpstream extends Context.Service<
+  ClusterUpstream,
+  {
+    readonly connect: (target: UpstreamTarget) => Effect.Effect<Upstream, ClusterError>;
+    /** Starts or reuses T3 on the member over ssh and mints a cluster invite there. */
+    readonly inviteOverSsh: (
+      sshTarget: string,
+    ) => Effect.Effect<{ readonly origin: string; readonly code: string }, ClusterError>;
+  }
+>()("t3/cluster/ClusterUpstream") {}
+
+const sshError = (target: string, cause: unknown) =>
+  new ClusterError({
+    reason: "ssh",
+    message: SshAuth.isSshAuthFailure(cause)
+      ? `SSH to ${target} needs a key or a running ssh-agent; this server cannot answer password prompts.`
+      : cause instanceof Error
+        ? cause.message
+        : `SSH to ${target} failed.`,
+    cause,
+  });
+
+const make = Effect.gen(function* () {
+  const ssh = yield* SshTunnel.SshEnvironmentManager;
+  const sshContext = yield* Effect.context<
+    | ChildProcessSpawner.ChildProcessSpawner
+    | Digest.Digest
+    | FileSystem.FileSystem
+    | Path.Path
+    | HttpClient.HttpClient
+    | NetService.NetService
+    | SshAuth.SshPasswordPrompt
+  >();
+  const scope = yield* Effect.scope;
+  // Keyed by pin, so a member re-invited with a new certificate gets a new pool.
+  const agents = new Map<string, PinnedTransport.PinnedAgent>();
+  const agentFor = (pin: string | null) => {
+    const cached = agents.get(pin ?? "");
+    if (cached !== undefined) return Effect.succeed(cached);
+    return PinnedTransport.makeAgent(pin).pipe(
+      Effect.provideService(Scope.Scope, scope),
+      Effect.tap((agent) => Effect.sync(() => agents.set(pin ?? "", agent))),
+    );
+  };
+
+  const sshBaseUrl = Effect.fn("ClusterUpstream.sshBaseUrl")(function* (
+    sshTarget: string,
+    pairingPurpose?: "cluster-member",
+  ) {
+    const parsed = parseClusterSshTarget(sshTarget);
+    if (parsed === undefined) {
+      return yield* new ClusterError({
+        reason: "invalid_target",
+        message: `${sshTarget} is not an ssh target such as me@box.`,
+      });
+    }
+    return yield* ssh
+      .ensureEnvironment(
+        { alias: parsed.hostname, ...parsed },
+        pairingPurpose === undefined ? undefined : { issuePairingToken: true, pairingPurpose },
+      )
+      .pipe(
+        Effect.provideContext(sshContext),
+        Effect.mapError((cause) => sshError(sshTarget, cause)),
+      );
+  });
+
+  const connect: ClusterUpstream["Service"]["connect"] = Effect.fn("ClusterUpstream.connect")(
+    function* (target) {
+      if (target.transport === "ssh") {
+        const bootstrap = yield* sshBaseUrl(target.sshTarget);
+        const origin = new URL(bootstrap.httpBaseUrl).origin;
+        return { origin, ...(yield* agentFor(null)) };
+      }
+      const url = new URL(target.url);
+      // Plain http only to this machine, where the network cannot read the token.
+      if (url.protocol === "http:" && isLocalLoopbackHost(url.hostname)) {
+        return { origin: url.origin, ...(yield* agentFor(null)) };
+      }
+      if (url.protocol !== "https:" || target.certSha256 === null) {
+        return yield* new ClusterError({
+          reason: "invalid_target",
+          message: `${url.origin} is not an https address with a pinned certificate. Invite the member again.`,
+        });
+      }
+      return { origin: url.origin, ...(yield* agentFor(target.certSha256)) };
+    },
+  );
+
+  const inviteOverSsh: ClusterUpstream["Service"]["inviteOverSsh"] = Effect.fn(
+    "ClusterUpstream.inviteOverSsh",
+  )(function* (sshTarget) {
+    const bootstrap = yield* sshBaseUrl(sshTarget, "cluster-member");
+    if (bootstrap.pairingToken === null) {
+      return yield* new ClusterError({
+        reason: "ssh",
+        message: `${sshTarget} started T3 Code but did not mint a cluster invite.`,
+      });
+    }
+    return { origin: new URL(bootstrap.httpBaseUrl).origin, code: bootstrap.pairingToken };
+  });
+
+  return ClusterUpstream.of({ connect, inviteOverSsh });
+});
+
+export const layer = Layer.effect(ClusterUpstream, make);

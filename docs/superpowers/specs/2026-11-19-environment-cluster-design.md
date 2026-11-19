@@ -70,7 +70,14 @@ so no long-lived multiplexed link or resend protocol is needed.
 - Members never need an address for the main host. Calls from a member to
   the main host ride the link in reverse: the member exposes a
   `cluster.hostChannel` subscription carrying requests, and the main host
-  answers each with `cluster.hostReply(requestId, result)`.
+  answers each with its own HTTP request,
+  `POST /api/cluster/host-reply` (`cluster-host` credential).
+- A WebSocket is one ordered stream, so the link carries only small control
+  messages: requests are capped at 256 KiB and fail clearly beyond that;
+  replies and attachments travel as separate HTTP requests (pooled HTTPS
+  connections or separate SSH channels), so a large reply never delays
+  another. At most 32 requests per member are in flight; beyond that a call
+  fails with "cluster host busy".
 
 ## Agents
 

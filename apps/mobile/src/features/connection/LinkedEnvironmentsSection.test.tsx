@@ -53,6 +53,7 @@ vi.mock("../../state/entities", () => ({
     settings: { linkedEnvironmentsEnabled: true },
   }),
 }));
+vi.mock("../../state/cluster", () => ({ clusterEnvironment: { status: () => null } }));
 vi.mock("../../state/session", () => ({ useEnvironmentScope: () => true }));
 vi.mock("../../state/peerLinks", async () => {
   const { Atom } = await import("effect/reactivity");

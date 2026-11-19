@@ -1,6 +1,7 @@
 import { useGT } from "gt-react-native";
 import { RegistryContext } from "@effect/atom-react";
 import { offersLinkedEnvironments } from "@t3tools/client-runtime/link-request";
+import { clusterName } from "@t3tools/client-runtime/state/cluster";
 import { peerLinkHealth } from "@t3tools/client-runtime/state/peerLinks";
 import { useFocusEffect } from "@react-navigation/native";
 import { AuthAccessReadScope, type EnvironmentId } from "@t3tools/contracts";
@@ -9,6 +10,7 @@ import { useCallback, useContext, useState } from "react";
 import { AppState, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
+import { clusterEnvironment } from "../../state/cluster";
 import { useEnvironmentServerConfig } from "../../state/entities";
 import { peerLinkEnvironment } from "../../state/peerLinks";
 import { useEnvironmentQuery } from "../../state/query";
@@ -22,7 +24,14 @@ export function LinkedEnvironmentsSection(props: {
   const gt = useGT();
   const config = useEnvironmentServerConfig(props.environmentId);
   const canRead = useEnvironmentScope(props.environmentId, AuthAccessReadScope);
-  const supported = canRead && offersLinkedEnvironments(config);
+  const clusterStatus = useEnvironmentQuery(
+    config?.environment.capabilities.cluster === true
+      ? clusterEnvironment.status({ environmentId: props.environmentId, input: {} })
+      : null,
+  );
+  const managedBy =
+    clusterStatus.data === null ? null : clusterName(clusterStatus.data, props.environmentLabel);
+  const supported = canRead && managedBy === null && offersLinkedEnvironments(config);
   const listAtom = supported
     ? peerLinkEnvironment.list({ environmentId: props.environmentId, input: {} })
     : null;
@@ -60,6 +69,26 @@ export function LinkedEnvironmentsSection(props: {
       };
     }, [hasLinks]),
   );
+  if (managedBy !== null) {
+    return (
+      <View className="mt-5 gap-3">
+        <SettingsSection
+          title={gt("Linked from {environment}", { environment: props.environmentLabel })}
+        >
+          <View className="gap-0.5 p-4">
+            <Text className="text-base font-t3-bold text-foreground">
+              {gt("Managed by cluster {name}", { name: managedBy })}
+            </Text>
+            <Text className="text-xs text-foreground-muted">
+              {gt(
+                "Clustered environments do not link to other environments. Agents here reach the other members through the main host.",
+              )}
+            </Text>
+          </View>
+        </SettingsSection>
+      </View>
+    );
+  }
   if (!supported || links.error || !links.data || links.data.links.length === 0) return null;
   const now = DateTime.makeUnsafe(nowMs);
   return (

@@ -182,6 +182,7 @@ import * as EnvironmentAuthPolicy from "./auth/EnvironmentAuthPolicy.ts";
 import * as CloudHttp from "./cloud/http.ts";
 import * as ClusterHttp from "./cluster/http.ts";
 import * as ClusterService from "./cluster/ClusterService.ts";
+import * as ClusterUpstream from "./cluster/ClusterUpstream.ts";
 import * as GuestHttp from "./guest/http.ts";
 import * as CloudLink from "./cloud/CloudLink.ts";
 import * as ConnectReachability from "./cloud/ConnectReachability.ts";
@@ -235,6 +236,8 @@ import { closeNonPrivateNetworkConnections, loopbackUrlHostForAddress } from "./
 import * as OrchestrationHttp from "./orchestration-v2/http.ts";
 import * as ProjectHttp from "./project/http.ts";
 import * as NetService from "@t3tools/shared/Net";
+import * as SshAuth from "@t3tools/ssh/auth";
+import * as SshTunnel from "@t3tools/ssh/tunnel";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import {
   disableTailscaleServe,
@@ -909,7 +912,18 @@ const layerMakeRoutes = Layer.mergeAll(
   // proxy and agents (/mcp). ServerTls comes from layerHttpServer.
   Layer.provide(
     PeerForwarding.layer.pipe(
-      Layer.provideMerge(ClusterService.layer),
+      Layer.provideMerge(
+        ClusterService.layer.pipe(
+          Layer.provide(
+            ClusterUpstream.layer.pipe(
+              Layer.provide(SshTunnel.SshEnvironmentManager.layer()),
+              // The server's own ssh keys or agent; no client answers its prompts, desktop included.
+              Layer.provide(SshAuth.SshPasswordPrompt.disabledLayer),
+              Layer.provide(NetService.layer),
+            ),
+          ),
+        ),
+      ),
       Layer.provideMerge(PeerMcpClient.layer),
       Layer.provideMerge(PeerLinks.layer),
     ),

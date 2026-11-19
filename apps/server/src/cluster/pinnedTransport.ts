@@ -21,7 +21,12 @@ export interface PinnedAgent {
 }
 
 const pinnedConnector =
-  (undici: typeof Undici, pin: string, connectTimeoutMs: number): Undici.buildConnector.connector =>
+  (
+    undici: typeof Undici,
+    pin: string,
+    connectTimeoutMs: number,
+    ca: NodeTls.ConnectionOptions["ca"],
+  ): Undici.buildConnector.connector =>
   (options, callback) => {
     let settled = false;
     const host = options.hostname.replace(/^\[(.*)\]$/, "$1");
@@ -29,8 +34,9 @@ const pinnedConnector =
       host,
       port: Number(options.port) || 443,
       ...(NodeNet.isIP(host) === 0 ? { servername: options.servername ?? host } : {}),
-      // Members are self-signed by design; the fingerprint check below is the trust decision.
+      // Members are self-signed by design; below, the pin or a CA-valid chain is the trust decision.
       rejectUnauthorized: false,
+      ...(ca === undefined ? {} : { ca }),
       ALPNProtocols: ["http/1.1"],
     });
     // undici applies its connect timeout only inside its own connector.
@@ -47,7 +53,10 @@ const pinnedConnector =
       // Typed as string, but absent when the peer sent no certificate.
       const raw: string | undefined = socket.getPeerCertificate().fingerprint256;
       const presented = raw === undefined ? null : normalizeCertificateFingerprint(raw);
-      if (presented !== null && presented === pin) return callback(null, socket);
+      // `authorized` already covers the hostname check, so a CA-issued certificate passes whatever the pin.
+      if (socket.authorized || (presented !== null && presented === pin)) {
+        return callback(null, socket);
+      }
       socket.destroy();
       callback(
         Object.assign(
@@ -66,10 +75,11 @@ const pinnedConnector =
     });
   };
 
-/** One connection pool to members; with a pin, nothing is sent until the certificate matches. */
+/** One connection pool to members; with a pin, nothing is sent until the certificate matches it or chains to a trusted CA. */
 export const makeAgent = Effect.fn("pinnedTransport.makeAgent")(function* (
   pin: string | null,
   connectTimeoutMs = 10_000,
+  ca?: NodeTls.ConnectionOptions["ca"],
 ) {
   const undici = requireUndici("undici") as typeof Undici;
   const dispatcher = yield* Effect.acquireRelease(
@@ -81,6 +91,7 @@ export const makeAgent = Effect.fn("pinnedTransport.makeAgent")(function* (
               undici,
               normalizeCertificateFingerprint(pin),
               connectTimeoutMs,
+              ca,
             ),
           }),
     ),

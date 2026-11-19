@@ -171,7 +171,13 @@ it.effect("forwards HTTP to the member under the client's scopes, never the clie
         ),
       );
       expect(leave.status).toBe(404);
-      for (const path of ["/api/cluster/events", "//api/cluster/events", "/API/cluster%2Fevents"]) {
+      for (const path of [
+        "/api/cluster/events",
+        "//api/cluster/events",
+        "/API/cluster%2Fevents",
+        "/api/cluster;x",
+        "/api/cluster/events;x",
+      ]) {
         expect((yield* get(`${base}${path}`, admin)).status).toBe(404);
       }
       expect(yield* member.cluster.status).toMatchObject({ role: "member" });
@@ -186,16 +192,21 @@ it.effect("decides by the path the member routes, not the path the client spelle
       const operator = yield* clientToken(main, ["orchestration:read", "orchestration:operate"]);
       const wsBase = base.replace(/^http/, "ws");
       // A media ticket never opens the member's RPC socket, however `/ws` is spelled.
-      for (const path of ["//ws", "/WS", "/ws/"]) {
+      for (const path of ["//ws", "/WS", "/ws/", "/ws;x", "/WS;x"]) {
         const media = yield* ticketFor(`${base}/api/auth/websocket-ticket/media`, operator);
         expect(yield* opens(`${wsBase}${path}?wsTicket=${media}`)).toBe(false);
       }
       // The main host answers ticket requests, so the ticket opens sockets through it.
-      const ticket = yield* ticketFor(`${base}//api/auth/websocket-ticket/media`, operator);
-      const [hello] = yield* firstFrames(`${wsBase}/echo?wsTicket=${ticket}`);
-      expect(JSON.parse(String(hello))).toMatchObject({
-        scopes: "orchestration:read orchestration:operate",
-      });
+      for (const path of [
+        "//api/auth/websocket-ticket/media",
+        "/api/auth/websocket-ticket/media;x",
+      ]) {
+        const ticket = yield* ticketFor(`${base}${path}`, operator);
+        const [hello] = yield* firstFrames(`${wsBase}/echo?wsTicket=${ticket}`);
+        expect(JSON.parse(String(hello))).toMatchObject({
+          scopes: "orchestration:read orchestration:operate",
+        });
+      }
     }),
   ).pipe(Effect.provide(FetchHttpClient.layer)),
 );

@@ -102,7 +102,8 @@ const handler = Effect.gen(function* () {
   const url = requestUrl(request);
   const match = Option.isSome(url) ? MEMBER_PATH.exec(url.value.pathname) : null;
   if (Option.isNone(url) || match === null) return notFound();
-  const path = match[2] ?? "/";
+  // The member's router ignores everything from the first `;`, so neither decides on nor forwards it.
+  const path = (match[2] ?? "/").split(";", 1)[0] || "/";
   // Every decision below uses the path as the member's router matches it, however it was spelled.
   const decoded = Option.liftThrowable(() => ({
     memberId: decodeURIComponent(match[1]!),

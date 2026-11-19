@@ -4,7 +4,7 @@
 
 **Goal:** Agents on any environment in a cluster can act on any other through the main host. On the main host, a tool call that names a member goes to that member's `/mcp`. On a member, a tool call that names another environment rides the member's control link to the main host, which runs it and answers. Remote `delegate_task` works the same way, including after a restart. Cluster calls are full trust: no link fence applies to them.
 
-**Architecture:** There is one seam: `PeerForwarding`. Before a forwarded call leaves, `PeerForwarding.clusterRoute` asks `ClusterService` where this environment sits. On a standalone environment the call goes over a peer link, as it does today. On a main host the call goes to the member's `/mcp`, using `ClusterService.connect(memberId)` and its `cluster-host` token; `PeerMcpClient.call` gains an optional `route` for that, so cluster calls reuse its session handling, `T3-Mode-Limit`, `T3-Sender-Thread` and 404 renewal. On a member the call keeps its `environmentId` (unless it names the main host) and goes to `ClusterService.hostCall`, which Plan 2 puts on the member's `cluster.hostChannel`. The main host's link fiber hands it to `ClusterHostRequests.make`'s `serve`, which runs it with the main host's own `/mcp` tools as that member's client (`cluster: true`, `clusterMember`, the agent's modes and sender). A tool that names another member forwards there through the same `PeerForwarding`; one that names none runs on the main host. Its result goes back as the main host's own `POST /api/cluster/host-reply` to the member (Plan 2 Task 8; the link socket carries only small requests), and the member reads it with the same `PeerMcpClient.decodeToolResult` that reads `/mcp` answers. `RemoteDelegation` and the MCP toolkits need no routing changes: they already go through `PeerForwarding`. No member-to-main credential or address exists.
+**Architecture:** There is one seam: `PeerForwarding`. Before a forwarded call leaves, `PeerForwarding.clusterRoute` asks `ClusterService` where this environment sits. On a standalone environment the call goes over a peer link, as it does today. On a main host the call goes to the member's `/mcp`, using `ClusterService.connect(memberId)` and its `cluster-host` token; `PeerMcpClient.call` gains an optional `route` for that, so cluster calls reuse its session handling, `T3-Mode-Limit`, `T3-Sender-Thread` and 404 renewal. On a member the call keeps its `environmentId` (unless it names the main host) and goes to `ClusterService.hostCall`, which Plan 2 stores on the member and announces as a doorbell on the member's control link (`GET /api/cluster/events`). The main host's link fiber fetches it (`GET /api/cluster/host-request/<requestId>`) and hands it to `ClusterHostRequests.make`'s `serve`, which runs it with the main host's own `/mcp` tools as that member's client (`cluster: true`, `clusterMember`, the agent's modes and sender). A tool that names another member forwards there through the same `PeerForwarding`; one that names none runs on the main host. Its result goes back as the main host's own `POST /api/cluster/host-reply` to the member (Plan 2 Task 8; the event stream carries only doorbells, so payloads of any size never block each other), and the member reads it with the same `PeerMcpClient.decodeToolResult` that reads `/mcp` answers. `RemoteDelegation` and the MCP toolkits need no routing changes: they already go through `PeerForwarding`. No member-to-main credential or address exists.
 
 **Tech Stack:** Effect 4 services (`Context.Service`, `Effect.fn`), `effect/http` client, `effect/ai` MCP server and toolkits, `@effect/vitest` (`it.effect`, `TestClock`), the evals in `evals/mcp-tool-use`.
 
@@ -15,10 +15,11 @@
 Copied word for word from the spec. Every task follows them.
 
 - "On the main host, MCP tools with an `environmentId` target forward to the member's `/mcp` using the `cluster-host` credential."
-- "A member agent targeting another environment puts the call on `cluster.hostChannel`; the main host runs it (forwarding to the target member) and replies. All cross-member traffic hairpins through the main host. No separate member-to-main credential exists."
-- "Requests queued while the link is down fail with "cluster host unreachable" and are never delivered twice."
-- "Members never need an address for the main host. Calls from a member to the main host ride the link in reverse: the member exposes a `cluster.hostChannel` subscription carrying requests, and the main host answers each with its own HTTP request, `POST /api/cluster/host-reply` (`cluster-host` credential)."
-- "A WebSocket is one ordered stream, so the link carries only small control messages: requests are capped at 256 KiB and fail clearly beyond that; replies and attachments travel as separate HTTP requests (pooled HTTPS connections or separate SSH channels), so a large reply never delays another. At most 32 requests per member are in flight; beyond that a call fails with "cluster host busy"."
+- "A member agent targeting another environment goes through the control link doorbell; the main host runs it (forwarding to the target member) and replies. All cross-member traffic hairpins through the main host. No separate member-to-main credential exists."
+- "Requests pending when the link drops fail with "cluster host unreachable" and are never delivered twice."
+- "Members never need an address for the main host; every connection is opened by the main host. The stream carries only doorbells, never payloads, because a stream is ordered and one large event would delay every event behind it": "A member agent's call is stored on the member and announced as event `request {requestId}`." "The main host fetches it: `GET /api/cluster/host-request/<requestId>`." "The main host runs it and answers: `POST /api/cluster/host-reply`."
+- "Each fetch and reply is its own HTTP request (pooled HTTPS connections or separate SSH channels), so payloads of any size never block each other."
+- "At most 32 requests per member are in flight on the main host; beyond that a call fails with "cluster host busy"."
 - "The existing forwarded-wait limits (≤ 50 s) apply."
 - "**Members fully trust the main host.**"
 - "**Cluster is separate from peer links.** Any clustered environment (main host or member) takes no part in peer links in either direction."
@@ -45,7 +46,7 @@ Copied word for word from the spec. Every task follows them.
 - `CLUSTER_SCOPES_HEADER`. Plan 4 never sends it, because `/mcp` caps by `T3-Mode-Limit`.
 - `ClusterService.connect(memberId): Effect<MemberConnection, ClusterError>` with `MemberConnection = { upstream: ClusterUpstream.Upstream; token: string; member: ClusterMember }` and `Upstream = { origin; httpClient; webSocket }`.
 - `ClusterService.status`, `members`, `addMember`, `removeMember`.
-- The control link (Plan 2 Task 8): `ClusterService.hostCall(call: ClusterHostCall): Effect<ClusterHostResult, ClusterError>`, `ClusterService.start(serve: ClusterHostServe)`, types `ClusterHostCall` and `ClusterHostServe`, `clusterHostUnreachable(hostLabel)`, `clusterHostTooLarge(bytes)` (reason `"too_large"`, for a call over `CLUSTER_HOST_REQUEST_MAX_BYTES`, 256 KiB), `refuseHostRequests` (which `server.ts` passes to `start` until this plan), and contracts `ClusterHostRequest`, `ClusterHostResult`. Plan 2's link fiber sends each `serve` answer as `POST /api/cluster/host-reply` and answers a member's 33rd concurrent call "Cluster host busy" (`orchestration_error`) without calling `serve`; this plan sends no replies itself and needs no `cluster.hostReply` RPC (there is none).
+- The control link (Plan 2 Task 8): `ClusterService.hostCall(call: ClusterHostCall): Effect<ClusterHostResult, ClusterError>`, `ClusterService.start(serve: ClusterHostServe)`, types `ClusterHostCall` and `ClusterHostServe`, `clusterHostUnreachable(hostLabel)`, `refuseHostRequests` (which `server.ts` passes to `start` until this plan), and contracts `ClusterHostRequest`, `ClusterHostResult`. Plan 2's link fiber fetches each call with `GET /api/cluster/host-request/<requestId>` before `serve`, sends each `serve` answer as `POST /api/cluster/host-reply`, and answers a member's 33rd concurrent call "Cluster host busy" (`orchestration_error`) without calling `serve`; this plan sends no replies itself and needs no `cluster.hostReply` RPC (there is none).
 - `server.ts` builds `ClusterService` inside the `PeerForwarding` provide, so `PeerForwarding` reads it with `Effect.serviceOption`.
 - Testkit: `ClusterService.testkit.ts` (`clusterDescriptor`, `FINGERPRINT`, `makeEnvironment`, `serveMember`, `layerClusterEnvironment`, `awaitStatus`).
 - The `clustered` effect that Plan 2 Task 4 adds inside `McpHttpServer.makeMcpAuthMiddleware`.
@@ -70,7 +71,7 @@ These are the failure modes most likely to cause trouble without a test. Each on
 4. **Idempotency keys across the hairpin.** Each hop hashes `clientRequestId` with its caller's namespace: the member with its agent's, the main host with `cluster-member:<memberId>`. A retry from one agent reaches the target member with the same key. The same key from another agent, or from another member, does not. Test: Task 2, "a member reaches another member through the main host, which never loops".
 5. **A call that ran although its member heard "unreachable".** The link can drop after the main host forwarded a send but before the reply. The member's agent retries with the same `clientRequestId`, and the target runs it once. Plan 2 Task 8 pins that the link never resends; this plan's idempotency test (item 4) pins that the retry lands on the same key.
 6. **A member's call that names the main host.** It must run on the main host itself, as that member's full-trust client narrowed to the agent's modes, and not go anywhere else. Test: Task 4, "a member reaches another member through the main host, which never loops" (the member's `t3_environment_links` runs on the main host, which lists the cluster for it).
-7. **Large payloads on the link.** The link is one ordered socket, so nothing large may ride it. The three attachment tools (`t3_attachment_prepare_upload`, `t3_attachment_discard`, `t3_thread_send_attachments`) take no `environmentId`, so they never forward: their bytes go by HTTP upload to the agent's own server. `forward` refuses `attachments` on any forwarded call before it leaves, cluster routes included. Any other argument over 256 KiB fails on the member with `too_large`, which maps to `invalid_request` (final: a retry would be just as large). Test: Task 2, "a member hears why its main host cannot take a call".
+7. **Large payloads across the cluster.** The control link's stream carries only doorbells; a call's arguments travel as the main host's own fetch and its answer as its own reply, so no size cap applies and a large call never delays another (Plan 2 Task 8 pins that). The three attachment tools (`t3_attachment_prepare_upload`, `t3_attachment_discard`, `t3_thread_send_attachments`) take no `environmentId`, so they never forward: their bytes go by HTTP upload to the agent's own server. `forward` refuses `attachments` on any forwarded call before it leaves, cluster routes included, as it does over peer links today.
 
 ## File Map
 
@@ -887,7 +888,7 @@ it.effect("a member reaches another member through the main host, which never lo
         { descriptor: box, url: b.url, token: yield* clusterHostToken(b.auth, "Studio") },
       ]);
       const main = yield* makeLaptopWith(layerRoutingMain(members), studio);
-      // The control link without its socket: Plan 2 Task 8 carries the same call and answer.
+      // The control link without its HTTP: Plan 2 Task 8 carries the same call and answer.
       const hostCall = (call: ClusterService.ClusterHostCall) =>
         main.serveHost(laptopMember, { requestId: "link-request", ...call });
       const a = yield* makeLaptopWith(layerRoutingMember({ host: studio, hostCall }));
@@ -989,21 +990,6 @@ it.effect("a member hears why its main host cannot take a call", () =>
           'Cluster host unreachable: "Studio" is not connected, so other environments in the cluster cannot be reached. Work here continues.',
       });
 
-      // Final: the same call would be just as large next time.
-      const big = yield* makeLaptopWith(
-        layerRoutingMember({
-          host: studio,
-          hostCall: () => Effect.fail(ClusterService.clusterHostTooLarge(300 * 1024)),
-        }),
-      );
-      const tooLarge = yield* big.call("thread:laptop-full", "t3_thread_read", {
-        environmentId: box.environmentId,
-        threadId: boxThread,
-      });
-      expect(failureOf(tooLarge)).toMatchObject({
-        code: "invalid_request",
-        message: expect.stringContaining("at most 256 KiB"),
-      });
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
@@ -1280,18 +1266,10 @@ const isRuntimeMode = Schema.is(RuntimeMode);
 const linkStorageFailure = (error: PeerLinkError) =>
   new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message });
 
-/**
- * A removed member is final: a task there fails rather than retries. An unreachable host is not.
- * A call too large for the control link is the caller's to fix.
- */
+/** A removed member is final: a task there fails rather than retries. An unreachable host is not. */
 const fromClusterError = (error: ClusterError) =>
   new OrchestratorMcpFailure({
-    code:
-      error.reason === "unknown_member"
-        ? "capability_denied"
-        : error.reason === "too_large"
-          ? "invalid_request"
-          : "orchestration_error",
+    code: error.reason === "unknown_member" ? "capability_denied" : "orchestration_error",
     message:
       error.reason === "unknown_member"
         ? `${error.message} t3_environment_links lists this cluster's environments.`
@@ -2204,11 +2182,11 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 | Spec item ("Control link", "Agents", plus related rows) | Where |
 | --- | --- |
 | Main host: `environmentId` tools forward to the member's `/mcp` with `cluster-host` | Task 2 (`clusterRoute` main branch, `ClusterService.connect`), Task 1 (`McpRoute`) |
-| A member agent targeting another environment puts the call on `cluster.hostChannel`; the main host runs it, forwarding to the target member, and replies | Task 2 (`clusterRoute` member branch → `ClusterService.hostCall`; `ClusterHostRequests.make` as `serve`; `server.ts` passes it to `start`) on Plan 2 Task 8's channel |
+| A member agent targeting another environment goes through the control link doorbell; the main host runs it, forwarding to the target member, and replies | Task 2 (`clusterRoute` member branch → `ClusterService.hostCall`; `ClusterHostRequests.make` as `serve`; `server.ts` passes it to `start`) on Plan 2 Task 8's link |
 | All cross-member traffic hairpins through the main host | Task 2, three-environment test |
 | No separate member-to-main credential exists; members never need the main host's address | Nothing here mints, stores or dials one; the member side only calls `hostCall` |
-| Requests queued while the link is down fail "cluster host unreachable", never delivered twice | Plan 2 Task 8 (link); Task 2 maps it to `orchestration_error` (not final) and tests it; Review Focus 5 for retries |
-| The link carries only small messages: requests capped at 256 KiB, replies and attachments as separate HTTP requests, at most 32 in flight ("cluster host busy") | Plan 2 Task 8 (cap, HTTP replies, semaphore); Task 2 maps `too_large` to `invalid_request` and tests it; busy arrives as an `orchestration_error` result (not final); attachments never ride the link (Review Focus 7, resolved ambiguity 8) |
+| Requests pending when the link drops fail "cluster host unreachable", never delivered twice | Plan 2 Task 8 (link); Task 2 maps it to `orchestration_error` (not final) and tests it; Review Focus 5 for retries |
+| The stream carries only doorbells; each fetch and reply is its own HTTP request; at most 32 in flight ("cluster host busy") | Plan 2 Task 8 (doorbells, HTTP fetch and reply, semaphore); busy arrives as an `orchestration_error` result (not final); attachments never cross the cluster (Review Focus 7, resolved ambiguity 8) |
 | Forwarded-wait limits ≤ 50 s | Task 2: `waitThere` caps every hop at 45 s; tests assert `[45_000]` direct and hairpinned |
 | "main host down … member agents get "cluster host unreachable" … local work continues" | Task 2 (`fromClusterError` keeps `unreachable` retryable), Task 4 (listing degrades, does not fail) |
 | Cluster separate from peer links; no fence for full trust | Task 2: cluster routes skip the beta and link access, and an `auto` link is still fenced on the same box. Task 4 hides link and unlink tools while clustered |
@@ -2227,11 +2205,11 @@ An implementer should not reopen these choices:
    - An unknown or removed member.
    - A revoked credential (`/mcp` 401 on a member).
 
-   A call over the link's 256 KiB cap (`too_large`) maps to `invalid_request`, also final. "Cluster host busy" arrives as an `orchestration_error` result and is retried.
+   "Cluster host busy" arrives as an `orchestration_error` result and is retried.
 
    A host whose link is down, or a member that does not answer or has clusters off, maps to `orchestration_error`, which is retried.
 4. **Loops.** The main host refuses a member's call that names that member. A member refuses any call from its main host that names another environment. An unknown id on the main host is `unknown_member`.
 5. **Labels.** On a member, the label of another member is its `environmentId`. Only the main host's name is known locally, and `t3_environment_links` shows the real names.
 6. **Listing.** `t3_environment_links` gains an optional `cluster` array instead of a new tool. A member asks its main host for the list over the link. When the link is down, the member lists the main host as `offline` with the unreachable message and does not fail.
 7. **A member→member call's status effects stay with the link.** A failed call to a member records nothing; the member's control link owns its status.
-8. **Attachments across the cluster are refused, not proxied.** The attachment tools have no `environmentId` and run only where the agent is; a forwarded call that carries `attachments` is refused before it leaves ("A launch in a linked environment cannot carry attachments yet."), as it is over peer links. Carrying the bytes over the HTTP proxy would need a staged upload on the target and a new forwarded-upload path; nothing in the spec asks for it yet. A `too_large` call is `invalid_request`: the agent must send less, not retry.
+8. **Attachments across the cluster are refused, not proxied.** The attachment tools have no `environmentId` and run only where the agent is; a forwarded call that carries `attachments` is refused before it leaves ("A launch in a linked environment cannot carry attachments yet."), as it is over peer links. Carrying the bytes over the HTTP proxy would need a staged upload on the target and a new forwarded-upload path; nothing in the spec asks for it yet.

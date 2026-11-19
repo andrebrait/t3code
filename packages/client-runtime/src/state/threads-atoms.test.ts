@@ -134,6 +134,7 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
     register: () => Effect.die("Unexpected environment registration"),
     assertKnownAddress: () => Effect.die("Unexpected address check"),
     reconcilePlatform: () => Effect.die("Unexpected environment reconciliation"),
+    reconcileCluster: () => Effect.die("Unexpected cluster reconciliation"),
     remove: () => Effect.die("Unexpected environment removal"),
     removeRoute: () => Effect.die("Unexpected route removal"),
     reorderRoutes: () => Effect.die("Unexpected route reorder"),

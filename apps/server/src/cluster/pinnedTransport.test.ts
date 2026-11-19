@@ -61,6 +61,13 @@ it.live("sends a request only once the server presents the pinned certificate", 
         HttpClientRequest.get(`${tls.origin}/hello`).pipe(HttpClientRequest.bearerToken("secret")),
       );
       expect(yield* response.text).toBe("ok");
+      // Unpinned, the certificate must chain to a trusted CA, which a self-signed member's never does.
+      const unpinned = yield* PinnedTransport.makeAgent(null);
+      const untrusted = yield* unpinned.httpClient
+        .execute(HttpClientRequest.get(`${tls.origin}/untrusted`))
+        .pipe(Effect.flip);
+      expect(PinnedTransport.isPinMismatch(untrusted)).toBe(false);
+      expect(NodeUtil.inspect(untrusted, { depth: 10 })).toMatch(/SELF_SIGNED|UNABLE_TO_VERIFY/);
       const bytesBeforeMismatch = tls.received.bytes;
 
       const wrong = yield* PinnedTransport.makeAgent("0".repeat(64));

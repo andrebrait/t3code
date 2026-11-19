@@ -508,12 +508,15 @@ To add a machine over HTTPS:
 
 1. On that machine, choose **Invite to cluster**, or run
    `t3 cluster invite --url https://<address>`. Enter the address the main host
-   can reach it at. It shows a join string: the address, a one-time code and
-   the machine's certificate fingerprint.
+   can reach it at. It shows a join string: the address and a one-time code.
+   For an IP address, `localhost` or a `.local` name it also carries the
+   machine's certificate fingerprint.
 2. On the main host, choose **Add member** and paste the join string, or run
-   `t3 cluster add <join-string>`. The main host pins that certificate; if
-   it changes later, the member shows **certificate changed**. Invite the
-   machine again.
+   `t3 cluster add <join-string>`. With a fingerprint, the main host pins that
+   certificate; if it changes later, the member shows **certificate changed**.
+   Invite the machine again. Without one, as for an address behind T3 Connect
+   or Tailscale Serve, the address needs a certificate from a trusted
+   authority.
 
 To add a machine over SSH instead, enter `user@host` in **Add member** on the
 web or desktop app, or run `t3 cluster add ssh://user@host`. The main host needs an SSH

@@ -30,9 +30,24 @@ describe("cluster join strings", () => {
     );
   });
 
+  it("round-trips a join string without a fingerprint", () => {
+    const joinString = formatClusterJoinString({
+      url: "https://box.tail1234.ts.net/",
+      code: "K7M2Q9RZ3NWD",
+      fingerprint: null,
+    });
+    expect(joinString).toBe("https://box.tail1234.ts.net#K7M2Q9RZ3NWD");
+    expect(parseClusterJoinString(joinString)).toEqual({
+      url: "https://box.tail1234.ts.net",
+      code: "K7M2Q9RZ3NWD",
+      fingerprint: null,
+    });
+  });
+
   it.each([
     "https://box.local:3773",
-    `https://box.local:3773#K7M2Q9RZ3NWD`,
+    `https://box.local:3773#K7M2Q9RZ3NW1`,
+    `https://box.local:3773#K7M2Q9RZ3NWD.`,
     `https://box.local:3773#K7M2Q9RZ3NW1.${SHA}`,
     `https://box.local:3773#K7M2Q9RZ3NWD.${SHA}.extra`,
     `https://box.local:3773#K7M2Q9RZ3NWD.${SHA.slice(2)}`,

@@ -20,6 +20,7 @@ import * as Flag from "effect/cli/Flag";
 import * as GlobalFlag from "effect/cli/GlobalFlag";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
+import * as ClusterRole from "../cluster/ClusterRole.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -48,6 +49,7 @@ const runWithPeerLinks = Effect.fn("environment.runWithPeerLinks")(function* <A,
           Layer.mergeAll(
             ServerSecretStore.layer,
             SqlitePersistence.layerCliConfig,
+            ClusterRole.layer.pipe(Layer.provide(SqlitePersistence.layerCliConfig)),
             FetchHttpClient.layer,
           ),
         ),

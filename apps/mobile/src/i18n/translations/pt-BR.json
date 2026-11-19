@@ -2014,6 +2014,8 @@
     },
     " para adicionar um."
   ],
+  "cfb2012b55e366b1": "Redirecionar HTTP da rede para HTTPS",
+  "dc4b9f5deee96212": "Navegadores na sua rede passam a usar HTTPS, e apps na sua rede precisam usá-lo. Este dispositivo, o Tailscale e o T3 Connect não são afetados.",
   "9d7fb2ec72ce9693": "Desativado",
   "d92a43b7bf4c24c8": "Mantém as requisições de controle de versão neste ambiente.",
   "2763012f6869f8d0": "Ler PRs",

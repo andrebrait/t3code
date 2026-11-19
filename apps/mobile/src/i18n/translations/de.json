@@ -2014,6 +2014,8 @@
     },
     ", um eine hinzuzufügen."
   ],
+  "cfb2012b55e366b1": "Netzwerk-HTTP auf HTTPS umleiten",
+  "dc4b9f5deee96212": "Browser in deinem Netzwerk wechseln zu HTTPS, und Apps in deinem Netzwerk müssen es verwenden. Dieses Gerät, Tailscale und T3 Connect sind nicht betroffen.",
   "9d7fb2ec72ce9693": "Aus",
   "d92a43b7bf4c24c8": "Versionskontrollanfragen in dieser Umgebung behalten.",
   "2763012f6869f8d0": "PRs lesen",

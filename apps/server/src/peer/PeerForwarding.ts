@@ -425,6 +425,7 @@ const make = Effect.gen(function* () {
         lastError: member.lastError,
       }));
     }
+    if (scope.client?.cluster === true) return yield* clusterLoop;
     const host = state.host;
     if (host === null) return [];
     const reached = yield* service

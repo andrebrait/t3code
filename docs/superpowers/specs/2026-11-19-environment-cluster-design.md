@@ -151,8 +151,12 @@ Each refusal returns a clear error naming the cluster:
   forwards, desktop renderer all reach the server over loopback HTTP).
   Tailscale addresses (`100.x`, `*.ts.net`) are exempt, matching
   `peerOrigin`.
-- Flipping the default to `redirect` is a follow-up, once client pairing pins
-  certificates.
+- Follow-up, not this project: client pairing pins the certificate (QR and
+  pairing URL carry the fingerprint; desktop via Electron
+  `setCertificateVerifyProc`, mobile via a native module). In that same
+  follow-up, new installs default to `redirect` while existing installs keep
+  `allow` through a one-time settings migration. Doing it earlier would leave
+  new users unable to pair native clients by LAN IP.
 
 ## Server structure
 

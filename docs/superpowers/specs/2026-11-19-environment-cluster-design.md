@@ -142,6 +142,17 @@ Each refusal returns a clear error naming the cluster:
 - The fingerprint is shown in Settings → Cluster and in
   `t3 cluster invite`.
 - Client pairing is unchanged. `peerOrigin` rules are unchanged.
+- Setting "Plain HTTP on the network" (Settings → Connections):
+  `allow` (v1 default) or `redirect to HTTPS`. With `redirect`, non-loopback,
+  non-Tailscale plain HTTP gets `308` to HTTPS for browser navigation and
+  `426 {code:"https_required"}` for WebSocket upgrades and API calls, since
+  WebSocket clients do not follow redirects.
+- Loopback is always exempt (T3 Connect tunnel, Tailscale Serve, SSH
+  forwards, desktop renderer all reach the server over loopback HTTP).
+  Tailscale addresses (`100.x`, `*.ts.net`) are exempt, matching
+  `peerOrigin`.
+- Flipping the default to `redirect` is a follow-up, once client pairing pins
+  certificates.
 
 ## Server structure
 
@@ -194,6 +205,8 @@ At the lowest layer that fails on `main`:
 - Proxy: HTTP and WS upgrade forwarding to a fake member, `502` when
   unreachable, pinned-cert mismatch refused.
 - TLS sniffing: one port serves TLS and plain HTTP.
+- HTTP policy: `redirect` gives `308` for navigation and `426` for WS/API on
+  network HTTP; loopback and Tailscale exempt; `allow` passes through.
 - Client runtime: `cluster.members` adds and removes registry entries;
   `Cluster` route resolves its URL.
 - One integrated pass: two dev servers in separate worktree `.t3` homes,

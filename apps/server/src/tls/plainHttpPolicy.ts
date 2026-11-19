@@ -40,6 +40,7 @@ export const plainHttpDecision = (input: {
     (input.method === "GET" || input.method === "HEAD") &&
     headers.upgrade === undefined &&
     headers.host !== undefined &&
+    /^[\w.\-:[\]]+$/.test(headers.host) &&
     (headers["sec-fetch-mode"] === "navigate" || (headers.accept ?? "").includes("text/html"));
   return navigation
     ? { _tag: "redirect", location: `https://${headers.host}${input.url}` }
@@ -51,26 +52,32 @@ export const layer = Layer.unwrap(
     const settings = yield* ServerSettings.ServerSettingsService;
     return HttpRouter.middleware(
       (httpEffect) =>
-        Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
-          settings.getSettings.pipe(
-            Effect.orDie,
-            Effect.flatMap((current) => {
-              const socket = (
-                request.source as {
-                  readonly socket?: {
-                    readonly encrypted?: boolean;
-                    readonly remoteAddress?: string;
-                  };
-                }
-              ).socket;
-              const decision = plainHttpDecision({
-                policy: current.networkPlainHttp,
-                encrypted: socket?.encrypted === true,
-                remoteAddress: socket?.remoteAddress,
-                method: request.method,
-                url: request.url,
-                headers: request.headers,
-              });
+        Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) => {
+          const socket = (
+            request.source as {
+              readonly socket?: { readonly encrypted?: boolean; readonly remoteAddress?: string };
+            }
+          ).socket;
+          const decide = (policy: NetworkPlainHttp) =>
+            plainHttpDecision({
+              policy,
+              encrypted: socket?.encrypted === true,
+              remoteAddress: socket?.remoteAddress,
+              method: request.method,
+              url: request.url,
+              headers: request.headers,
+            });
+          // Encrypted and exempt peers never depend on a settings read that could fail.
+          if (decide("redirect")._tag === "pass") return httpEffect;
+          return settings.getSettings.pipe(
+            Effect.map((current) => current.networkPlainHttp),
+            Effect.catch((cause) =>
+              Effect.logWarning("plain HTTP policy: settings unreadable, allowing", { cause }).pipe(
+                Effect.as<NetworkPlainHttp>("allow"),
+              ),
+            ),
+            Effect.flatMap((policy) => {
+              const decision = decide(policy);
               if (decision._tag === "pass") return httpEffect;
               return Effect.succeed(
                 decision._tag === "redirect"
@@ -78,8 +85,8 @@ export const layer = Layer.unwrap(
                   : HttpServerResponse.jsonUnsafe({ code: "https_required" }, { status: 426 }),
               );
             }),
-          ),
-        ),
+          );
+        }),
       { global: true },
     );
   }),

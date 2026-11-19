@@ -8,7 +8,7 @@ import {
   type ConnectionRoute,
 } from "./catalog.ts";
 import { pullRequestRoutingConnectionKey } from "./pullRequestRoutingPermissions.ts";
-import { BearerConnectionTarget, RelayConnectionTarget } from "./model.ts";
+import { BearerConnectionTarget, ClusterConnectionTarget, RelayConnectionTarget } from "./model.ts";
 import {
   connectionRouteId,
   connectionRouteKind,
@@ -17,6 +17,7 @@ import {
   insertRoute,
   entryWithRoutes,
   isNearbyAddress,
+  routeHttpBaseUrl,
   mergeLearnedRoutes,
   pendingRouteOrder,
   removedWithRelay,
@@ -467,4 +468,22 @@ describe("learned routes", () => {
     expect(moved).not.toBeNull();
     expect(profileOf(moved![0]!)).toMatchObject({ httpBaseUrl: "https://desk.local:3773/" });
   });
+});
+
+it("names a cluster member's route after its main host and gives it no address", () => {
+  const route = {
+    target: new ClusterConnectionTarget({
+      environmentId: EnvironmentId.make("environment-box"),
+      label: "Box",
+      hostEnvironmentId: EnvironmentId.make("environment-studio"),
+      hostLabel: "Studio",
+      status: "online",
+      statusDetail: null,
+    }),
+    profile: Option.none(),
+  };
+  expect(connectionRouteId(route.target)).toBe("cluster:environment-studio");
+  expect(connectionRouteKind(route)).toBe("cluster");
+  expect(connectionRouteLabel(route)).toBe("via Studio");
+  expect(routeHttpBaseUrl(route)).toBeNull();
 });

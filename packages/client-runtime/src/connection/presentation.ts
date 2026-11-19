@@ -190,6 +190,7 @@ export function connectionCatalogDisplayUrl(entry: ConnectionCatalogEntry): stri
     case "PrimaryConnectionTarget":
       return entry.target.httpBaseUrl;
     case "RelayConnectionTarget":
+    case "ClusterConnectionTarget":
       return null;
     case "BearerConnectionTarget":
       return Option.isSome(entry.profile) && entry.profile.value._tag === "BearerConnectionProfile"

@@ -30,6 +30,8 @@ export function environmentTransportLabel(
 ): string {
   const { entry } = environment;
   if (entry.target._tag === "PrimaryConnectionTarget") return resolve(msg("This machine"));
+  if (entry.target._tag === "ClusterConnectionTarget")
+    return resolve(msg("via {host}", { host: entry.target.hostLabel }));
   const routes = connectionRoutes(entry);
   if (routes.length > 1) {
     const active =

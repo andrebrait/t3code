@@ -40,6 +40,7 @@ import {
   keepIdleConnections,
   rejectRequestsUntilServing,
 } from "./httpResponseErrorGuard.ts";
+import { serveTlsOnSamePort } from "./tls/tlsSniff.ts";
 import { resolveLauncherPath } from "./cloud/pinnedRuntime.ts";
 import { fixPath } from "./os-jank.ts";
 import * as Ws from "./ws.ts";
@@ -160,6 +161,7 @@ import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as AuthHttp from "./auth/http.ts";
 import * as ReplayMarkers from "./auth/replayMarkers.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
+import * as ServerTls from "./tls/ServerTls.ts";
 import * as CodexManagedTokenBroker from "./provider/CodexManagedTokenBroker.ts";
 import * as WebhookRoute from "./scheduledTasks/webhookRoute.ts";
 import * as RelayDeliveryProof from "./scheduledTasks/RelayDeliveryProof.ts";
@@ -372,11 +374,16 @@ const layerHttpServer = Layer.unwrap(
       privateNetworkOnly: config.privateNetworkOnly,
     });
     yield* ManagedLimits.closeTailscaleServeTo(policy, { host: bindHost, port: config.port });
+    const tls = yield* ServerTls.ServerTls;
     const runSync = Effect.runSyncWith(yield* Effect.context<never>());
     return NodeHttpServer.layer(
       () => {
         const server = rejectRequestsUntilServing(
-          keepIdleConnections(guardHttpResponseWriteErrors(NodeHttp.createServer())),
+          keepIdleConnections(
+            guardHttpResponseWriteErrors(
+              serveTlsOnSamePort(NodeHttp.createServer(), tls.secureContext),
+            ),
+          ),
         );
         if (config.privateNetworkOnly) {
           runSync(closeNonPrivateNetworkConnections(server));
@@ -397,6 +404,7 @@ const layerHttpServer = Layer.unwrap(
   }),
 ).pipe(
   Layer.provide(ManagedPolicy.layer),
+  Layer.provideMerge(ServerTls.layer.pipe(Layer.provide(ServerSecretStore.layer))),
   // NodeHttpServer.layer also outputs NodeServices, whose spawner would shadow the wrapped one.
   (layer) => NonBlockingSpawner.layer.pipe(Layer.provideMerge(layer)),
 );

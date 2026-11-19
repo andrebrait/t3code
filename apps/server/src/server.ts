@@ -40,6 +40,7 @@ import {
   rejectRequestsUntilServing,
 } from "./httpResponseErrorGuard.ts";
 import { serveTlsOnSamePort } from "./tls/tlsSniff.ts";
+import * as PlainHttpPolicy from "./tls/plainHttpPolicy.ts";
 import { resolveLauncherPath } from "./cloud/pinnedRuntime.ts";
 import { fixPath } from "./os-jank.ts";
 import * as Ws from "./ws.ts";
@@ -918,6 +919,7 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.provide(layerServerSettings),
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(layerDesktopAppUpdate))),
+  Layer.provide(PlainHttpPolicy.layer.pipe(Layer.provide(layerServerSettings))),
   Layer.provide(layerCommandReadiness),
   Layer.provide(ServerHttp.layerBrowserApiCors),
   Layer.provide(ServerHttp.layerHttpCompression),

@@ -87,7 +87,7 @@ export interface IssuedBearerSession {
 }
 
 // MCP client tokens are restricted to /mcp; HTTP API and WebSocket RPC would bypass their access cap.
-export const MCP_CLIENT_SUBJECT = "mcp-client";
+const MCP_CLIENT_SUBJECT = "mcp-client";
 /** A member's session for its cluster's main host. */
 export const CLUSTER_HOST_SUBJECT = "cluster-host";
 // Lasts until either side leaves; nothing renews it.

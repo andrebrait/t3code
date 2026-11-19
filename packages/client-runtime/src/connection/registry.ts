@@ -604,7 +604,6 @@ export const make = Effect.gen(function* () {
         }
         // Pairing a member directly saves it; the saved entry replaces the cluster one.
         const clustered = (yield* Ref.get(clusterMembers)).has(environmentId);
-        if (clustered) yield* forgetClusterMember(environmentId);
         const previous = clustered
           ? undefined
           : (yield* SubscriptionRef.get(entries)).get(environmentId);
@@ -624,6 +623,7 @@ export const make = Effect.gen(function* () {
           entry = next.entry;
         }
         yield* registrations.register(registration, persistedRoutes(entry));
+        if (clustered) yield* forgetClusterMember(environmentId);
         yield* Ref.update(persistedEnvironmentIds, (current) =>
           new Set(current).add(environmentId),
         );
@@ -698,6 +698,7 @@ export const make = Effect.gen(function* () {
             next.add(target.environmentId);
             return next;
           });
+          yield* forgetClusterMember(target.environmentId);
 
           // Secondary desktop-local backends (e.g. a parallel WSL backend) live
           // on their own loopback origin, so they authenticate with a bearer
@@ -925,7 +926,13 @@ export const make = Effect.gen(function* () {
       hostId === input.hostEnvironmentId && !listed.has(memberId) ? [memberId] : [],
     );
     for (const memberId of owned) {
-      yield* withLeaseLock(memberId, removeClusterMemberLocked(memberId));
+      yield* withLeaseLock(
+        memberId,
+        Effect.gen(function* () {
+          if ((yield* Ref.get(clusterMembers)).get(memberId) !== input.hostEnvironmentId) return;
+          yield* removeClusterMemberLocked(memberId);
+        }),
+      );
     }
     for (const member of input.members) {
       const environmentId = member.environmentId;
@@ -937,24 +944,44 @@ export const make = Effect.gen(function* () {
           if (owner === undefined ? previous !== undefined : owner !== input.hostEnvironmentId) {
             return;
           }
-          yield* Ref.update(clusterMembers, (current) =>
-            new Map(current).set(environmentId, input.hostEnvironmentId),
+          const target = new ClusterConnectionTarget({
+            environmentId,
+            label: member.label,
+            hostEnvironmentId: input.hostEnvironmentId,
+            hostLabel: input.hostLabel,
+            status: member.status,
+            statusDetail: member.lastError,
+          });
+          const next: ConnectionCatalogEntry = {
+            target,
+            profile: Option.none(),
+            enabled: previous?.enabled ?? true,
+            ...(previous === undefined ? {} : unsupportedState(previous)),
+          };
+          const lease = (yield* SubscriptionRef.get(serviceScopes)).get(environmentId);
+          if (previous === undefined || lease === undefined) {
+            yield* Ref.update(clusterMembers, (current) =>
+              new Map(current).set(environmentId, input.hostEnvironmentId),
+            );
+            return yield* installEntryLocked(next);
+          }
+          if (Equal.equals(previous, next)) return;
+          // The connection depends only on the member and host ids, so a label or status change
+          // updates the lease in place and keeps the member's session and streams.
+          yield* SubscriptionRef.update(serviceScopes, (current) =>
+            new Map(current).set(environmentId, { ...lease, entry: next }),
           );
-          yield* installEntryLocked(
-            {
-              target: new ClusterConnectionTarget({
-                environmentId,
-                label: member.label,
-                hostEnvironmentId: input.hostEnvironmentId,
-                hostLabel: input.hostLabel,
-                status: member.status,
-                statusDetail: member.lastError,
-              }),
-              profile: Option.none(),
-              enabled: previous?.enabled ?? true,
-            },
-            { retainEquivalentRuntime: true },
+          yield* SubscriptionRef.update(entries, (current) =>
+            new Map(current).set(environmentId, next),
           );
+          if (
+            next.enabled &&
+            target.status === "online" &&
+            previous.target._tag === "ClusterConnectionTarget" &&
+            previous.target.status !== "online"
+          ) {
+            yield* lease.supervisor.retryNow;
+          }
         }),
       );
     }

@@ -1,9 +1,12 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as ClusterService from "./ClusterService.ts";
 import { clusterDescriptor, FINGERPRINT, makeEnvironment } from "./ClusterService.testkit.ts";
 
 const box = clusterDescriptor("environment-box", "Box");
@@ -144,6 +147,7 @@ it.effect("rejoining from the same host rotates its token and keeps the join tim
       const first = yield* member.cluster.invite({});
       const joined = yield* member.cluster.acceptJoin({ code: first.code, host: studio }, bot);
       const before = yield* member.cluster.status;
+      yield* TestClock.adjust("1 hour");
       const second = yield* member.cluster.invite({});
       const rejoined = yield* member.cluster.acceptJoin({ code: second.code, host: studio }, bot);
 
@@ -157,6 +161,28 @@ it.effect("rejoining from the same host rotates its token and keeps the join tim
         ),
       ).toHaveLength(1);
       expect((yield* member.cluster.status).host?.joinedAt).toEqual(before.host?.joinedAt);
+    }),
+  ),
+);
+
+it.effect("a member that stopped between joining and revoking finishes on start", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const member = yield* makeEnvironment(box);
+      const pairing = yield* member.auth.issuePairingCredential();
+      yield* member.auth.exchangeBootstrapCredentialForAccessToken(pairing.credential, undefined, {
+        deviceType: "mobile",
+        ipAddress: "192.168.1.40",
+      });
+      yield* member.sql`
+        INSERT INTO cluster_membership (singleton, host_environment_id, host_label, joined_at, host_session_id)
+        VALUES (1, 'environment-studio', 'Studio', '2026-11-19T00:00:00.000Z', 'session-host')
+      `;
+
+      yield* Layer.build(
+        ClusterService.layer.pipe(Layer.provide(Layer.succeedContext(member.context))),
+      );
+      expect(yield* member.auth.listSessions()).toEqual([]);
     }),
   ),
 );

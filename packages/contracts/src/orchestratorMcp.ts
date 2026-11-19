@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import { AuthMcpClientAccess } from "./auth.ts";
+import { ClusterMemberStatus } from "./cluster.ts";
 import {
   ContextTransferId,
   EnvironmentId,
@@ -339,7 +340,7 @@ const OrchestratorMcpProjectTarget = Schema.optional(
 export const OrchestratorMcpEnvironmentTarget = Schema.optional(
   EnvironmentId.annotate({
     description:
-      "Linked environment to act in. Omit for this one. Ids are then that environment's.",
+      "Linked or cluster environment to act in. Omit for this one. Ids are then that environment's.",
   }),
 );
 
@@ -677,9 +678,21 @@ export const OrchestratorMcpEnvironmentLink = Schema.Struct({
 });
 export type OrchestratorMcpEnvironmentLink = typeof OrchestratorMcpEnvironmentLink.Type;
 
+export const OrchestratorMcpClusterEnvironment = Schema.Struct({
+  environmentId: EnvironmentId,
+  label: Schema.String,
+  role: Schema.Literals(["main-host", "member"]),
+  /** Whether the main host reached it lately. */
+  status: ClusterMemberStatus,
+  lastError: Schema.NullOr(Schema.String),
+});
+export type OrchestratorMcpClusterEnvironment = typeof OrchestratorMcpClusterEnvironment.Type;
+
 export const OrchestratorMcpEnvironmentLinksResult = Schema.Struct({
   environmentId: EnvironmentId,
   links: Schema.Array(OrchestratorMcpEnvironmentLink),
+  /** The rest of this environment's cluster, when it is in one; it then has no links. */
+  cluster: Schema.optionalKey(Schema.Array(OrchestratorMcpClusterEnvironment)),
   /** What to do when the machine the user means is not among `links`. */
   notListed: Schema.String,
 });

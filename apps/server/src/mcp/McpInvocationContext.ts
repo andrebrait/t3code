@@ -222,11 +222,18 @@ export const hiddenWithoutBackgroundWait = (): boolean => {
   );
 };
 
-/** `McpSchema.EnabledWhen` for tools that only serve links, hidden while the beta is off. */
+/** `McpSchema.EnabledWhen` for tools that make or forget links: hidden while the beta is off or in a cluster. */
 export const hiddenWhileLinksOff = (): boolean => {
   const fiber = Fiber.getCurrent();
   const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
-  return scope?.linkedEnvironments !== false;
+  return scope?.linkedEnvironments !== false && scope?.clustered !== true;
+};
+
+/** `McpSchema.EnabledWhen` for listing other environments: shown with links on, or in a cluster. */
+export const hiddenWithoutOtherEnvironments = (): boolean => {
+  const fiber = Fiber.getCurrent();
+  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
+  return scope?.linkedEnvironments !== false || scope?.clustered === true;
 };
 
 /** `McpSchema.EnabledWhen` for tools that act on the thread's forge, hidden where it has none. */

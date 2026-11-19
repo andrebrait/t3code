@@ -3,7 +3,8 @@ import {
   type ClusterStatus,
   type EnvironmentId,
   OrchestratorMcpFailure,
-  type OrchestratorMcpEnvironmentLinksResult,
+  OrchestratorMcpEnvironmentLinksResult,
+  type OrchestratorMcpClusterEnvironment,
   OrchestratorMcpThreadInterruptInput,
   OrchestratorMcpThreadInterruptResult,
   OrchestratorMcpThreadReadInput,
@@ -404,9 +405,77 @@ const make = Effect.gen(function* () {
   const NOT_LISTED =
     "Not listed: not linked yet. Call t3_environment_link with a hint from the user's words.";
 
+  const NOT_IN_CLUSTER =
+    "Not listed: this environment is in a cluster, which takes no links. The user adds machines on the main host, in Settings → Cluster.";
+
+  /** The rest of the cluster as agents here see it; a member asks its main host for the members. */
+  const clusterEnvironments = Effect.fn("PeerForwarding.clusterEnvironments")(function* (
+    scope: Scope,
+    state: ClusterStatus,
+    limits: PeerMcpClient.PeerCallLimits,
+    service: ClusterService.ClusterService["Service"],
+  ) {
+    if (state.role === "main") {
+      const members = Option.getOrElse(yield* Stream.runHead(service.members), () => []);
+      return members.map((member): OrchestratorMcpClusterEnvironment => ({
+        environmentId: member.environmentId,
+        label: member.label,
+        role: "member",
+        status: member.status,
+        lastError: member.lastError,
+      }));
+    }
+    const host = state.host;
+    if (host === null) return [];
+    const reached = yield* service
+      .hostCall({ tool: "t3_environment_links", arguments: {}, limits })
+      .pipe(
+        Effect.mapError(fromClusterError),
+        Effect.flatMap((answer) =>
+          PeerMcpClient.decodeToolResult(
+            answer,
+            OrchestratorMcpEnvironmentLinksResult,
+            `The cluster's main host "${host.label}"`,
+          ),
+        ),
+        Effect.flatMap(Effect.fromResult),
+        Effect.match({
+          onFailure: (failure) => ({
+            status: "offline" as const,
+            lastError: failure.message as string | null,
+            others: [] as ReadonlyArray<OrchestratorMcpClusterEnvironment>,
+          }),
+          onSuccess: (result) => ({
+            status: "online" as const,
+            lastError: null as string | null,
+            others: result.cluster ?? [],
+          }),
+        }),
+      );
+    return [
+      {
+        environmentId: host.environmentId,
+        label: host.label,
+        role: "main-host" as const,
+        status: reached.status,
+        lastError: reached.lastError,
+      },
+      ...reached.others.filter((other) => other.environmentId !== scope.environmentId),
+    ];
+  });
+
   const listLinks: PeerForwarding["Service"]["links"] = Effect.fn("PeerForwarding.listLinks")(
     function* (scope) {
-      yield* forwardingCaller(scope);
+      const { limits } = yield* forwardingCaller(scope);
+      const state = yield* clusterState;
+      if (state !== undefined && cluster !== undefined) {
+        return {
+          environmentId: scope.environmentId,
+          links: [],
+          cluster: yield* clusterEnvironments(scope, state, limits, cluster),
+          notListed: NOT_IN_CLUSTER,
+        };
+      }
       yield* requireEnabled;
       const listed = yield* links.list.pipe(Effect.mapError(linkStorageFailure));
       return {

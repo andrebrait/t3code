@@ -853,6 +853,27 @@ it.effect(
         });
         expect(failureOf(fenced)).toMatchObject({ code: "capability_denied" });
 
+        const listed = yield* a.callAs(
+          asClustered("thread:laptop-full"),
+          "t3_environment_links",
+          {},
+        );
+        expect(listed.structuredContent).toEqual({
+          environmentId: laptop.environmentId,
+          links: [],
+          cluster: [
+            {
+              environmentId: box.environmentId,
+              label: "Box",
+              role: "member",
+              status: "online",
+              lastError: null,
+            },
+          ],
+          notListed:
+            "Not listed: this environment is in a cluster, which takes no links. The user adds machines on the main host, in Settings → Cluster.",
+        });
+
         // Removed from the cluster: final, so a task there fails instead of retrying.
         expect(yield* a.forwarding.routeLabel(box.environmentId)).toEqual(Option.some("Box"));
         yield* Ref.set(members, []);
@@ -879,10 +900,42 @@ it.effect("a member reaches another member through the main host, which never lo
         { descriptor: box, url: b.url, token: yield* clusterHostToken(b.auth, "Studio") },
       ]);
       const main = yield* makeLaptopWith(layerRoutingMain(members), studio);
-      // The control link without its HTTP: ClusterService carries the same call and answer.
+      // The control link without its HTTP: ClusterService carries the same call and answer. Both
+      // hosts share this fiber, so the main host's own forwarding is pinned against the member's.
       const hostCall = (call: ClusterService.ClusterHostCall) =>
-        main.serveHost(laptopMember, { requestId: "link-request", ...call });
+        main
+          .serveHost(laptopMember, { requestId: "link-request", ...call })
+          .pipe(Effect.provideService(PeerForwarding.PeerForwarding, main.forwarding));
       const a = yield* makeLaptopWith(layerRoutingMember({ host: studio, hostCall }));
+
+      // The main host lists the calling member too; the member leaves itself out.
+      yield* Ref.update(members, (list) => [
+        ...list,
+        { descriptor: laptop, url: "http://127.0.0.1:1", token: "unused" },
+      ]);
+      const listed = yield* a.call("thread:laptop-full", "t3_environment_links", {});
+      expect(listed.structuredContent).toEqual({
+        environmentId: laptop.environmentId,
+        links: [],
+        cluster: [
+          {
+            environmentId: studio.environmentId,
+            label: "Studio",
+            role: "main-host",
+            status: "online",
+            lastError: null,
+          },
+          {
+            environmentId: box.environmentId,
+            label: "Box",
+            role: "member",
+            status: "online",
+            lastError: null,
+          },
+        ],
+        notListed:
+          "Not listed: this environment is in a cluster, which takes no links. The user adds machines on the main host, in Settings → Cluster.",
+      });
 
       const send = (caller: string, clientRequestId: string) =>
         a.call(caller, "t3_thread_send", {
@@ -979,6 +1032,18 @@ it.effect("a member hears why its main host cannot take a call", () =>
         code: "orchestration_error",
         message:
           'Cluster host unreachable: "Studio" is not connected, so other environments in the cluster cannot be reached. Work here continues.',
+      });
+      const listed = yield* a.call("thread:laptop-full", "t3_environment_links", {});
+      expect(listed.structuredContent).toMatchObject({
+        cluster: [
+          {
+            environmentId: studio.environmentId,
+            role: "main-host",
+            status: "offline",
+            lastError:
+              'Cluster host unreachable: "Studio" is not connected, so other environments in the cluster cannot be reached. Work here continues.',
+          },
+        ],
       });
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),

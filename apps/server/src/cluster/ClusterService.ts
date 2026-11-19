@@ -22,8 +22,8 @@ import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import * as PeerLinks from "../peer/PeerLinks.ts";
 import { CLUSTER_MEMBER_PAIRING_SUBJECT } from "../persistence/AuthPairingLinks.ts";
 import type * as ManagedLimits from "../policy/managedLimits.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -84,7 +84,7 @@ const make = Effect.gen(function* () {
   const auth = yield* EnvironmentAuth.EnvironmentAuth;
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
-  const peerLinks = yield* PeerLinks.PeerLinks;
+  const secrets = yield* ServerSecretStore.ServerSecretStore;
   const tls = yield* ServerTls.ServerTls;
   const role = yield* ClusterRole.ClusterRole;
   // One join or leave at a time, so two hosts racing for this member cannot both win.
@@ -157,17 +157,17 @@ const make = Effect.gen(function* () {
     },
   );
 
-  /** Revokes every session but the host's and this machine's, every unspent code and peer link. */
+  /** Revokes every session but the host's and this machine's, and every unspent code. */
   const keepOnlyHostAndLoopback = Effect.fn("ClusterService.keepOnlyHostAndLoopback")(function* (
     hostSessionId: AuthSessionId,
   ) {
+    // Loopback MCP sessions stay; peer-link ones are refused at /mcp once clustered.
     const sessions = yield* auth.listSessions();
     const revoked = sessions.filter(
       (session) =>
         session.sessionId !== hostSessionId &&
         (session.subject === EnvironmentAuth.CLUSTER_HOST_SUBJECT ||
           session.subject === EnvironmentAuth.CLOUD_CONNECT_SUBJECT ||
-          session.subject === EnvironmentAuth.MCP_CLIENT_SUBJECT ||
           !isLoopbackClient(session.client.ipAddress)),
     );
     yield* Effect.forEach(revoked, (session) => auth.revokeSession(session.sessionId), {
@@ -175,7 +175,6 @@ const make = Effect.gen(function* () {
     });
     const links = yield* auth.listPairingLinks({ excludeSubjects: [], includePurposeBound: true });
     yield* Effect.forEach(links, (link) => auth.revokePairingLink(link.id), { discard: true });
-    yield* peerLinks.unlinkAll;
   }, Effect.mapError(storageError));
 
   const acceptJoin: ClusterService["Service"]["acceptJoin"] = Effect.fn(
@@ -183,54 +182,73 @@ const make = Effect.gen(function* () {
   )(
     function* (input, client) {
       const self = yield* environment.getDescriptor;
-      if (input.host.environmentId === self.environmentId) {
-        return yield* new ClusterError({
-          reason: "self",
-          message: "An environment cannot join its own cluster.",
-        });
-      }
-      const state = yield* role.current;
-      if (state.role === "main") {
-        return yield* new ClusterError({
-          reason: "is_main_host",
-          message: "This environment is the main host of a cluster, so it cannot join another.",
-        });
-      }
-      if (state.role === "member" && state.hostEnvironmentId !== input.host.environmentId) {
-        return yield* new ClusterError({
-          reason: "is_member",
-          message: `This environment is already a member of the cluster hosted by ${state.hostLabel}. Leave it there first.`,
-        });
-      }
-      const previous = yield* readMembership;
-      const session = yield* auth
-        .consumeClusterInvite(input.code, { hostLabel: input.host.label, client })
+      // One transaction: a refusal or failure rolls back the spent invite and every revocation.
+      const joined = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            // The code is checked first, so an unauthenticated caller learns nothing about the role.
+            const session = yield* auth
+              .consumeClusterInvite(input.code, { hostLabel: input.host.label, client })
+              .pipe(
+                Effect.mapError((cause) =>
+                  EnvironmentAuth.isServerAuthInternalError(cause)
+                    ? storageError(cause)
+                    : new ClusterError({
+                        reason: "pairing_rejected",
+                        message:
+                          "That cluster invite is unknown, expired, or already used. Create a new one on the member.",
+                      }),
+                ),
+              );
+            if (input.host.environmentId === self.environmentId) {
+              return yield* new ClusterError({
+                reason: "self",
+                message: "An environment cannot join its own cluster.",
+              });
+            }
+            const state = yield* role.current;
+            if (state.role === "main") {
+              return yield* new ClusterError({
+                reason: "is_main_host",
+                message:
+                  "This environment is the main host of a cluster, so it cannot join another.",
+              });
+            }
+            if (state.role === "member" && state.hostEnvironmentId !== input.host.environmentId) {
+              return yield* new ClusterError({
+                reason: "is_member",
+                message: `This environment is already a member of the cluster hosted by ${state.hostLabel}. Leave it there first.`,
+              });
+            }
+            const now = DateTime.formatIso(yield* DateTime.now);
+            yield* sql`
+            INSERT INTO cluster_membership (singleton, host_environment_id, host_label, joined_at, host_session_id)
+            VALUES (1, ${input.host.environmentId}, ${input.host.label}, ${now}, ${session.sessionId})
+            ON CONFLICT (singleton) DO UPDATE SET
+              host_label = excluded.host_label,
+              host_session_id = excluded.host_session_id
+          `.pipe(Effect.mapError(storageError));
+            yield* keepOnlyHostAndLoopback(session.sessionId);
+            // PeerLinks' own rows, deleted here to share the transaction; secrets go after commit.
+            const unlinked = yield* sql<{ secret_name: string }>`
+            DELETE FROM peer_environment_links RETURNING secret_name
+          `.pipe(Effect.mapError(storageError));
+            return { session, unlinked };
+          }),
+        )
         .pipe(
-          Effect.mapError((cause) =>
-            EnvironmentAuth.isServerAuthInternalError(cause)
-              ? storageError(cause)
-              : new ClusterError({
-                  reason: "pairing_rejected",
-                  message:
-                    "That cluster invite is unknown, expired, or already used. Create a new one on the member.",
-                }),
-          ),
+          Effect.mapError((cause) => (cause._tag === "ClusterError" ? cause : storageError(cause))),
         );
-      yield* Effect.gen(function* () {
-        const joinedAt = previous?.joined_at ?? DateTime.formatIso(yield* DateTime.now);
-        yield* sql`
-          INSERT INTO cluster_membership (singleton, host_environment_id, host_label, joined_at, host_session_id)
-          VALUES (1, ${input.host.environmentId}, ${input.host.label}, ${joinedAt}, ${session.sessionId})
-          ON CONFLICT (singleton) DO UPDATE SET
-            host_label = excluded.host_label,
-            host_session_id = excluded.host_session_id
-        `;
+      yield* Effect.forEach(joined.unlinked, (row) => secrets.remove(row.secret_name), {
+        discard: true,
       }).pipe(
-        Effect.mapError(storageError),
-        Effect.onError(() => auth.revokeSession(session.sessionId).pipe(Effect.ignore)),
+        Effect.catch((cause) =>
+          Effect.logWarning("Could not remove a peer link's secret after joining a cluster.", {
+            cause,
+          }),
+        ),
       );
-      yield* keepOnlyHostAndLoopback(session.sessionId);
-      return { environmentId: self.environmentId, label: self.label, token: session.token };
+      return { environmentId: self.environmentId, label: self.label, token: joined.session.token };
     },
     (effect) => memberLock.withPermits(1)(effect),
   );

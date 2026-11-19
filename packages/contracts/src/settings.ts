@@ -1134,6 +1134,9 @@ export type BackgroundActivitySettings = typeof BackgroundActivitySettings.Type;
 export const ResponseStreamingMode = Schema.Literals(["turn", "paragraph"]);
 export type ResponseStreamingMode = typeof ResponseStreamingMode.Type;
 
+export const NetworkPlainHttp = Schema.Literals(["allow", "redirect"]);
+export type NetworkPlainHttp = typeof NetworkPlainHttp.Type;
+
 const StorageRetentionDays = Schema.NullOr(
   Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 3650 })),
 );
@@ -1393,6 +1396,10 @@ export const ServerSettings = Schema.Struct({
   /** New T3 Connect device keys wait for approval from someone already trusted here. */
   requireConnectDeviceApproval: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
+  /** Loopback and Tailscale peers are exempt; see apps/server/src/tls/plainHttpPolicy.ts. */
+  networkPlainHttp: NetworkPlainHttp.pipe(
+    Schema.withDecodingDefault(Effect.succeed("allow" as const)),
   ),
 
   enableAgentBrowserAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -1859,6 +1866,7 @@ export const ServerSettingsPatch = Schema.Struct({
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   keepAwakeWhileAgentsWork: Schema.optionalKey(Schema.Boolean),
   requireConnectDeviceApproval: Schema.optionalKey(Schema.Boolean),
+  networkPlainHttp: Schema.optionalKey(NetworkPlainHttp),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   enablePreviewTunnel: Schema.optionalKey(Schema.Boolean),
   cloudSpeechCredentials: Schema.optionalKey(
@@ -2009,7 +2017,11 @@ export function requiredScopesForServerSettingsPatch(
   let changesAccess = false;
   for (const [key, value] of Object.entries(patch)) {
     if (value === undefined) continue;
-    if (key === "requireConnectDeviceApproval" || key === "enablePreviewTunnel") {
+    if (
+      key === "requireConnectDeviceApproval" ||
+      key === "enablePreviewTunnel" ||
+      key === "networkPlainHttp"
+    ) {
       changesAccess = true;
     } else if (
       key === "providers" ||

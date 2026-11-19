@@ -1466,7 +1466,8 @@ export function clusterMemberStatusText(
     case "online":
       return resolve(msg("Online", { $context: "cluster member status" }));
     case "offline":
-      return member.lastError ?? resolve(msg("Not answering {host}.", { host: hostLabel }));
+      // A just-added member is offline with no error until its control link first connects.
+      return member.lastError ?? resolve(msg("Connecting…", { $context: "cluster member status" }));
     case "incompatible":
       return resolve(
         msg("Runs a T3 Code version {host} cannot drive. Update both to the same version.", {
@@ -2875,7 +2876,7 @@ Start a new thread in one of the member's projects from the main host's web clie
 
 - [ ] **Step 7: Offline and back**
 
-Stop the member's dev server task. Expected within one probe round (30 s): the member row dims with "Not answering …" or the proxy's reason, and the member environment shows reconnecting. Start it again; it returns online and the thread view resumes.
+Stop the member's dev server task. Expected within a few seconds: the member row dims with "Its control link dropped. Reconnecting.", and the member environment shows reconnecting. Start it again; within the reconnect backoff (at most 30 s) it returns online and the thread view resumes.
 
 - [ ] **Step 8: Leave and confirm standalone**
 

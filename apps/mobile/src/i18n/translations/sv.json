@@ -2017,6 +2017,8 @@
     },
     " för att lägga till en."
   ],
+  "cfb2012b55e366b1": "Omdirigera nätverks-HTTP till HTTPS",
+  "dc4b9f5deee96212": "Webbläsare i ditt nätverk byter till HTTPS, och appar i ditt nätverk måste använda det. Den här enheten, Tailscale och T3 Connect påverkas inte.",
   "9d7fb2ec72ce9693": "Av",
   "d92a43b7bf4c24c8": "Behåll versionshanteringsbegäranden i den här miljön.",
   "2763012f6869f8d0": "Läs PR",

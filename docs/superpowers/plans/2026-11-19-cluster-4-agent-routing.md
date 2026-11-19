@@ -2,26 +2,28 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Agents on any environment in a cluster can act on any other through the main host. On the main host, a tool call that names a member goes to that member's `/mcp`. On a member, a tool call that names another environment goes to the main host's `/mcp`, which sends it on. Remote `delegate_task` works the same way, including after a restart. Cluster calls are full trust: no link fence applies to them.
+**Goal:** Agents on any environment in a cluster can act on any other through the main host. On the main host, a tool call that names a member goes to that member's `/mcp`. On a member, a tool call that names another environment rides the member's control link to the main host, which runs it and answers. Remote `delegate_task` works the same way, including after a restart. Cluster calls are full trust: no link fence applies to them.
 
-**Architecture:** There is one seam: `PeerForwarding`. Before a forwarded call leaves, `PeerForwarding.clusterRoute` asks `ClusterService` where this environment sits. On a standalone environment the call goes over a peer link, as it does today. On a main host the call goes to the member, using `ClusterService.connect(memberId)` and its `cluster-host` token. On a member the call goes to the main host, using the new `ClusterService.connectHost` and the `cluster-member` token from the join. In that case the call keeps its `environmentId`, so the main host can send it on. `PeerMcpClient.call` gains an optional `route` (origin, token, HTTP client, messages), so cluster calls reuse its session handling, `T3-Mode-Limit`, `T3-Sender-Thread` and 404 renewal. `RemoteDelegation` and the MCP toolkits need no changes: they already go through `PeerForwarding`. The `cluster-member` credential is a new `EnvironmentAuth` subject that works only on `/mcp`. `addMember` mints it and `removeMember` revokes it.
+**Architecture:** There is one seam: `PeerForwarding`. Before a forwarded call leaves, `PeerForwarding.clusterRoute` asks `ClusterService` where this environment sits. On a standalone environment the call goes over a peer link, as it does today. On a main host the call goes to the member's `/mcp`, using `ClusterService.connect(memberId)` and its `cluster-host` token; `PeerMcpClient.call` gains an optional `route` for that, so cluster calls reuse its session handling, `T3-Mode-Limit`, `T3-Sender-Thread` and 404 renewal. On a member the call keeps its `environmentId` (unless it names the main host) and goes to `ClusterService.hostCall`, which Plan 2 puts on the member's `cluster.hostChannel`. The main host's link fiber hands it to `ClusterHostRequests.make`'s `serve`, which runs it with the main host's own `/mcp` tools as that member's client (`cluster: true`, `clusterMember`, the agent's modes and sender). A tool that names another member forwards there through the same `PeerForwarding`; one that names none runs on the main host. Its result goes back with `cluster.hostReply`, and the member reads it with the same `PeerMcpClient.decodeToolResult` that reads `/mcp` answers. `RemoteDelegation` and the MCP toolkits need no routing changes: they already go through `PeerForwarding`. No member-to-main credential or address exists.
 
-**Tech Stack:** Effect 4 services (`Context.Service`, `Effect.fn`), `effect/sql` SQLite, `effect/http` client, `effect/ai` MCP toolkits, `@effect/vitest` (`it.effect`, `TestClock`), the evals in `evals/mcp-tool-use`.
+**Tech Stack:** Effect 4 services (`Context.Service`, `Effect.fn`), `effect/http` client, `effect/ai` MCP server and toolkits, `@effect/vitest` (`it.effect`, `TestClock`), the evals in `evals/mcp-tool-use`.
 
-**Spec:** `docs/superpowers/specs/2026-11-19-environment-cluster-design.md` ("Agents"). This plan builds on `docs/superpowers/plans/2026-11-19-cluster-2-server-core.md` and uses the names that plan produces for Plan 4.
+**Spec:** `docs/superpowers/specs/2026-11-19-environment-cluster-design.md` ("Control link", "Agents"). This plan builds on `docs/superpowers/plans/2026-11-19-cluster-2-server-core.md` and uses the names that plan produces for Plan 4.
 
 ## Global Constraints
 
 Copied word for word from the spec. Every task follows them.
 
 - "On the main host, MCP tools with an `environmentId` target forward to the member's `/mcp` using the `cluster-host` credential."
-- "Each member receives a `cluster-member` MCP credential for the main host at join time. A member agent targeting another member calls the main host's `/mcp`, which forwards. All cross-member traffic hairpins through the main host."
+- "A member agent targeting another environment puts the call on `cluster.hostChannel`; the main host runs it (forwarding to the target member) and replies. All cross-member traffic hairpins through the main host. No separate member-to-main credential exists."
+- "Requests queued while the link is down fail with "cluster host unreachable" and are never delivered twice."
+- "Members never need an address for the main host. Calls from a member to the main host ride the link in reverse: the member exposes a `cluster.hostChannel` subscription carrying requests, and the main host answers each with `cluster.hostReply(requestId, result)`."
 - "The existing forwarded-wait limits (≤ 50 s) apply."
 - "**Members fully trust the main host.**"
 - "**Cluster is separate from peer links.** Any clustered environment (main host or member) takes no part in peer links in either direction."
-- "**Dial-in only.** The main host always initiates." Cross-member agent traffic is the one case where a member dials the main host, and it happens only because the spec's Agents section requires it.
+- "**Dial-in only.** The main host always initiates."
 - "main host down | clients lose all members; member agents get "cluster host unreachable" on cross-member tools; local work continues"
-- "New auth subjects: `cluster-host` (member side) and `cluster-member` (MCP on the main host)."
+- "New auth subject: `cluster-host` (member side)."
 - "Labs setting `clusterEnabled`, default false, gating both sides."
 - Repo rules (AGENTS.md):
   - Reusable functions use `Effect.fn("Service.op")`.
@@ -37,302 +39,58 @@ Copied word for word from the spec. Every task follows them.
 
 **Consumed from Plan 2.** These names are used exactly as given:
 
-- `EnvironmentAuth.CLUSTER_HOST_SUBJECT` (`"cluster-host"`) and the private `CLUSTER_HOST_SESSION_TTL`.
-- `EnvironmentAuth.MCP_CLIENT_SUBJECT` and `EnvironmentAuth.consumeClusterInvite`.
-- `AuthPairingLinks.CLUSTER_MEMBER_PAIRING_SUBJECT`.
+- `EnvironmentAuth.CLUSTER_HOST_SUBJECT` (`"cluster-host"`), `EnvironmentAuth.consumeClusterInvite`, and `McpClientSession.cluster` (`true` for a `cluster-host` session on `/mcp`).
+- `AuthPairingLinks.CLUSTER_MEMBER_PAIRING_SUBJECT` (the pairing-code kind for invites).
 - `CLUSTER_SCOPES_HEADER`. Plan 4 never sends it, because `/mcp` caps by `T3-Mode-Limit`.
 - `ClusterService.connect(memberId): Effect<MemberConnection, ClusterError>` with `MemberConnection = { upstream: ClusterUpstream.Upstream; token: string; member: ClusterMember }` and `Upstream = { origin; httpClient; webSocket }`.
-- `ClusterService.status`, `members`, `probe`, `addMember`, `removeMember` and `acceptJoin`.
-- `ClusterUpstream.connect`, which allows loopback `http:` and otherwise needs `https:` with a pin.
-- `ClusterJoinRequest.hostMcp?: { url; token }`, stored in `cluster_membership.host_mcp_url` and in the secret named by `cluster_membership.host_mcp_secret_name`.
-- Testkit: `ClusterService.testkit.ts` (`clusterDescriptor`, `FINGERPRINT`, `makeEnvironment`, `serveMember`, `layerClusterEnvironment`).
+- `ClusterService.status`, `members`, `addMember`, `removeMember`.
+- The control link (Plan 2 Task 8): `ClusterService.hostCall(call: ClusterHostCall): Effect<ClusterHostResult, ClusterError>`, `ClusterService.start(serve: ClusterHostServe)`, types `ClusterHostCall` and `ClusterHostServe`, `clusterHostUnreachable(hostLabel)`, `refuseHostRequests` (which `server.ts` passes to `start` until this plan), and contracts `ClusterHostRequest`, `ClusterHostResult`.
+- `server.ts` builds `ClusterService` inside the `PeerForwarding` provide, so `PeerForwarding` reads it with `Effect.serviceOption`.
+- Testkit: `ClusterService.testkit.ts` (`clusterDescriptor`, `FINGERPRINT`, `makeEnvironment`, `serveMember`, `layerClusterEnvironment`, `awaitStatus`).
 - The `clustered` effect that Plan 2 Task 4 adds inside `McpHttpServer.makeMcpAuthMiddleware`.
 
 **Produced here:**
 
-- `EnvironmentAuth.CLUSTER_MEMBER_SUBJECT` (`"cluster-member"`).
-- `EnvironmentAuth.issueClusterMemberSession({ label, client }): Effect<{ sessionId; token }, ServerAuthInternalError>`.
-- `McpClientSession.cluster` and `McpClientCaller.cluster`.
-- `McpInvocationScope.clustered`.
-- `PeerMcpClient.McpRoute` and the optional `PeerMcpClient.call({ route })`.
-- `ClusterService.connectHost: Effect<HostConnection, ClusterError>` and `ClusterService.memberOfSession(sessionId): Effect<Option<EnvironmentId>>`.
-- `ClusterJoinRequest.hostMcp.certSha256?` and `ClusterError.reason` `"no_host_mcp"`.
+- `McpClientCaller.cluster` and `McpClientCaller.clusterMember`; `McpInvocationScope.clustered`.
+- `PeerMcpClient.McpRoute`, the optional `PeerMcpClient.call({ route })`, and `PeerMcpClient.decodeToolResult`.
+- `ClusterHostRequests.make(environmentId): Effect<ClusterHostServe, never, McpServer | ServerSettingsService>` (`apps/server/src/mcp/ClusterHostRequests.ts`).
 - `PeerForwarding.routeLabel(environmentId)`.
 - `OrchestratorMcpClusterEnvironment` and `OrchestratorMcpEnvironmentLinksResult.cluster?`.
-- Migration `100_ClusterMcp`, which adds `cluster_members.mcp_session_id` and `cluster_membership.host_mcp_cert_sha256`.
-- Testkit helpers: `MAIN_LAN_URL`, `RoutedEnvironment`, `layerRoutingMain`, `layerRoutingMember` and `clusterHostToken`.
+- `McpInvocationContext.hiddenWithoutOtherEnvironments`.
+- Testkit helpers: `RoutedEnvironment`, `layerRoutingMain`, `layerRoutingMember` and `clusterHostToken`.
 
 ## Review Focus
 
 These are the failure modes most likely to cause trouble without a test. Each one has a test in the task that owns it:
 
-1. **A member's call loops back through the main host.** A call that the main host sends on never carries `environmentId`, so it cannot bounce by construction. A buggy or hostile caller could still name an environment on a call that arrived over the cluster. The main host refuses a member that names itself. A member refuses any call from its main host that names another environment. Test: Task 4, "a member reaches another member through the main host, which never loops".
-2. **A member is removed while a delegated task runs there.** `connect` then fails with `unknown_member`, which maps to `capability_denied`. `RemoteDelegation.isFinal` treats that as final, so the task fails and says why instead of retrying forever. Tests: Task 4, "an agent on a cluster's main host works on a member's threads without links, unfenced" (the final step), and Task 5, "a task delegated to a removed cluster member fails and says why".
-3. **The main host restarts during a forwarded wait.** The member's wait fails with a transport error. That maps to `orchestration_error`, which is not final, so the follower retries. On the next call the restarted main host answers 404 for the old MCP session, and the client opens a new one. Tests: Task 2, "calls a cluster route with its own client and token, renews it after a restart, and names it when it is down", and Task 4, "a member whose main host is down hears that the cluster host is unreachable".
-4. **Idempotency keys across the hairpin.** Each hop hashes `clientRequestId` with its caller's namespace. A retry from one agent reaches the target member with the same key. The same key from another agent, or from another member, does not. Test: Task 4, "a member reaches another member through the main host, which never loops".
-5. **A member that joined without a cluster MCP credential.** This covers a member that joined before Plan 4 and a main host with no plain network address. `host_mcp_url` is then `NULL`. Agents must hear a clear way out, not a storage error or a hang. Test: Task 3, "a member added without a route to its main host's tools says how to get one".
+1. **A member's call loops back through the main host.** A call that the main host sends on to a member never carries `environmentId`, so it cannot bounce by construction. A buggy or hostile caller could still name an environment on a call that arrived over the cluster. The main host refuses a member's call that names that member itself. A member refuses any call from its main host that names another environment. Test: Task 2, "a member reaches another member through the main host, which never loops".
+2. **A member is removed while a delegated task runs there.** `connect` then fails with `unknown_member`, which maps to `capability_denied`. `RemoteDelegation.isFinal` treats that as final, so the task fails and says why instead of retrying forever. Tests: Task 2, "an agent on a cluster's main host works on a member's threads without links, unfenced" (the final step), and Task 3, "a task delegated to a removed cluster member fails and says why".
+3. **The main host restarts, or the link drops, during a forwarded wait.** The member's `hostCall` fails at once with "cluster host unreachable" (Plan 2 Task 8 pins the link side). That maps to `orchestration_error`, which is not final, so a follower retries until the link is back. Test: Task 2, "a member whose main host is down hears that the cluster host is unreachable".
+4. **Idempotency keys across the hairpin.** Each hop hashes `clientRequestId` with its caller's namespace: the member with its agent's, the main host with `cluster-member:<memberId>`. A retry from one agent reaches the target member with the same key. The same key from another agent, or from another member, does not. Test: Task 2, "a member reaches another member through the main host, which never loops".
+5. **A call that ran although its member heard "unreachable".** The link can drop after the main host forwarded a send but before the reply. The member's agent retries with the same `clientRequestId`, and the target runs it once. Plan 2 Task 8 pins that the link never resends; this plan's idempotency test (item 4) pins that the retry lands on the same key.
+6. **A member's call that names the main host.** It must run on the main host itself, as that member's full-trust client narrowed to the agent's modes, and not go anywhere else. Test: Task 4, "a member reaches another member through the main host, which never loops" (the member's `t3_environment_links` runs on the main host, which lists the cluster for it).
 
 ## File Map
 
 Create:
 
-- `apps/server/src/persistence/Migrations/100_ClusterMcp.ts`
+- `apps/server/src/mcp/ClusterHostRequests.ts`
 
 Modify:
 
-- `packages/contracts/src/{cluster,orchestratorMcp}.ts`
-- `apps/server/src/auth/{EnvironmentAuth,EnvironmentAuth.test,McpOAuth}.ts`
+- `packages/contracts/src/orchestratorMcp.ts`
+- `apps/server/src/auth/McpOAuth.ts`
 - `apps/server/src/mcp/{McpInvocationContext,McpHttpServer,McpToolAccess}.ts`
 - `apps/server/src/mcp/toolkits/orchestrator/tools.ts`
 - `apps/server/src/peer/{PeerMcpClient,PeerMcpClient.test,PeerForwarding,PeerForwarding.test,RemoteDelegation,RemoteDelegation.test}.ts`
-- `apps/server/src/cluster/{ClusterService,ClusterService.test,ClusterService.testkit}.ts`
-- `apps/server/src/persistence/{Migrations,reconcileV2PreviewMigration.test}.ts`
+- `apps/server/src/cluster/ClusterService.testkit.ts`
 - `apps/server/src/server.ts`
 - `evals/mcp-tool-use/cases/orchestration.ndjson`
 - `docs/internals/environment-auth.md`
 
 ---
 
-## Task 1: `cluster-member` MCP credential and cluster callers
-
-**Files:**
-
-- Modify: `apps/server/src/auth/EnvironmentAuth.ts`:
-  - constants after Plan 2's `CLUSTER_HOST_SESSION_TTL` (Plan 2 replaces `:85`)
-  - `McpClientSession` (`:88-94`)
-  - the interface beside `issueMcpClientSession` (`:614-626`)
-  - `rejectMcpClientAudience` (`:681-688`)
-  - `authenticateMcpClient` (`:1531-1554`, as Plan 2 Task 3 leaves it)
-  - after `issueMcpClientSession` (`:1556-1575`)
-  - the returned service (`:1610-1638`)
-- Modify: `apps/server/src/mcp/McpInvocationContext.ts`:
-  - `McpClientCaller` (`:36-54`)
-  - `McpInvocationScope` (`:136-150`)
-- Modify: `apps/server/src/auth/McpOAuth.ts:625-631` (client caller)
-- Modify: `apps/server/src/mcp/McpHttpServer.ts`:
-  - `withSenderThread` (`:236-260`)
-  - the admitted scope (`:313`)
-- Test: `apps/server/src/auth/EnvironmentAuth.test.ts`. Extend the Plan 2 test "accepts a cluster invite only as a cluster invite…" and add one test beside it.
-
-**Interfaces:**
-
-- Consumes: `CLUSTER_HOST_SUBJECT`, `CLUSTER_HOST_SESSION_TTL`, `mcpClientScopes` and `sessions.issue` (`EnvironmentAuth.ts`). Also the Plan 2 `clustered` effect in `makeMcpAuthMiddleware`.
-- Produces:
-  - `CLUSTER_MEMBER_SUBJECT`.
-  - `issueClusterMemberSession`.
-  - `McpClientSession.cluster?: boolean`. It is `true` for `cluster-host` (member side) and `cluster-member` (main side).
-  - `McpClientCaller.cluster?: boolean`.
-  - `McpInvocationScope.clustered?: boolean`.
-  - `T3-Sender-Thread` is read from cluster callers as well as linked ones.
-
-- [ ] **Step 1: Write the failing tests**
-
-In `apps/server/src/auth/EnvironmentAuth.test.ts`, in Plan 2's test "accepts a cluster invite only as a cluster invite…", change the last assertion to:
-
-```ts
-        expect(yield* serverAuth.authenticateMcpClient(makeBearerRequest(host.token))).toMatchObject(
-          { access: "full-access", peerLink: false, cluster: true },
-        );
-```
-
-Directly after that test, add:
-
-```ts
-    it.effect("a cluster-member session works only on /mcp, as full access over the cluster", () =>
-      Effect.gen(function* () {
-        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
-        const member = yield* serverAuth.issueClusterMemberSession({
-          label: "Cluster member · Box",
-          client: requestMetadata,
-        });
-        expect(yield* serverAuth.authenticateMcpClient(makeBearerRequest(member.token))).toEqual({
-          sessionId: member.sessionId,
-          label: "Cluster member · Box",
-          access: "full-access",
-          peerLink: false,
-          cluster: true,
-        });
-        const outsideMcp = yield* serverAuth
-          .authenticateHttpRequest(makeBearerRequest(member.token))
-          .pipe(Effect.flip);
-        expect(outsideMcp._tag).toBe("ServerAuthInvalidCredentialError");
-        expect(
-          (yield* serverAuth.listSessions()).find((listed) => listed.sessionId === member.sessionId)
-            ?.subject,
-        ).toBe(EnvironmentAuth.CLUSTER_MEMBER_SUBJECT);
-
-        yield* serverAuth.revokeSession(member.sessionId);
-        const revoked = yield* serverAuth
-          .authenticateMcpClient(makeBearerRequest(member.token))
-          .pipe(Effect.flip);
-        expect(revoked._tag).toBe("ServerAuthInvalidCredentialError");
-      }).pipe(Effect.provide(layerEnvironmentAuth())),
-    );
-```
-
-- [ ] **Step 2: Run the tests to verify they fail**
-
-Run: `vp test run apps/server/src/auth/EnvironmentAuth.test.ts`
-
-Expected: FAIL. The new test fails with `serverAuth.issueClusterMemberSession is not a function`. The extended test fails because the received object has no `cluster`.
-
-- [ ] **Step 3: Implement**
-
-`apps/server/src/auth/EnvironmentAuth.ts`. Add this below `CLUSTER_HOST_SESSION_TTL`:
-
-```ts
-/** A cluster member's agents on its main host's `/mcp`, and nowhere else. */
-export const CLUSTER_MEMBER_SUBJECT = "cluster-member";
-```
-
-In `McpClientSession`, add:
-
-```ts
-  /** A cluster link: the main host on a member, or a member's agents on the main host. */
-  readonly cluster?: boolean;
-```
-
-In the `EnvironmentAuth` interface, below `issueMcpClientSession`, add:
-
-```ts
-    /** The `cluster-member` token a main host hands a member at join; it works only on `/mcp`. */
-    readonly issueClusterMemberSession: (input: {
-      readonly label: string;
-      readonly client: AuthClientMetadata;
-    }) => Effect.Effect<
-      { readonly sessionId: AuthSessionId; readonly token: string },
-      ServerAuthInternalError
-    >;
-```
-
-Replace `rejectMcpClientAudience`:
-
-```ts
-const rejectMcpClientAudience = <S extends { readonly subject: string }>(session: S) =>
-  session.subject === MCP_CLIENT_SUBJECT || session.subject === CLUSTER_MEMBER_SUBJECT
-    ? Effect.fail(
-        new ServerAuthInvalidCredentialError({
-          diagnostic: "MCP client sessions are only accepted by the MCP endpoint.",
-        }),
-      ).pipe(Effect.tap(() => Effect.logWarning("Rejected an MCP client session outside /mcp.")))
-    : Effect.succeed(session);
-```
-
-In `authenticateMcpClient`, replace the `cluster-host` branch that Plan 2 added:
-
-```ts
-          : session.method === "bearer-access-token" &&
-              (session.subject === CLUSTER_HOST_SUBJECT ||
-                session.subject === CLUSTER_MEMBER_SUBJECT)
-            ? Effect.succeed({
-                sessionId: session.sessionId,
-                label:
-                  session.client.label ??
-                  (session.subject === CLUSTER_HOST_SUBJECT ? "Cluster host" : "Cluster member"),
-                access: "full-access",
-                peerLink: false,
-                cluster: true,
-              } satisfies McpClientSession)
-```
-
-Add this after `issueMcpClientSession`:
-
-```ts
-  const issueClusterMemberSession: EnvironmentAuth["Service"]["issueClusterMemberSession"] = (
-    input,
-  ) =>
-    sessions
-      .issue({
-        subject: CLUSTER_MEMBER_SUBJECT,
-        method: "bearer-access-token",
-        scopes: mcpClientScopes("full-access"),
-        ttl: CLUSTER_HOST_SESSION_TTL,
-        client: { ...input.client, label: input.label, deviceType: "bot" },
-      })
-      .pipe(
-        Effect.map((issued) => ({ sessionId: issued.sessionId, token: issued.token })),
-        Effect.mapError((cause) => new ServerAuthSessionTokenIssueError({ cause })),
-        Effect.withSpan("EnvironmentAuth.issueClusterMemberSession"),
-      );
-```
-
-Add `issueClusterMemberSession,` to the returned `EnvironmentAuth.of({ … })` after `issueMcpClientSession,`.
-
-`apps/server/src/mcp/McpInvocationContext.ts`. In `McpClientCaller`, after `linked`, add:
-
-```ts
-  /**
-   * Came over a cluster link: the main host on a member, or a member's agent on the main
-   * host. Cluster traffic is full trust, so nothing it starts is fenced (`linkOrigin.ts`).
-   */
-  readonly cluster?: boolean | undefined;
-```
-
-In `McpInvocationScope`, after `linkedEnvironments`, add:
-
-```ts
-  /** True while this environment is in a cluster; `/mcp` reads it per request. */
-  readonly clustered?: boolean;
-```
-
-`apps/server/src/auth/McpOAuth.ts`. Replace the `client:` object in `layerMcpClientAuthenticator`:
-
-```ts
-                  client: {
-                    sessionId: client.sessionId,
-                    label: client.label,
-                    access: client.access,
-                    linked: client.peerLink,
-                    ...(client.cluster === true ? { cluster: true } : {}),
-                    // Another T3 Code environment renders t3-thread links itself.
-                    ...(client.peerLink || client.cluster === true ? {} : { hostedAppUrl }),
-                  },
-```
-
-`apps/server/src/mcp/McpHttpServer.ts`. Change the doc comment and guard in `withSenderThread`:
-
-```ts
-/** Records the thread another T3 Code environment calls for; a malformed header only loses the name. */
-const withSenderThread = (
-  invocation: McpInvocationContext.McpInvocationScope,
-  request: HttpServerRequest.HttpServerRequest,
-): McpInvocationContext.McpInvocationScope => {
-  const header = request.headers[McpInvocationContext.SENDER_THREAD_HEADER];
-  if (
-    header === undefined ||
-    (invocation.client?.linked !== true && invocation.client?.cluster !== true)
-  )
-    return invocation;
-```
-
-In `authenticateRequest`, replace `return { ...limited, linkedEnvironments, origin };` with:
-
-```ts
-    return { ...limited, linkedEnvironments, clustered: yield* clustered, origin };
-```
-
-- [ ] **Step 4: Run the tests to verify they pass**
-
-Run: `vp test run apps/server/src/auth/EnvironmentAuth.test.ts apps/server/src/auth/McpOAuth.test.ts apps/server/src/mcp/McpHttpServer.test.ts`
-
-Expected: PASS.
-
-Run: `vp run typecheck`
-
-Expected: no errors.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add apps/server/src/auth/EnvironmentAuth.ts apps/server/src/auth/EnvironmentAuth.test.ts apps/server/src/auth/McpOAuth.ts apps/server/src/mcp/McpInvocationContext.ts apps/server/src/mcp/McpHttpServer.ts
-git commit -m "feat(server): cluster-member MCP credential and cluster callers
-
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
-```
-
----
-
-## Task 2: `PeerMcpClient` calls a given route
+## Task 1: `PeerMcpClient` calls a given route
 
 **Files:**
 
@@ -363,7 +121,17 @@ export interface McpRoute {
 }
 ```
 
-`PeerMcpClient.call` accepts `route?: McpRoute`. Without a route it resolves the peer link to `environmentId`, as it does today. Every peer-link message stays exactly as it is now.
+`PeerMcpClient.call` accepts `route?: McpRoute`. Without a route it resolves the peer link to `environmentId`, as it does today. Every peer-link message stays exactly as it is now. The main host uses a route to reach a member's `/mcp`.
+
+```ts
+export const decodeToolResult: <S extends Schema.Decoder<unknown>>(
+  answer: { readonly isError: boolean; readonly text: string },
+  success: S,
+  name: string,
+) => Effect.Effect<Result.Result<S["Type"], OrchestratorMcpFailure>, OrchestratorMcpFailure>;
+```
+
+It reads a tool's answer the same way for `/mcp` and for Plan 2's `ClusterHostResult`, which a member gets back over its control link: a refusal is `Result.fail` with the other side's own code, and an answer this version cannot read fails.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -371,14 +139,14 @@ Append to `apps/server/src/peer/PeerMcpClient.test.ts`:
 
 ```ts
 it.effect(
-  "calls a cluster route with its own client and token, renews it after a restart, and names it when it is down",
+  "calls a cluster member's route with its own client and token, renews it after the member restarts, and names it when it is down",
   () =>
     Effect.gen(function* () {
       const seen: Array<{ readonly target: string; readonly session: string | undefined }> = [];
       const outcomes: Array<string | null> = [];
       const arrived = yield* Queue.unbounded<void>();
       const down = yield* Ref.make(false);
-      // The main host restarts after the first call: it forgets the session and answers 404 once.
+      // The member restarts after the first call: it forgets the session and answers 404 once.
       const statuses = [200, 202, 200, 404, 200, 202, 200];
       const routeHttp = HttpClient.make((request) =>
         Effect.gen(function* () {
@@ -404,15 +172,15 @@ it.effect(
         }),
       );
       const route: PeerMcpClient.McpRoute = {
-        key: "cluster environment-studio https://studio.example",
-        origin: "https://studio.example",
-        token: "cluster-member-token",
+        key: "cluster environment-box https://box.example",
+        origin: "https://box.example",
+        token: "cluster-host-token",
         httpClient: routeHttp,
         messages: {
-          name: 'The cluster\'s main host "Studio"',
-          revoked: "Studio no longer accepts this member.",
-          off: "Studio has clusters turned off.",
-          unreachable: 'Cluster host unreachable: "Studio" is not answering.',
+          name: 'Cluster member "Box"',
+          revoked: "Box no longer accepts this main host.",
+          off: "Box has clusters turned off.",
+          unreachable: 'Cluster member "Box" is not answering.',
         },
         recordOutcome: (error) => Effect.sync(() => outcomes.push(error)),
       };
@@ -453,7 +221,7 @@ it.effect(
         "after-restart",
       ]);
       expect(new Set(seen.map(({ target }) => target))).toEqual(
-        new Set(["https://studio.example/mcp Bearer cluster-member-token"]),
+        new Set(["https://box.example/mcp Bearer cluster-host-token"]),
       );
       expect(outcomes).toEqual([null, null]);
 
@@ -478,7 +246,7 @@ it.effect(
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `vp test run apps/server/src/peer/PeerMcpClient.test.ts -t "calls a cluster route"`
+Run: `vp test run apps/server/src/peer/PeerMcpClient.test.ts -t "calls a cluster member's route"`
 
 Expected: FAIL. The call ignores `route`, so the empty `PeerLinks` mock dies on `resolve`. Typecheck also reports that `route` is not in the call input.
 
@@ -524,6 +292,44 @@ const peerMessages: McpRoute["messages"] = {
     "The linked environment no longer accepts this link. It may have been revoked there; link it again.",
   off: "The linked environment has Linked environments turned off. Turn it on in its Settings → Labs.",
   unreachable: "The linked environment stopped answering.",
+};
+```
+
+Below `responseJson`, add:
+
+```ts
+/**
+ * A tool's answer, from `/mcp` or a cluster's control link. A refusal is `Result.fail` with the
+ * other side's own code, so the agent sees why; an answer this version cannot read fails.
+ */
+export const decodeToolResult = <S extends Schema.Decoder<unknown>>(
+  answer: { readonly isError: boolean; readonly text: string },
+  success: S,
+  name: string,
+) => {
+  if (answer.isError) {
+    const refused = decodeFailure(answer.text);
+    return Effect.succeed(
+      Result.fail(
+        refused._tag === "Some"
+          ? new OrchestratorMcpFailure({ code: refused.value.code, message: refused.value.message })
+          : new OrchestratorMcpFailure({
+              code: "orchestration_error",
+              message: answer.text || `${name} refused the call.`,
+            }),
+      ),
+    );
+  }
+  return Schema.decodeEffect(Schema.fromJsonString(success))(answer.text).pipe(
+    Effect.map((decoded): Result.Result<S["Type"], OrchestratorMcpFailure> => Result.succeed(decoded)),
+    Effect.mapError(
+      () =>
+        new OrchestratorMcpFailure({
+          code: "orchestration_error",
+          message: `${name}'s answer did not match this version. Update both environments.`,
+        }),
+    ),
+  );
 };
 ```
 
@@ -683,32 +489,13 @@ const make = Effect.gen(function* () {
           message: `${route.messages.name} returned no result.`,
         });
       }
-      const text = body.result.content.map((part) => part.text ?? "").join("");
-      if (body.result.isError === true) {
-        // A refusal keeps the other side's own code, so the agent sees why it was refused.
-        const refused = decodeFailure(text);
-        return Result.fail(
-          refused._tag === "Some"
-            ? new OrchestratorMcpFailure({
-                code: refused.value.code,
-                message: refused.value.message,
-              })
-            : new OrchestratorMcpFailure({
-                code: "orchestration_error",
-                message: text || `${route.messages.name} refused the call.`,
-              }),
-        );
-      }
-      const success = Schema.fromJsonString(input.success);
-      return yield* Schema.decodeEffect(success)(text).pipe(
-        Effect.map(Result.succeed),
-        Effect.mapError(
-          () =>
-            new OrchestratorMcpFailure({
-              code: "orchestration_error",
-              message: `${route.messages.name}'s answer did not match this version. Update both environments.`,
-            }),
-        ),
+      return yield* decodeToolResult(
+        {
+          isError: body.result.isError === true,
+          text: body.result.content.map((part) => part.text ?? "").join(""),
+        },
+        input.success,
+        route.messages.name,
       );
     }).pipe(
       Effect.tapError((error) => route.recordOutcome(error.message)),
@@ -784,76 +571,64 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
-## Task 3: `ClusterService` mints, stores and reads the agent route
+## Task 2: `PeerForwarding` routes cluster targets (one seam)
 
 **Files:**
 
-- Create: `apps/server/src/persistence/Migrations/100_ClusterMcp.ts`
-- Modify: `apps/server/src/persistence/Migrations.ts`. Add the import after Plan 2's `Migration0099` import and the entry after `[99, "Cluster", Migration0099]`.
-- Modify: `apps/server/src/persistence/reconcileV2PreviewMigration.test.ts:80` and `:201`
-- Modify: `packages/contracts/src/cluster.ts`. Change `ClusterJoinRequest.hostMcp` and `ClusterError.reason` (Plan 2 Task 1).
-- Modify: `apps/server/src/cluster/ClusterService.ts`:
-  - `MemberRow`
-  - the interface
-  - `make` (`acceptJoin`, `addMember`, `removeMember`, new `connectHost` and `memberOfSession`)
-  - the returned service
-- Modify: `apps/server/src/cluster/ClusterService.testkit.ts` (`layerClusterEnvironment` and the routing helpers)
-- Test: `apps/server/src/cluster/ClusterService.test.ts`
+- Create: `apps/server/src/mcp/ClusterHostRequests.ts`
+- Modify: `apps/server/src/peer/PeerForwarding.ts` (whole file, given below)
+- Modify: `apps/server/src/mcp/McpInvocationContext.ts`:
+  - `McpClientCaller` (`:36-54`)
+  - `McpInvocationScope` (`:136-150`)
+- Modify: `apps/server/src/auth/McpOAuth.ts:625-631` (client caller)
+- Modify: `apps/server/src/mcp/McpHttpServer.ts`:
+  - `withSenderThread` (`:236-260`)
+  - the admitted scope (`:313`)
+- Modify: `apps/server/src/mcp/McpToolAccess.ts:451`
+- Modify: `apps/server/src/cluster/ClusterService.testkit.ts` (routing helpers)
+- Modify: `apps/server/src/server.ts` (the `McpHttpServer.layer` entry of `layerMakeRoutes` and Plan 2's `cluster.start` call)
+- Test: `apps/server/src/peer/PeerForwarding.test.ts`:
+  - `makeLaptop` (`:275-372`)
+  - new tests after "refuses a launch there above the link's access, naming the link"
 
 **Interfaces:**
 
 - Consumes:
-  - `EnvironmentAuth.issueClusterMemberSession` and `revokeSession`.
-  - `DirectEndpoints.resolveAvailable` (`apps/server/src/environment/DirectEndpoints.ts:139-152`).
-  - `ServerTls.fingerprint` and `ClusterUpstream.connect`.
+  - `ClusterService.status`, `connect`, `members` and `hostCall`; types `MemberConnection`, `ClusterHostServe`, `ClusterHostCall`; `clusterHostUnreachable` (Plan 2).
+  - `McpClientSession.cluster` (Plan 2 Task 3) and the `clustered` effect in `makeMcpAuthMiddleware` (Plan 2 Task 4).
+  - `PeerMcpClient.McpRoute` and `decodeToolResult` (Task 1).
+  - `McpServer.McpServer.callTool`, `McpInvocationContext.withRuntimeModeCeiling`.
 - Produces:
-  - `ClusterService["Service"]["connectHost"]: Effect<HostConnection, ClusterError>`, with `HostConnection = { upstream: ClusterUpstream.Upstream; token: string; host: { environmentId: EnvironmentId; label: string } }`.
-  - `ClusterService["Service"]["memberOfSession"]: (sessionId: string) => Effect<Option<EnvironmentId>>`.
-  - The `ClusterJoinRequest.hostMcp.certSha256` key and the `ClusterError` reason `"no_host_mcp"`.
-  - Testkit: `MAIN_LAN_URL`, `RoutedEnvironment`, `layerRoutingMain(members, callers?)`, `layerRoutingMember(host)` and `clusterHostToken(auth, hostLabel)`.
+  - `McpClientCaller.cluster?: boolean` (a cluster caller: the main host on a member, or a member's agent on the main host) and `McpClientCaller.clusterMember?: EnvironmentId` (on the main host, the member the call came from); `McpInvocationScope.clustered?: boolean`. `/mcp` reads `T3-Sender-Thread` from cluster callers as well as linked ones.
+  - `ClusterHostRequests.make(environmentId)`: the main host's `ClusterHostServe`. It runs `request.tool` with `request.arguments` through the main host's own `McpServer`, as a client scope with `cluster: true`, `clusterMember: member.environmentId`, `narrowedTo: request.limits`, `senderThread: request.sender`, `requestNamespace: cluster-member:<memberId>`, `clustered: true`, under the managed runtime ceiling. A failure to run the tool answers `isError` with an `invalid_request` failure.
+  - `PeerForwarding["Service"]["routeLabel"]: (environmentId) => Effect<Option<string>, OrchestratorMcpFailure>`.
+  - Routing rules:
+    - **Standalone:** peer links, as today. The Linked environments beta is checked here and in `McpToolAccess`.
+    - **Main host:** the target must be a member, reached at its `/mcp` with its `cluster-host` token. `unknown_member` maps to `capability_denied`, with a pointer to `t3_environment_links`. A call from a member that names that member is refused.
+    - **Member:** every other environment goes through `ClusterService.hostCall`, and the call keeps `environmentId` unless the target is the main host itself. A call that arrived from the main host (`client.cluster`) and names another environment is refused. While the link is down the agent hears "cluster host unreachable", which is not final.
+    - Cluster calls skip the link-access check and the beta. `clusterEnabled` still gates the main side inside `ClusterService.connect`.
+    - A thread caller sends its own thread as the sender. A cluster client caller passes on the sender it was given.
+  - Testkit: `RoutedEnvironment`, `layerRoutingMain(members)`, `layerRoutingMember({ host, hostCall })`, `clusterHostToken(auth, hostLabel)`.
 
-How the URL is chosen: the main host takes the first plain `http:` address from `DirectEndpoints.resolveAvailable()` (LAN or tailnet IP). It sends the member `https://<that host:port>/mcp`, pinned to its own certificate. Plan 1 serves TLS on the same port. Tailscale Serve's `https:` URL is skipped, because its certificate is not this server's. A main host with no such address sends no `hostMcp`. Its members' agents then hear `no_host_mcp`.
+- [ ] **Step 1: Write the testkit helpers and the failing tests**
 
-- [ ] **Step 1: Extend the testkit and write the failing tests**
-
-`apps/server/src/cluster/ClusterService.testkit.ts`. Add these imports:
+`apps/server/src/cluster/ClusterService.testkit.ts`. Add to the `@t3tools/contracts` import `ClusterError` and `type ClusterMember` (`EnvironmentId`, `ClusterMemberStatus`, `Option` and `Stream` are already imported by Plan 2 Task 8), and add:
 
 ```ts
-import { ClusterError, type ClusterMember, type EnvironmentId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
-import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
-import * as DirectEndpoints from "../environment/DirectEndpoints.ts";
 import { CLUSTER_MEMBER_PAIRING_SUBJECT } from "../persistence/AuthPairingLinks.ts";
 ```
 
-Add this above `layerClusterEnvironment`:
+Append:
 
 ```ts
-/** The plain address main hosts in these tests advertise; members call its /mcp over https there. */
-export const MAIN_LAN_URL = "http://192.168.1.10:3773/";
-```
-
-In `layerClusterEnvironment`, directly after `Layer.provideMerge(ClusterUpstream.layer),`, add:
-
-```ts
-    Layer.provide(
-      Layer.mock(DirectEndpoints.DirectEndpoints)({
-        resolveAvailable: () => Effect.succeed([{ kind: "lan", httpBaseUrl: MAIN_LAN_URL }]),
-      }),
-    ),
-```
-
-Append to the testkit:
-
-```ts
-/** An environment agent calls are routed to, as a cluster stores it. */
+/** An environment agent calls are routed to, as a main host stores its member. */
 export interface RoutedEnvironment {
   readonly descriptor: ExecutionEnvironmentDescriptor;
   readonly url: string;
-  /** What is sent there: a member's `cluster-host` token, or a member's `cluster-member` token for its host. */
+  /** The member's `cluster-host` token the main host sends. */
   readonly token: string;
 }
 
@@ -882,11 +657,8 @@ const asMember = ({ descriptor, url }: RoutedEnvironment): ClusterMember => ({
   lastError: null,
 });
 
-/** A main host whose members are `members`; `callers` maps a `cluster-member` session to its member. */
-export const layerRoutingMain = (
-  members: Ref.Ref<ReadonlyArray<RoutedEnvironment>>,
-  callers?: Ref.Ref<ReadonlyMap<string, EnvironmentId>>,
-) =>
+/** A main host whose members are `members`. */
+export const layerRoutingMain = (members: Ref.Ref<ReadonlyArray<RoutedEnvironment>>) =>
   Layer.mock(ClusterService.ClusterService)({
     status: Effect.succeed({ enabled: true, role: "main", fingerprint: FINGERPRINT, host: null }),
     members: Stream.fromEffect(Ref.get(members)).pipe(Stream.map((list) => list.map(asMember))),
@@ -906,35 +678,25 @@ export const layerRoutingMain = (
               );
         }),
       ),
-    // A failed call asks for a probe; these members stay where the test put them.
-    probe: (memberId) =>
-      Effect.fail(new ClusterError({ reason: "unreachable", message: `${memberId} was not probed.` })),
-    memberOfSession: (sessionId) =>
-      callers === undefined
-        ? Effect.succeed(Option.none())
-        : Ref.get(callers).pipe(Effect.map((map) => Option.fromNullishOr(map.get(sessionId)))),
   });
 
-/** A member of `host`, reaching its `/mcp` with `host.token`. */
-export const layerRoutingMember = (host: RoutedEnvironment) =>
+/** A member of `host` whose control link is `hostCall`. */
+export const layerRoutingMember = (input: {
+  readonly host: ExecutionEnvironmentDescriptor;
+  readonly hostCall: ClusterService.ClusterService["Service"]["hostCall"];
+}) =>
   Layer.mock(ClusterService.ClusterService)({
     status: Effect.succeed({
       enabled: true,
       role: "member",
       fingerprint: FINGERPRINT,
       host: {
-        environmentId: host.descriptor.environmentId,
-        label: host.descriptor.label,
+        environmentId: input.host.environmentId,
+        label: input.host.label,
         joinedAt: DateTime.makeUnsafe(0),
       },
     }),
-    connectHost: upstreamAt(host.url).pipe(
-      Effect.map((upstream) => ({
-        upstream,
-        token: host.token,
-        host: { environmentId: host.descriptor.environmentId, label: host.descriptor.label },
-      })),
-    ),
+    hostCall: input.hostCall,
   });
 
 /** A `cluster-host` session on the environment `auth` serves, as a main host holds after adding it. */
@@ -950,453 +712,52 @@ export const clusterHostToken = (
   );
 ```
 
-Append to `apps/server/src/cluster/ClusterService.test.ts`. `Option` and `serveMember` are already imported by Plan 2 Task 7. Add `FINGERPRINT` to the testkit import if it is missing.
-
-```ts
-it.effect(
-  "a member gets the main host's /mcp and a cluster-member token; re-adding and removal revoke it",
-  () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const member = yield* serveMember(box);
-        const main = yield* makeEnvironment(studioDescriptor);
-        const add = member.cluster
-          .invite({ url: member.url })
-          .pipe(
-            Effect.flatMap((invite) => main.cluster.addMember({ target: invite.joinString ?? "" })),
-          );
-        yield* add;
-        expect(
-          yield* member.sql`SELECT host_mcp_url, host_mcp_cert_sha256 FROM cluster_membership`,
-        ).toEqual([
-          { host_mcp_url: "https://192.168.1.10:3773/mcp", host_mcp_cert_sha256: FINGERPRINT },
-        ]);
-        const first = yield* member.cluster.connectHost;
-        expect(first.upstream.origin).toBe("https://192.168.1.10:3773");
-        expect(first.host).toEqual({ environmentId: studio.environmentId, label: "Studio" });
-        const session = yield* main.auth.authenticateMcpClient(bearer(first.token));
-        expect(session).toMatchObject({ access: "full-access", peerLink: false, cluster: true });
-        expect(yield* main.cluster.memberOfSession(session.sessionId)).toEqual(
-          Option.some(box.environmentId),
-        );
-
-        yield* add;
-        expect(
-          yield* main.auth.authenticateMcpClient(bearer(first.token)).pipe(Effect.flip),
-        ).toMatchObject({ _tag: "ServerAuthInvalidCredentialError" });
-        const second = yield* member.cluster.connectHost;
-        expect(second.token).not.toBe(first.token);
-
-        expect(yield* main.cluster.removeMember(box.environmentId)).toMatchObject({
-          removed: true,
-          memberNotified: true,
-        });
-        expect(
-          yield* main.auth.authenticateMcpClient(bearer(second.token)).pipe(Effect.flip),
-        ).toMatchObject({ _tag: "ServerAuthInvalidCredentialError" });
-        expect(yield* member.cluster.connectHost.pipe(Effect.flip)).toMatchObject({
-          reason: "unknown_member",
-        });
-      }),
-    ),
-);
-
-it.effect("a member added without a route to its main host's tools says how to get one", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const member = yield* makeEnvironment(box);
-      const invite = yield* member.cluster.invite({});
-      // A main host from before agent routing, or one with no plain network address, sends no hostMcp.
-      yield* member.cluster.acceptJoin({ code: invite.code, host: studio }, bot);
-      expect(yield* member.cluster.connectHost.pipe(Effect.flip)).toMatchObject({
-        reason: "no_host_mcp",
-        message:
-          "Studio gave this member no address for its tools, so agents here cannot reach other environments in the cluster. Remove this member on Studio and add it again.",
-      });
-    }),
-  ),
-);
-```
-
-`apps/server/src/persistence/reconcileV2PreviewMigration.test.ts`. In both expected lists (`:80` and `:201`), the rows after `[98, "ActiveShellIndexIndexes"],` must read:
-
-```ts
-        [99, "Cluster"],
-        [100, "ClusterMcp"],
-```
-
-Plan 2 did not add `[99, "Cluster"]` here. Add it too if it is missing.
-
-- [ ] **Step 2: Run the tests to verify they fail**
-
-Run: `vp test run apps/server/src/cluster/ClusterService.test.ts apps/server/src/persistence/reconcileV2PreviewMigration.test.ts`
-
-Expected: FAIL.
-
-- The first new test fails with `no such column: host_mcp_cert_sha256`.
-- The second fails with `member.cluster.connectHost` undefined.
-- The reconcile lists miss `[100, "ClusterMcp"]`.
-
-- [ ] **Step 3: Implement**
-
-`apps/server/src/persistence/Migrations/100_ClusterMcp.ts`:
-
-```ts
-import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/sql/SqlClient";
-
-export default Effect.gen(function* () {
-  const sql = yield* SqlClient.SqlClient;
-  // The main host's `cluster-member` session for each member, revoked on removal or re-add.
-  yield* sql`ALTER TABLE cluster_members ADD COLUMN mcp_session_id TEXT`;
-  // A member pins its main host's certificate when its agents call that host's /mcp.
-  yield* sql`ALTER TABLE cluster_membership ADD COLUMN host_mcp_cert_sha256 TEXT`;
-});
-```
-
-`apps/server/src/persistence/Migrations.ts`:
-
-```ts
-import Migration0100 from "./Migrations/100_ClusterMcp.ts";
-```
-
-```ts
-  [100, "ClusterMcp", Migration0100],
-```
-
-`packages/contracts/src/cluster.ts`. Replace `ClusterJoinRequest.hostMcp`:
-
-```ts
-  /** The main host's `/mcp` and a `cluster-member` token for this member's agents. */
-  hostMcp: Schema.optionalKey(
-    Schema.Struct({
-      url: TrimmedNonEmptyString,
-      token: TrimmedNonEmptyString,
-      /** The main host's certificate, pinned when the member calls `url`. */
-      certSha256: Schema.optionalKey(Schema.String),
-    }),
-  ),
-```
-
-Add `"no_host_mcp",` after `"ssh",` in `ClusterError.reason`.
-
-`apps/server/src/cluster/ClusterService.ts`. Add the imports `* as DirectEndpoints from "../environment/DirectEndpoints.ts"` and `* as Option from "effect/Option"` if the latter is missing.
-
-In `MemberRow`, after `last_error`:
-
-```ts
-  mcp_session_id: Schema.NullOr(Schema.String),
-```
-
-Below `MemberConnection`:
-
-```ts
-export interface HostConnection {
-  readonly upstream: ClusterUpstream.Upstream;
-  readonly token: string;
-  readonly host: { readonly environmentId: EnvironmentId; readonly label: string };
-}
-```
-
-In the `ClusterService` interface, after `connect`:
-
-```ts
-    /** Member side: the main host's `/mcp` and this member's `cluster-member` token for it. */
-    readonly connectHost: Effect.Effect<HostConnection, ClusterError>;
-    /** Main side: the member a `cluster-member` session was issued to. */
-    readonly memberOfSession: (sessionId: string) => Effect.Effect<Option.Option<EnvironmentId>>;
-```
-
-In `acceptJoin`, replace the membership `INSERT` with:
-
-```ts
-        yield* sql`
-          INSERT INTO cluster_membership (singleton, host_environment_id, host_label, joined_at, host_session_id, host_mcp_url, host_mcp_secret_name, host_mcp_cert_sha256)
-          VALUES (1, ${input.host.environmentId}, ${input.host.label}, ${joinedAt}, ${session.sessionId}, ${input.hostMcp?.url ?? null}, ${mcpSecretName}, ${input.hostMcp?.certSha256 ?? null})
-          ON CONFLICT (singleton) DO UPDATE SET
-            host_label = excluded.host_label,
-            host_session_id = excluded.host_session_id,
-            host_mcp_url = excluded.host_mcp_url,
-            host_mcp_secret_name = excluded.host_mcp_secret_name,
-            host_mcp_cert_sha256 = excluded.host_mcp_cert_sha256
-        `;
-```
-
-In `make`, after `const random = …`:
-
-```ts
-  const directEndpoints = yield* DirectEndpoints.DirectEndpoints;
-  /** The first plain address members can reach this host at, as https on the same port, where TLS is pinned. */
-  const hostMcpUrl = directEndpoints.resolveAvailable().pipe(
-    Effect.map((endpoints) => {
-      const plain = endpoints
-        .map((endpoint) => new URL(endpoint.httpBaseUrl))
-        .find((url) => url.protocol === "http:");
-      return plain === undefined ? undefined : `https://${plain.host}/mcp`;
-    }),
-  );
-```
-
-In `addMember`, replace everything from `const joined = yield* client.cluster` through the end of the storage `Effect.gen(…).pipe(…)` with:
-
-```ts
-      const mcpUrl = yield* hostMcpUrl;
-      const memberMcp =
-        mcpUrl === undefined
-          ? undefined
-          : yield* auth
-              .issueClusterMemberSession({
-                label: `Cluster member · ${input.label ?? descriptor.label}`,
-                client: {},
-              })
-              .pipe(Effect.mapError(storageError));
-      const revokeMemberMcp =
-        memberMcp === undefined
-          ? Effect.void
-          : auth.revokeSession(memberMcp.sessionId).pipe(Effect.ignore);
-      const joined = yield* client.cluster
-        .join({
-          payload: {
-            code,
-            host: { environmentId: self.environmentId, label: self.label },
-            ...(mcpUrl === undefined || memberMcp === undefined
-              ? {}
-              : { hostMcp: { url: mcpUrl, token: memberMcp.token, certSha256: tls.fingerprint } }),
-          },
-        })
-        .pipe(
-          Effect.mapError(reachError(connection.origin)),
-          Effect.tapError(() => revokeMemberMcp),
-        );
-      if (joined.environmentId !== descriptor.environmentId) {
-        yield* revokeMemberMcp;
-        return yield* new ClusterError({
-          reason: "unreachable",
-          message: `${connection.origin} answered as another environment while joining.`,
-        });
-      }
-      const wasStandalone = (yield* role.current).role === "standalone";
-      const previous = (yield* SubscriptionRef.get(rowsRef)).find(
-        (row) => row.environment_id === joined.environmentId,
-      );
-      const secretName = `cluster-member-${Hex.encode(yield* random.randomBytes(16))}`;
-      const target = resolved.target;
-      yield* Effect.gen(function* () {
-        yield* secrets.set(secretName, new TextEncoder().encode(joined.token));
-        const now = DateTime.formatIso(yield* DateTime.now);
-        yield* sql`
-          INSERT INTO cluster_members (environment_id, label, transport, url, ssh_target, cert_sha256, secret_name, status, joined_at, last_reached_at, last_error, mcp_session_id)
-          VALUES (
-            ${joined.environmentId}, ${input.label ?? joined.label}, ${target.transport},
-            ${target.transport === "https" ? target.url : null},
-            ${target.transport === "ssh" ? target.sshTarget : null},
-            ${target.transport === "https" && target.url.startsWith("https:") ? target.certSha256 : null},
-            ${secretName}, 'online', ${now}, ${now}, NULL, ${memberMcp?.sessionId ?? null}
-          )
-          ON CONFLICT (environment_id) DO UPDATE SET
-            transport = excluded.transport, url = excluded.url, ssh_target = excluded.ssh_target,
-            cert_sha256 = excluded.cert_sha256, secret_name = excluded.secret_name,
-            status = 'online', last_reached_at = excluded.last_reached_at, last_error = NULL,
-            mcp_session_id = excluded.mcp_session_id
-        `;
-        if (previous !== undefined) {
-          tokens.delete(previous.secret_name);
-          yield* secrets.remove(previous.secret_name);
-          if (previous.mcp_session_id !== null) {
-            yield* auth.revokeSession(AuthSessionId.make(previous.mcp_session_id));
-          }
-        }
-      }).pipe(
-        Effect.mapError(storageError),
-        Effect.onError(() =>
-          secrets.remove(secretName).pipe(Effect.ignore, Effect.andThen(revokeMemberMcp)),
-        ),
-      );
-```
-
-In `removeMember`, after `yield* secrets.remove(row.secret_name).pipe(Effect.mapError(storageError));`:
-
-```ts
-      if (row.mcp_session_id !== null) {
-        yield* auth
-          .revokeSession(AuthSessionId.make(row.mcp_session_id))
-          .pipe(Effect.mapError(storageError));
-      }
-```
-
-After `connect`:
-
-```ts
-  const connectHost: ClusterService["Service"]["connectHost"] = Effect.gen(function* () {
-    yield* requireEnabled;
-    const [row] = yield* sql<{
-      readonly host_environment_id: string;
-      readonly host_label: string;
-      readonly host_mcp_url: string | null;
-      readonly host_mcp_secret_name: string | null;
-      readonly host_mcp_cert_sha256: string | null;
-    }>`
-      SELECT host_environment_id, host_label, host_mcp_url, host_mcp_secret_name, host_mcp_cert_sha256
-      FROM cluster_membership WHERE singleton = 1
-    `.pipe(Effect.mapError(storageError));
-    if (row === undefined) {
-      return yield* new ClusterError({
-        reason: "unknown_member",
-        message: "This environment is not a member of a cluster.",
-      });
-    }
-    const noRoute = new ClusterError({
-      reason: "no_host_mcp",
-      message: `${row.host_label} gave this member no address for its tools, so agents here cannot reach other environments in the cluster. Remove this member on ${row.host_label} and add it again.`,
-    });
-    if (row.host_mcp_url === null || row.host_mcp_secret_name === null) return yield* noRoute;
-    const stored = yield* secrets
-      .get(row.host_mcp_secret_name)
-      .pipe(Effect.mapError(storageError));
-    if (Option.isNone(stored)) return yield* noRoute;
-    const connection = yield* upstream.connect({
-      transport: "https",
-      url: row.host_mcp_url,
-      certSha256: row.host_mcp_cert_sha256,
-    });
-    return {
-      upstream: connection,
-      token: new TextDecoder().decode(stored.value),
-      host: { environmentId: EnvironmentId.make(row.host_environment_id), label: row.host_label },
-    };
-  }).pipe(Effect.withSpan("ClusterService.connectHost"));
-
-  const memberOfSession: ClusterService["Service"]["memberOfSession"] = (sessionId) =>
-    SubscriptionRef.get(rowsRef).pipe(
-      Effect.map((rows) =>
-        Option.fromNullishOr(rows.find((row) => row.mcp_session_id === sessionId)?.environment_id),
-      ),
-    );
-```
-
-Add `connectHost,` and `memberOfSession,` to the returned `ClusterService.of({ … })`. `DirectEndpoints` already reaches `layerMakeRoutes` from `layerRuntimeDependencies` (`apps/server/src/server.ts:821`), so `server.ts` needs no change here.
-
-- [ ] **Step 4: Run the tests to verify they pass**
-
-Run: `vp test run apps/server/src/cluster/ClusterService.test.ts apps/server/src/persistence/reconcileV2PreviewMigration.test.ts apps/server/src/persistence/Migrations.test.ts packages/contracts/src/cluster.test.ts`
-
-Expected: PASS.
-
-Run: `vp run typecheck`
-
-Expected: no errors.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add apps/server/src/persistence/Migrations/100_ClusterMcp.ts apps/server/src/persistence/Migrations.ts apps/server/src/persistence/reconcileV2PreviewMigration.test.ts packages/contracts/src/cluster.ts apps/server/src/cluster/ClusterService.ts apps/server/src/cluster/ClusterService.testkit.ts apps/server/src/cluster/ClusterService.test.ts
-git commit -m "feat(server): cluster members get a route to the main host's MCP
-
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
-```
-
----
-
-## Task 4: `PeerForwarding` routes cluster targets (one seam)
-
-**Files:**
-
-- Modify: `apps/server/src/peer/PeerForwarding.ts` (whole file, given below)
-- Modify: `apps/server/src/mcp/McpToolAccess.ts:451`
-- Modify: `apps/server/src/server.ts:888-894`. This is the links provide, plus the `ClusterService` provide that Plan 2 Tasks 6 and 7 placed directly above it.
-- Test: `apps/server/src/peer/PeerForwarding.test.ts`:
-  - `serveBox` (`:213-260`)
-  - `makeLaptop` (`:275-372`)
-  - new tests after "refuses a launch there above the link's access, naming the link"
-
-**Interfaces:**
-
-- Consumes:
-  - `ClusterService.status`, `connect`, `connectHost`, `memberOfSession`, `members` and `probe`.
-  - `PeerMcpClient.McpRoute`.
-  - `McpClientCaller.cluster` and `McpInvocationScope.clustered`.
-  - Testkit `layerRoutingMain`, `layerRoutingMember` and `clusterHostToken`.
-- Produces: `PeerForwarding["Service"]["routeLabel"]: (environmentId) => Effect<Option<string>, OrchestratorMcpFailure>`. Routing rules:
-  - **Standalone:** peer links, as today. The Linked environments beta is checked here and in `McpToolAccess`.
-  - **Main host:** the target must be a member. `unknown_member` maps to `capability_denied`, with a pointer to `t3_environment_links`. A `cluster-member` caller that names its own member is refused.
-  - **Member:** every other environment goes through the main host, and the call keeps `environmentId` unless the target is the main host itself. A call that arrived from the main host (`client.cluster`) and names another environment is refused.
-  - Cluster calls skip the link-access check and the beta. `clusterEnabled` still gates them inside `ClusterService.connect` and `connectHost`.
-  - A thread caller sends its own thread as `T3-Sender-Thread`. A cluster client caller passes on the sender it was given.
-
-- [ ] **Step 1: Write the failing tests**
-
 `apps/server/src/peer/PeerForwarding.test.ts`. Add these imports:
 
 ```ts
-import * as FetchHttpClient from "effect/http/FetchHttpClient";
-import * as HttpClient from "effect/http/HttpClient";
-import * as Schema from "effect/Schema";
-import type * as ClusterService from "../cluster/ClusterService.ts";
+import { type ClusterMember } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import * as ClusterService from "../cluster/ClusterService.ts";
 import {
   clusterHostToken,
   layerRoutingMain,
   layerRoutingMember,
   type RoutedEnvironment,
 } from "../cluster/ClusterService.testkit.ts";
-import * as PeerMcpClient from "./PeerMcpClient.ts";
+import * as ClusterHostRequests from "../mcp/ClusterHostRequests.ts";
 ```
 
 Below `const box = …`:
 
 ```ts
 const studio = descriptorOf("environment-studio", "Studio");
-```
 
-Change `serveBox` so it can serve the main host as well:
-
-```ts
-const serveBox = (
-  seen: Ref.Ref<Seen>,
-  linkSession: Ref.Ref<string>,
-  descriptor = box,
-  forwarding: Layer.Layer<PeerForwarding.PeerForwarding, unknown> = Layer.mock(
-    PeerForwarding.PeerForwarding,
-  )({}),
-) =>
-  servePeer(
-    descriptor,
-```
-
-In its layer list:
-
-- Replace `Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),` with `Layer.provide(forwarding),`.
-- Replace `Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),` with:
-
-```ts
-      // A send there is never a follow-up to a task, here or on a main host passing it on.
-      Layer.provide(
-        Layer.mock(RemoteDelegation.RemoteDelegation)({
-          followUp: (_scope, _environmentId, _request, sent) => Effect.succeed(sent),
-        }),
-      ),
-```
-
-Below `serveBox`, add:
-
-```ts
-/** The main host's own forwarding, whose cluster is `cluster`. */
-const layerMainForwarding = (cluster: Layer.Layer<ClusterService.ClusterService>) =>
-  PeerForwarding.layer.pipe(
-    Layer.provide(cluster),
-    Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
-    Layer.provide(layerLinkingEnvironment(studio)),
-  );
-
-/** Another environment on a socket of its own. */
-const serveApart = <A, E, R>(serve: Effect.Effect<A, E, R>) =>
-  Layer.build(Layer.fresh(NodeHttpServer.layerTest)).pipe(
-    Effect.flatMap((server) => serve.pipe(Effect.provideContext(server))),
-  );
+/** The laptop as its main host lists it. */
+const laptopMember: ClusterMember = {
+  environmentId: laptop.environmentId,
+  label: "Laptop",
+  transport: "https",
+  address: "https://laptop.local:3773",
+  status: "online",
+  joinedAt: DateTime.makeUnsafe(0),
+  lastReachedAt: null,
+  lastError: null,
+};
 ```
 
 Change `makeLaptop`:
 
-- `const makeLaptop = Effect.gen(function* () {` becomes `const makeLaptopWith = (cluster: Layer.Layer<ClusterService.ClusterService> = Layer.empty) => Effect.gen(function* () {`.
+- `const makeLaptop = Effect.gen(function* () {` becomes:
+
+```ts
+const makeLaptopWith = (
+  cluster: Layer.Layer<ClusterService.ClusterService> = Layer.empty,
+  descriptor = laptop,
+) =>
+  Effect.gen(function* () {
+```
+
+- `layerLinkingEnvironment(laptop)` becomes `layerLinkingEnvironment(descriptor)`, and `environmentId: laptop.environmentId,` in `scopeOf` becomes `environmentId: descriptor.environmentId,`.
 - `Layer.provide(PeerForwarding.layer),` becomes `Layer.provideMerge(PeerForwarding.layer.pipe(Layer.provide(cluster))),`.
 - Replace `const call = (…) => server.callTool(…)…;` and the `return` with:
 
@@ -1418,16 +779,21 @@ Change `makeLaptop`:
     args: Record<string, unknown>,
     capabilities?: ReadonlySet<McpInvocationContext.McpCapability>,
   ) => callAs(scopeOf(caller, capabilities), name, args);
+  const settings = Context.get(linking, ServerSettings.ServerSettingsService);
   return {
     links: Context.get(linking, PeerLinks.PeerLinks),
-    peers: Context.get(linking, PeerMcpClient.PeerMcpClient),
-    settings: Context.get(linking, ServerSettings.ServerSettingsService),
+    settings,
     forwarding: Context.get(here, PeerForwarding.PeerForwarding),
+    /** What this environment runs for a member's agent, as a main host's control link does. */
+    serveHost: yield* ClusterHostRequests.make(descriptor.environmentId).pipe(
+      Effect.provideService(McpServer.McpServer, server),
+      Effect.provideService(ServerSettings.ServerSettingsService, settings),
+    ),
     scopeOf,
     call,
     callAs,
   };
-});
+  });
 
 const makeLaptop = makeLaptopWith();
 ```
@@ -1518,23 +884,11 @@ it.effect("a member reaches another member through the main host, which never lo
       const members = yield* Ref.make<ReadonlyArray<RoutedEnvironment>>([
         { descriptor: box, url: b.url, token: yield* clusterHostToken(b.auth, "Studio") },
       ]);
-      const callers = yield* Ref.make<ReadonlyMap<string, EnvironmentId>>(new Map());
-      const main = yield* serveApart(
-        serveBox(
-          yield* Ref.make<Seen>(nothingSeen),
-          yield* Ref.make(""),
-          studio,
-          layerMainForwarding(layerRoutingMain(members, callers)),
-        ),
-      );
-      const memberMcp = yield* main.auth.issueClusterMemberSession({
-        label: "Cluster member · Laptop",
-        client: {},
-      });
-      yield* Ref.set(callers, new Map([[memberMcp.sessionId, laptop.environmentId]]));
-      const a = yield* makeLaptopWith(
-        layerRoutingMember({ descriptor: studio, url: main.url, token: memberMcp.token }),
-      );
+      const main = yield* makeLaptopWith(layerRoutingMain(members), studio);
+      // The control link without its socket: Plan 2 Task 8 carries the same call and answer.
+      const hostCall = (call: ClusterService.ClusterHostCall) =>
+        main.serveHost(laptopMember, { requestId: "link-request", ...call });
+      const a = yield* makeLaptopWith(layerRoutingMember({ host: studio, hostCall }));
 
       const send = (caller: string, clientRequestId: string) =>
         a.call(caller, "t3_thread_send", {
@@ -1553,7 +907,7 @@ it.effect("a member reaches another member through the main host, which never lo
       expect(retried).toBe(firstId);
       expect(other).not.toBe(firstId);
       expect(firstId).not.toContain("same-key");
-      // The main host passes on which thread here sent it.
+      // The main host passes on which thread on the member sent it.
       expect(sends[0]?.linkedSender).toEqual({
         environmentId: laptop.environmentId,
         threadId: "thread:laptop-full",
@@ -1580,28 +934,18 @@ it.effect("a member reaches another member through the main host, which never lo
           "environment-nowhere is not a member of this cluster. t3_environment_links lists this cluster's environments.",
       });
 
-      // The main host refuses a member naming itself...
-      const httpClient = yield* HttpClient.HttpClient.pipe(Effect.provide(FetchHttpClient.layer));
-      const looped = yield* a.peers
-        .call({
-          environmentId: studio.environmentId,
-          route: {
-            key: "direct",
-            origin: main.url,
-            token: memberMcp.token,
-            httpClient,
-            messages: { name: "Studio", revoked: "revoked", off: "off", unreachable: "unreachable" },
-            recordOutcome: () => Effect.void,
-          },
-          tool: "t3_thread_read",
-          arguments: { environmentId: laptop.environmentId, threadId: "thread:laptop-full" },
-          limits: { runtimeMode: "full-access", interactionMode: "default" },
-          success: Schema.Unknown,
-        })
-        .pipe(Effect.flip);
-      expect(looped).toMatchObject({
+      // The main host refuses a member's call that names that member...
+      const looped = yield* main.serveHost(laptopMember, {
+        requestId: "looped",
+        tool: "t3_thread_read",
+        arguments: { environmentId: laptop.environmentId, threadId: "thread:laptop-full" },
+        limits: { runtimeMode: "full-access", interactionMode: "default" },
+      });
+      expect(looped.isError).toBe(true);
+      expect(JSON.parse(looped.text)).toMatchObject({
         code: "invalid_request",
-        message: "That environmentId is the calling environment's own. Leave out environmentId to act there.",
+        message:
+          "That environmentId is the calling environment's own. Leave out environmentId to act there.",
       });
       // ...and a member never sends on a call its main host already forwarded.
       const bounced = yield* a.callAs(
@@ -1626,22 +970,21 @@ it.effect("a member reaches another member through the main host, which never lo
 it.effect("a member whose main host is down hears that the cluster host is unreachable", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      // A main host that served once and is gone: nothing listens there now.
-      const gone = yield* Effect.scoped(
-        serveApart(servePeer(studio, Layer.empty)).pipe(Effect.map((peer) => peer.url)),
-      );
       const a = yield* makeLaptopWith(
-        layerRoutingMember({ descriptor: studio, url: gone, token: "unused" }),
+        layerRoutingMember({
+          host: studio,
+          hostCall: () => Effect.fail(ClusterService.clusterHostUnreachable("Studio")),
+        }),
       );
       const read = yield* a.call("thread:laptop-full", "t3_thread_read", {
         environmentId: box.environmentId,
         threadId: boxThread,
       });
-      // Not final: a follower keeps trying until the main host is back.
+      // Not final: a follower keeps trying until the link is back.
       expect(failureOf(read)).toMatchObject({
         code: "orchestration_error",
         message:
-          'Cluster host unreachable: "Studio" is not answering, so other environments in the cluster cannot be reached. Work here continues.',
+          'Cluster host unreachable: "Studio" is not connected, so other environments in the cluster cannot be reached. Work here continues.',
       });
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
@@ -1650,15 +993,169 @@ it.effect("a member whose main host is down hears that the cluster host is unrea
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `vp test run apps/server/src/peer/PeerForwarding.test.ts`
+Run: `vp test run apps/server/src/peer/PeerForwarding.test.ts -t "main host"`
 
 Expected: FAIL.
 
 - The first new test gets `linked_environments_off` / `capability_denied`, "Linked environments is off on this machine…", from `McpToolAccess`.
 - The second gets "This environment cannot reach linked environments." or an unknown-link refusal, because nothing routes through `ClusterService`.
-- Typecheck reports that `routeLabel` is missing.
+- The third gets an unknown-link refusal instead of "Cluster host unreachable".
+- Typecheck reports that `routeLabel`, `ClusterHostRequests` and `McpClientCaller.cluster` are missing.
 
 - [ ] **Step 3: Implement**
+
+`apps/server/src/mcp/McpInvocationContext.ts`. In `McpClientCaller`, after `linked`, add:
+
+```ts
+  /**
+   * Came over a cluster: the main host on a member, or a member's agent on the main host.
+   * Cluster traffic is full trust, so nothing it starts is fenced (`linkOrigin.ts`).
+   */
+  readonly cluster?: boolean | undefined;
+  /** On the main host: the member whose agent sent this call over its control link. */
+  readonly clusterMember?: EnvironmentId | undefined;
+```
+
+In `McpInvocationScope`, after `linkedEnvironments`, add:
+
+```ts
+  /** True while this environment is in a cluster; `/mcp` reads it per request. */
+  readonly clustered?: boolean;
+```
+
+`apps/server/src/auth/McpOAuth.ts`. Replace the `client:` object in `layerMcpClientAuthenticator`:
+
+```ts
+                  client: {
+                    sessionId: client.sessionId,
+                    label: client.label,
+                    access: client.access,
+                    linked: client.peerLink,
+                    ...(client.cluster === true ? { cluster: true } : {}),
+                    // Another T3 Code environment renders t3-thread links itself.
+                    ...(client.peerLink || client.cluster === true ? {} : { hostedAppUrl }),
+                  },
+```
+
+`apps/server/src/mcp/McpHttpServer.ts`. Change the doc comment and guard in `withSenderThread`:
+
+```ts
+/** Records the thread another T3 Code environment calls for; a malformed header only loses the name. */
+const withSenderThread = (
+  invocation: McpInvocationContext.McpInvocationScope,
+  request: HttpServerRequest.HttpServerRequest,
+): McpInvocationContext.McpInvocationScope => {
+  const header = request.headers[McpInvocationContext.SENDER_THREAD_HEADER];
+  if (
+    header === undefined ||
+    (invocation.client?.linked !== true && invocation.client?.cluster !== true)
+  )
+    return invocation;
+```
+
+In `authenticateRequest`, replace `return { ...limited, linkedEnvironments, origin };` with:
+
+```ts
+    return { ...limited, linkedEnvironments, clustered: yield* clustered, origin };
+```
+
+`apps/server/src/mcp/McpToolAccess.ts:451`. Change it to:
+
+```ts
+        if (scope.linkedEnvironments === false && scope.clustered !== true)
+          return yield* PeerForwarding.linkedEnvironmentsOff;
+```
+
+`apps/server/src/mcp/ClusterHostRequests.ts`:
+
+```ts
+import type { EnvironmentId } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
+import * as Effect from "effect/Effect";
+import { McpSchema, McpServer } from "effect/ai";
+
+import type * as ClusterService from "../cluster/ClusterService.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as McpInvocationContext from "./McpInvocationContext.ts";
+
+const PROTOCOL_VERSION = "2025-06-18";
+
+// A member's call asks this main host nothing back while it runs.
+const memberClient = McpSchema.McpServerClient.of({
+  clientId: 0,
+  protocolVersion: PROTOCOL_VERSION,
+  clientCapabilities: {},
+  clientInfo: { name: "t3code-cluster-member", version: "1" },
+  initializePayload: {
+    protocolVersion: PROTOCOL_VERSION,
+    capabilities: {},
+    clientInfo: { name: "t3code-cluster-member", version: "1" },
+  },
+  getClient: Effect.die("A cluster member's call asks the main host nothing back."),
+});
+
+/**
+ * Runs a member agent's call with this main host's own `/mcp` tools, as that member's
+ * client: full trust, narrowed to the agent's modes. A tool that names another member
+ * goes there through `PeerForwarding`; one that names none runs here.
+ */
+export const make = Effect.fn("ClusterHostRequests.make")(function* (environmentId: EnvironmentId) {
+  const server = yield* McpServer.McpServer;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const ceiling = serverSettings.managedPolicy?.limits?.maxRuntimeMode;
+  const serve: ClusterService.ClusterHostServe = (member, request) =>
+    Clock.currentTimeMillis.pipe(
+      Effect.flatMap((issuedAt) =>
+        server.callTool({ name: request.tool, arguments: request.arguments }).pipe(
+          Effect.provideService(
+            McpInvocationContext.McpInvocationContext,
+            McpInvocationContext.withRuntimeModeCeiling(
+              {
+                environmentId,
+                requestNamespace: `cluster-member:${member.environmentId}`,
+                thread: undefined,
+                client: {
+                  sessionId: `cluster-member:${member.environmentId}`,
+                  label: `Cluster member · ${member.label}`,
+                  access: "full-access",
+                  cluster: true,
+                  clusterMember: member.environmentId,
+                  narrowedTo: request.limits,
+                  ...(request.sender === undefined ? {} : { senderThread: request.sender }),
+                },
+                capabilities: new Set<McpInvocationContext.McpCapability>([
+                  "orchestration",
+                  "worktree",
+                  "pull-requests",
+                ]),
+                issuedAt,
+                linkedEnvironments: false,
+                clustered: true,
+              },
+              ceiling,
+            ),
+          ),
+          Effect.provideService(McpSchema.McpServerClient, memberClient),
+        ),
+      ),
+      Effect.map((result) => ({
+        isError: result.isError === true,
+        text: result.content.map((part) => (part.type === "text" ? part.text : "")).join(""),
+      })),
+      Effect.catch((error) =>
+        Effect.succeed({
+          isError: true,
+          text: JSON.stringify({
+            code: "invalid_request",
+            message: `The main host could not run ${request.tool}: ${error.message}`,
+          }),
+        }),
+      ),
+      Effect.withSpan("ClusterHostRequests.serve"),
+    );
+  return serve;
+});
+```
 
 `apps/server/src/peer/PeerForwarding.ts`:
 
@@ -1765,18 +1262,20 @@ const isRuntimeMode = Schema.is(RuntimeMode);
 const linkStorageFailure = (error: PeerLinkError) =>
   new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message });
 
-/** A removed member, or one without a route to its host, is final: a task there fails rather than retries. */
+/** A removed member is final: a task there fails rather than retries. An unreachable host is not. */
 const fromClusterError = (error: ClusterError) =>
   new OrchestratorMcpFailure({
-    code:
-      error.reason === "unknown_member" || error.reason === "no_host_mcp"
-        ? "capability_denied"
-        : "orchestration_error",
+    code: error.reason === "unknown_member" ? "capability_denied" : "orchestration_error",
     message:
       error.reason === "unknown_member"
         ? `${error.message} t3_environment_links lists this cluster's environments.`
         : error.message,
   });
+
+const membershipUnreadable = new OrchestratorMcpFailure({
+  code: "orchestration_error",
+  message: "This environment's cluster membership could not be read. The server log has details.",
+});
 
 const callerItself = new OrchestratorMcpFailure({
   code: "invalid_request",
@@ -1864,10 +1363,7 @@ const make = Effect.gen(function* () {
     Effect.flatMap((enabled) => (enabled ? Effect.void : Effect.fail(linkedEnvironmentsOff))),
   );
 
-  const memberRoute = (
-    service: ClusterService.ClusterService["Service"],
-    connection: ClusterService.MemberConnection,
-  ): PeerMcpClient.McpRoute => {
+  const memberRoute = (connection: ClusterService.MemberConnection): PeerMcpClient.McpRoute => {
     const name = `Cluster member "${connection.member.label}"`;
     return {
       key: `cluster ${connection.member.environmentId} ${connection.upstream.origin}`,
@@ -1880,37 +1376,16 @@ const make = Effect.gen(function* () {
         off: `${name} has clusters turned off. Turn them on in its Settings → Labs.`,
         unreachable: `${name} is not answering. Work there resumes once it is back.`,
       },
-      // The probe records why: offline, revoked or incompatible.
-      recordOutcome: (error) =>
-        error === null
-          ? Effect.void
-          : service
-              .probe(connection.member.environmentId)
-              .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid),
-    };
-  };
-
-  const hostRoute = (connection: ClusterService.HostConnection): PeerMcpClient.McpRoute => {
-    const name = `The cluster's main host "${connection.host.label}"`;
-    return {
-      key: `cluster ${connection.host.environmentId} ${connection.upstream.origin}`,
-      origin: connection.upstream.origin,
-      token: connection.token,
-      httpClient: connection.upstream.httpClient,
-      messages: {
-        name,
-        revoked: `${name} no longer accepts this member. Leave the cluster here, then ask for a new invite.`,
-        off: `${name} has clusters turned off. Turn them on in its Settings → Labs.`,
-        unreachable: `Cluster host unreachable: "${connection.host.label}" is not answering, so other environments in the cluster cannot be reached. Work here continues.`,
-      },
+      // The member's control link records its status; one call says nothing more.
       recordOutcome: () => Effect.void,
     };
   };
 
   /**
-   * How a call for `environmentId` leaves a clustered environment: straight to a member from
-   * the main host, or through the main host from a member. Undefined outside a cluster, where
-   * it goes over a peer link. Cluster traffic is full trust: no link fence, only the caller's modes.
+   * How a call for `environmentId` leaves a clustered environment: straight to a member's /mcp
+   * from the main host, or over this member's control link to the main host. Undefined outside a
+   * cluster, where it goes over a peer link. Cluster traffic is full trust: no link fence, only
+   * the caller's modes.
    */
   const clusterRoute = Effect.fn("PeerForwarding.clusterRoute")(function* (
     scope: Scope,
@@ -1919,22 +1394,22 @@ const make = Effect.gen(function* () {
     const state = yield* clusterState;
     if (state === undefined || cluster === undefined) return undefined;
     if (state.role === "main") {
-      if (scope.client?.cluster === true) {
-        const caller = yield* cluster.memberOfSession(scope.client.sessionId);
-        if (Option.isSome(caller) && caller.value === environmentId) return yield* callerItself;
-      }
+      if (scope.client?.clusterMember === environmentId) return yield* callerItself;
       const connection = yield* cluster
         .connect(environmentId)
         .pipe(Effect.mapError(fromClusterError));
-      return { route: memberRoute(cluster, connection), passTarget: false };
+      return { kind: "member", route: memberRoute(connection) } as const;
     }
     if (scope.client?.cluster === true) return yield* clusterLoop;
-    const connection = yield* cluster.connectHost.pipe(Effect.mapError(fromClusterError));
+    const host = state.host;
+    if (host === null) return yield* membershipUnreadable;
     return {
-      route: hostRoute(connection),
+      kind: "host",
+      label: host.label,
       // The main host runs a call for itself; one for another member it sends on.
-      passTarget: environmentId !== connection.host.environmentId,
-    };
+      passTarget: environmentId !== host.environmentId,
+      send: cluster.hostCall,
+    } as const;
   });
 
   /** Tool and contract schemas are plain data: they encode and decode without services. */
@@ -1974,11 +1449,26 @@ const make = Effect.gen(function* () {
         : viaCluster === undefined
           ? undefined
           : scope.client?.senderThread;
+    if (viaCluster?.kind === "host") {
+      const answer = yield* viaCluster
+        .send({
+          tool: toolName,
+          arguments: viaCluster.passTarget ? { ...args, environmentId } : args,
+          limits,
+          ...(sender === undefined ? {} : { sender }),
+        })
+        .pipe(Effect.mapError(fromClusterError));
+      return yield* PeerMcpClient.decodeToolResult(
+        answer,
+        success as Schema.Decoder<A>,
+        `The cluster's main host "${viaCluster.label}"`,
+      ).pipe(Effect.flatMap(Effect.fromResult));
+    }
     return yield* peers.call({
       environmentId,
       ...(viaCluster === undefined ? {} : { route: viaCluster.route }),
       tool: toolName,
-      arguments: viaCluster?.passTarget === true ? { ...args, environmentId } : args,
+      arguments: args,
       limits,
       ...(sender === undefined ? {} : { sender }),
       success: success as Schema.Decoder<A>,
@@ -2111,30 +1601,41 @@ const make = Effect.gen(function* () {
 export const layer = Layer.effect(PeerForwarding, make);
 ```
 
-`apps/server/src/mcp/McpToolAccess.ts:451`. Change it to:
+`apps/server/src/server.ts`. The main host's `serve` needs the `McpServer` that `McpHttpServer.layer` builds, so the link starts beside it. In `layerMakeRoutes`, replace the entry
 
 ```ts
-        if (scope.linkedEnvironments === false && scope.clustered !== true)
-          return yield* PeerForwarding.linkedEnvironmentsOff;
+  McpHttpServer.layer.pipe(
+    Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
+    Layer.provide(McpOAuth.layerMcpClientAuthenticator),
+  ),
 ```
 
-`apps/server/src/server.ts`. `PeerForwarding` reads `ClusterService` through `serviceOption`, so it must be built where `ClusterService` is already in its context. `Layer.provide(ClusterService.layer…)`, which Plan 2 placed above the links provide, only feeds the routes and never feeds `PeerForwarding.layer`. Make these changes:
-
-1. Cut the whole `ClusterService.layer.pipe(…)` expression out of Plan 2's `Layer.provide(…)`, byte for byte with its `ServerTls` and `ClusterUpstream` provides.
-2. Delete the now-empty `Layer.provide(` wrapper and the comment `// Clusters: joins, members and the proxy…` above it.
-3. Paste the cut expression as `Layer.provideMerge(<expression>)` between `PeerForwarding.layer.pipe(` and `Layer.provideMerge(PeerMcpClient.layer)`.
-
-Then change the comment above the provide to:
+with
 
 ```ts
-  // Links to other environments and the cluster, shared by Settings (WebSocket) and agents (/mcp).
+  // One control link to each member; their agents' calls run here with the same /mcp tools.
+  Layer.effectDiscard(
+    Effect.gen(function* () {
+      const cluster = yield* ClusterService.ClusterService;
+      const environment = yield* ServerEnvironment.ServerEnvironment;
+      const serve = yield* ClusterHostRequests.make(yield* environment.getEnvironmentId);
+      yield* cluster.start(serve);
+    }),
+  ).pipe(
+    Layer.provideMerge(
+      McpHttpServer.layer.pipe(
+        Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
+        Layer.provide(McpOAuth.layerMcpClientAuthenticator),
+      ),
+    ),
+  ),
 ```
 
-The block now has three `provideMerge`s, in this order: `ClusterService`, `PeerMcpClient`, `PeerLinks`. `ClusterService` takes `PeerLinks` from the `provideMerge` below it. Everything in `layerMakeRoutes` still sees `ClusterService` through the merge.
+and delete Plan 2 Task 8's `Layer.effectDiscard(… cluster.start(ClusterService.refuseHostRequests) …)` entry and its comment. Import `* as ClusterHostRequests from "./mcp/ClusterHostRequests.ts"` (and `* as ServerEnvironment from "./environment/ServerEnvironment.ts"` if `server.ts` does not import it yet). `ClusterService` reaches this layer through the `PeerForwarding` provide Plan 2 Task 6 set up.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `vp test run apps/server/src/peer/PeerForwarding.test.ts apps/server/src/peer/PeerMcpClient.test.ts apps/server/src/mcp/McpToolAccess.test.ts apps/server/src/mcp/McpToolAccess.race.test.ts`
+Run: `vp test run apps/server/src/peer/PeerForwarding.test.ts apps/server/src/peer/PeerMcpClient.test.ts apps/server/src/mcp/McpToolAccess.test.ts apps/server/src/mcp/McpToolAccess.race.test.ts apps/server/src/auth/McpOAuth.test.ts apps/server/src/mcp/McpHttpServer.test.ts`
 
 Expected: PASS.
 
@@ -2145,15 +1646,18 @@ Expected: no errors.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add apps/server/src/peer/PeerForwarding.ts apps/server/src/peer/PeerForwarding.test.ts apps/server/src/mcp/McpToolAccess.ts apps/server/src/server.ts
+git add apps/server/src/mcp/ClusterHostRequests.ts apps/server/src/peer/PeerForwarding.ts apps/server/src/peer/PeerForwarding.test.ts apps/server/src/mcp/McpInvocationContext.ts apps/server/src/auth/McpOAuth.ts apps/server/src/mcp/McpHttpServer.ts apps/server/src/mcp/McpToolAccess.ts apps/server/src/cluster/ClusterService.testkit.ts apps/server/src/server.ts
 git commit -m "feat(server): agents act on cluster environments through the main host
+
+A member's calls ride its control link; the main host runs them with its
+own /mcp tools and forwards to the target member.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ---
 
-## Task 5: Remote delegation to cluster members
+## Task 3: Remote delegation to cluster members
 
 **Files:**
 
@@ -2168,7 +1672,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 **Interfaces:**
 
-- Consumes: `PeerForwarding.routeLabel` and testkit `layerRoutingMain`, `clusterHostToken` and `RoutedEnvironment`.
+- Consumes: `PeerForwarding.routeLabel` and testkit `layerRoutingMain`, `clusterHostToken` and `RoutedEnvironment` (Task 2).
 - Produces: `RemoteDelegation` without a `PeerLinks` dependency. A task's `remoteChild.label` is the member's label. A task whose environment has no route fails as final.
 
 - [ ] **Step 1: Write the failing tests**
@@ -2324,7 +1828,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
-## Task 6: Agents list the cluster
+## Task 4: Agents list the cluster
 
 **Files:**
 
@@ -2336,11 +1840,11 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Modify: `apps/server/src/mcp/toolkits/orchestrator/tools.ts:323-335` (`EnvironmentLinksTool`)
 - Modify: `apps/server/src/peer/PeerForwarding.ts` (`listLinks`)
 - Modify: `evals/mcp-tool-use/cases/orchestration.ndjson` (append one case)
-- Test: `apps/server/src/peer/PeerForwarding.test.ts`. Extend the two cluster tests from Task 4.
+- Test: `apps/server/src/peer/PeerForwarding.test.ts`. Extend the three cluster tests from Task 2.
 
 **Interfaces:**
 
-- Consumes: `ClusterMemberStatus` (`packages/contracts/src/cluster.ts`), `ClusterService.members` and `connectHost`.
+- Consumes: `ClusterMemberStatus` (`packages/contracts/src/cluster.ts`), `ClusterService.members` and `hostCall` (Plan 2), `PeerMcpClient.decodeToolResult` (Task 1).
 - Produces:
   - `OrchestratorMcpClusterEnvironment = { environmentId; label; role: "main-host" | "member"; status: ClusterMemberStatus; lastError: string | null }`.
   - `OrchestratorMcpEnvironmentLinksResult.cluster?: ReadonlyArray<OrchestratorMcpClusterEnvironment>`, which lists every environment in the cluster except the caller's own.
@@ -2397,7 +1901,7 @@ In "a member whose main host is down hears that the cluster host is unreachable"
             role: "main-host",
             status: "offline",
             lastError:
-              'Cluster host unreachable: "Studio" is not answering, so other environments in the cluster cannot be reached. Work here continues.',
+              'Cluster host unreachable: "Studio" is not connected, so other environments in the cluster cannot be reached. Work here continues.',
           },
         ],
       });
@@ -2411,7 +1915,7 @@ Append to `evals/mcp-tool-use/cases/orchestration.ndjson` (one line):
 
 - [ ] **Step 2: Run the tests and the eval baseline to verify they fail**
 
-Run: `vp test run apps/server/src/peer/PeerForwarding.test.ts -t "cluster"`
+Run: `vp test run apps/server/src/peer/PeerForwarding.test.ts -t "main host"`
 
 Expected: FAIL. The listing is the peer one, `{ environmentId, links: [], notListed: "Not listed: not linked yet…" }` with no `cluster`. On the main host with the beta off it is `linked_environments_off`.
 
@@ -2512,31 +2016,31 @@ Change its last annotation to `.annotate(McpSchema.EnabledWhen, McpInvocationCon
     }
     const host = state.host;
     if (host === null) return [];
-    const reached = yield* service.connectHost.pipe(
-      Effect.mapError(fromClusterError),
-      Effect.flatMap((connection) =>
-        peers.call({
-          environmentId: host.environmentId,
-          route: hostRoute(connection),
-          tool: "t3_environment_links",
-          arguments: {},
-          limits,
-          success: OrchestratorMcpEnvironmentLinksResult,
+    const reached = yield* service
+      .hostCall({ tool: "t3_environment_links", arguments: {}, limits })
+      .pipe(
+        Effect.mapError(fromClusterError),
+        Effect.flatMap((answer) =>
+          PeerMcpClient.decodeToolResult(
+            answer,
+            OrchestratorMcpEnvironmentLinksResult,
+            `The cluster's main host "${host.label}"`,
+          ),
+        ),
+        Effect.flatMap(Effect.fromResult),
+        Effect.match({
+          onFailure: (failure) => ({
+            status: "offline" as const,
+            lastError: failure.message as string | null,
+            others: [] as ReadonlyArray<OrchestratorMcpClusterEnvironment>,
+          }),
+          onSuccess: (result) => ({
+            status: "online" as const,
+            lastError: null as string | null,
+            others: result.cluster ?? [],
+          }),
         }),
-      ),
-      Effect.match({
-        onFailure: (failure) => ({
-          status: "offline" as const,
-          lastError: failure.message as string | null,
-          others: [] as ReadonlyArray<OrchestratorMcpClusterEnvironment>,
-        }),
-        onSuccess: (result) => ({
-          status: "online" as const,
-          lastError: null as string | null,
-          others: result.cluster ?? [],
-        }),
-      }),
-    );
+      );
     return [
       {
         environmentId: host.environmentId,
@@ -2609,7 +2113,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
-## Task 7: Internal docs
+## Task 5: Internal docs
 
 **Files:**
 
@@ -2624,18 +2128,19 @@ Append:
 ```md
 ### Agents cross the cluster through the main host
 
-A member's agents reach other environments only through the main host's `/mcp`,
-using the `cluster-member` token the main host minted when it added the member
-([PeerForwarding](../../apps/server/src/peer/PeerForwarding.ts)). The main host
-sends the call on with its `cluster-host` token and the calling agent's
-`T3-Mode-Limit`, so the target caps it to that agent's modes. Cluster calls are
-full trust: they carry no `linkOrigin`, so the link fence never applies, while a
-peer link below full access stays fenced. The main host sends calls on without
+On the main host, a tool call that names a member goes to that member's `/mcp`
+with the main host's `cluster-host` token and the calling agent's
+`T3-Mode-Limit` ([PeerForwarding](../../apps/server/src/peer/PeerForwarding.ts)).
+A member's agents have no credential or address for the main host: their calls
+ride the member's control link back, and the main host runs each one with its
+own `/mcp` tools as that member's client
+([ClusterHostRequests](../../apps/server/src/mcp/ClusterHostRequests.ts)),
+forwarding it on when it names another member. Cluster calls are full trust:
+they carry no `linkOrigin`, so the link fence never applies, while a peer link
+below full access stays fenced. The main host sends calls on without
 `environmentId`, so a member refuses a call from it that names another
-environment rather than bouncing it back. The member calls
-`https://<main host's first LAN or tailnet address>/mcp`, pinned to its
-certificate. A main host with no such address hands out no route, and its
-members' agents are told to re-add the member.
+environment rather than bouncing it back. Each hop scopes `clientRequestId` to
+its caller, so an agent's retry after "cluster host unreachable" lands once.
 ```
 
 - [ ] **Step 2: Commit**
@@ -2651,7 +2156,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ## Final verification
 
-- [ ] Run: `vp test run apps/server/src/auth/EnvironmentAuth.test.ts apps/server/src/cluster apps/server/src/peer apps/server/src/mcp/McpToolAccess.test.ts apps/server/src/mcp/McpHttpServer.test.ts apps/server/src/persistence/reconcileV2PreviewMigration.test.ts apps/server/src/persistence/Migrations.test.ts`
+- [ ] Run: `vp test run apps/server/src/cluster apps/server/src/peer apps/server/src/mcp/McpToolAccess.test.ts apps/server/src/mcp/McpHttpServer.test.ts apps/server/src/auth/McpOAuth.test.ts`
 
   Expected: PASS.
 
@@ -2663,39 +2168,40 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   1. Start three dev servers in separate worktree `.t3` homes. One is the main host and two are members, joined over HTTPS.
   2. Using the free `Replay (dev)` provider on member A, run `delegate_task` with `target.environmentId` set to member B.
   3. Confirm that B's thread runs and that A's task completes.
-  4. Stop the main host and confirm that A's agent hears "Cluster host unreachable".
+  4. From member A, have an agent call `t3_environment_links`, which runs on the main host through the link; confirm it lists the main host and B. This exercises the main host's `McpServer.callTool` path in the real server.
+  5. Stop the main host and confirm that A's agent hears "Cluster host unreachable"; start it again and confirm A's task follower resumes without anyone touching A.
 
 ---
 
 ## Self-Review Against the Spec
 
-| Spec item ("Agents", plus related rows) | Where |
+| Spec item ("Control link", "Agents", plus related rows) | Where |
 | --- | --- |
-| Main host: `environmentId` tools forward to the member's `/mcp` with `cluster-host` | Task 4 (`clusterRoute` main branch, `ClusterService.connect`) |
-| Each member gets a `cluster-member` MCP credential at join | Task 1 (subject, `/mcp`-only), Task 3 (`addMember` mints it, `acceptJoin` stores it) |
-| Member agent targeting another member calls the main host's `/mcp`, which forwards; all traffic hairpins | Task 4 (`clusterRoute` member branch, `passTarget`), three-environment test |
-| Forwarded-wait limits ≤ 50 s | Task 4: `waitThere` caps every hop at 45 s; tests assert `[45_000]` direct and hairpinned |
-| Revoke on remove/leave | Task 3: `removeMember` and re-add revoke the session. Leave from the member deletes its copy (Plan 2 `leave`); the main host's session ends when the admin removes the then-`revoked` member |
-| "main host down … member agents get "cluster host unreachable" … local work continues" | Tasks 2 and 4 (`hostRoute.messages.unreachable`, `orchestration_error`, not final) |
-| Cluster separate from peer links; no fence for full trust | Task 4: cluster routes skip the beta and link access, and an `auto` link is still fenced on the same box. Task 6 hides link and unlink tools while clustered |
-| `clusterEnabled` gates both sides | `ClusterService.connect` / `connectHost` (`requireEnabled`) |
-| `delegate_task` to a member, including startup re-follow | Task 5 (restart test, removal test) |
-| Agents can discover members | Task 6 (`cluster` in `t3_environment_links`, eval case) |
-| Status `online | offline | incompatible | revoked` | Task 6 uses `ClusterMemberStatus`; a failed call to a member triggers `probe` (Task 4) |
+| Main host: `environmentId` tools forward to the member's `/mcp` with `cluster-host` | Task 2 (`clusterRoute` main branch, `ClusterService.connect`), Task 1 (`McpRoute`) |
+| A member agent targeting another environment puts the call on `cluster.hostChannel`; the main host runs it, forwarding to the target member, and replies | Task 2 (`clusterRoute` member branch → `ClusterService.hostCall`; `ClusterHostRequests.make` as `serve`; `server.ts` passes it to `start`) on Plan 2 Task 8's channel |
+| All cross-member traffic hairpins through the main host | Task 2, three-environment test |
+| No separate member-to-main credential exists; members never need the main host's address | Nothing here mints, stores or dials one; the member side only calls `hostCall` |
+| Requests queued while the link is down fail "cluster host unreachable", never delivered twice | Plan 2 Task 8 (link); Task 2 maps it to `orchestration_error` (not final) and tests it; Review Focus 5 for retries |
+| Forwarded-wait limits ≤ 50 s | Task 2: `waitThere` caps every hop at 45 s; tests assert `[45_000]` direct and hairpinned |
+| "main host down … member agents get "cluster host unreachable" … local work continues" | Task 2 (`fromClusterError` keeps `unreachable` retryable), Task 4 (listing degrades, does not fail) |
+| Cluster separate from peer links; no fence for full trust | Task 2: cluster routes skip the beta and link access, and an `auto` link is still fenced on the same box. Task 4 hides link and unlink tools while clustered |
+| `clusterEnabled` gates both sides | Main side: `ClusterService.connect` and the links (Plan 2). Member side: membership is the gate (Plan 2 resolved ambiguity 1) |
+| `delegate_task` to a member, including startup re-follow | Task 3 (restart test, removal test) |
+| Agents can discover members | Task 4 (`cluster` in `t3_environment_links`, eval case) |
+| Status `online | offline | incompatible | revoked` | Task 4 lists `ClusterMemberStatus` from the link; a failed call changes no status |
 
 ### Resolved ambiguities
 
 An implementer should not reopen these choices:
 
-1. **One seam.** `PeerForwarding.forward` resolves the route. Peer links and the cluster share the rest of `PeerMcpClient`: sessions, 404 renewal, mode and sender headers. `RemoteDelegation` and the toolkits do not change their routing.
-2. **The main host's address for members** is the first plain `DirectEndpoints` address, served as `https:` on the same port and pinned to the main host's own certificate. This adds `ClusterJoinRequest.hostMcp.certSha256`. There is no UI field for it. A main host that binds only to loopback, or that sits behind NAT with only T3 Connect, gives its members no route. Their agents get `no_host_mcp` with the fix.
+1. **One seam.** `PeerForwarding.forward` resolves the route. Main→member shares the rest of `PeerMcpClient` with peer links: sessions, 404 renewal, mode and sender headers. Member→main shares `decodeToolResult`. `RemoteDelegation` and the toolkits do not change their routing.
+2. **The main host runs a member's call with its own `McpServer`**, not a loopback `/mcp` request: no credential is minted for it, and the call keeps the member's identity (`clusterMember`) for the loop guard and its own idempotency namespace.
 3. **Error finality.** These map to `capability_denied`, which is final for `RemoteDelegation`:
    - An unknown or removed member.
-   - A missing route to the host.
-   - A revoked credential.
+   - A revoked credential (`/mcp` 401 on a member).
 
-   A host or member that does not answer, or has clusters off, maps to `orchestration_error`, which is retried.
-4. **Loops.** The main host refuses a member that names itself. A member refuses any call from its main host that names another environment. An unknown id on the main host is `unknown_member`.
+   A host whose link is down, or a member that does not answer or has clusters off, maps to `orchestration_error`, which is retried.
+4. **Loops.** The main host refuses a member's call that names that member. A member refuses any call from its main host that names another environment. An unknown id on the main host is `unknown_member`.
 5. **Labels.** On a member, the label of another member is its `environmentId`. Only the main host's name is known locally, and `t3_environment_links` shows the real names.
-6. **Listing.** `t3_environment_links` gains an optional `cluster` array instead of a new tool. A member asks its main host for the list. When the main host is down, the member lists the main host as `offline` with the unreachable message and does not fail.
-7. **The `cluster-member` token** lasts as long as `cluster-host` (10 years). It is revoked by `removeMember` and by re-adding the member.
+6. **Listing.** `t3_environment_links` gains an optional `cluster` array instead of a new tool. A member asks its main host for the list over the link. When the link is down, the member lists the main host as `offline` with the unreachable message and does not fail.
+7. **A member→member call's status effects stay with the link.** A failed call to a member records nothing; the member's control link owns its status.

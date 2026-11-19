@@ -23,7 +23,10 @@ describe("clusterAddTarget", () => {
     expect(clusterAddTarget(" me@box ", { ssh: true })).toBe("me@box");
     expect(clusterAddTarget("ssh://me@box:2222", { ssh: true })).toBe("ssh://me@box:2222");
     expect(clusterAddTarget("me@box", { ssh: false })).toBeNull();
-    expect(clusterAddTarget(`https://box.local:3773#K7M2Q9RZ3NWD`, { ssh: true })).toBeNull();
+    expect(clusterAddTarget(`https://box.local:3773#K7M2Q9RZ3NWD`, { ssh: true })).toBe(
+      `https://box.local:3773#K7M2Q9RZ3NWD`,
+    );
+    expect(clusterAddTarget(`me@box#K7M2Q9RZ3NWD`, { ssh: true })).toBeNull();
     expect(clusterAddTarget("", { ssh: true })).toBeNull();
   });
 });

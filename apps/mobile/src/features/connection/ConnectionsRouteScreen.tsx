@@ -11,6 +11,9 @@ import { AppBar } from "../../components/ui/AppBar";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
 import { LocalEnvironmentList } from "./LocalEnvironmentList";
 import { PullRequestRoutingSettings } from "./PullRequestRoutingSettings";
+import { useClusterHosts } from "../../state/cluster";
+import { useEnvironments } from "../../state/environments";
+import { ClusterSection } from "./ClusterSection";
 import { LinkedEnvironmentsSection } from "./LinkedEnvironmentsSection";
 import { LinkSeveralEnvironmentsAction } from "./LinkSeveralEnvironments";
 
@@ -25,6 +28,13 @@ export function ConnectionsRouteScreen() {
   } = useRemoteConnections();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
+  const clusterHosts = useClusterHosts();
+  const { environments } = useEnvironments();
+  const clusterMemberIds = new Set(
+    environments
+      .filter((environment) => environment.entry.target._tag === "ClusterConnectionTarget")
+      .map((environment) => environment.environmentId),
+  );
   const [expandedId, setExpandedId] = useState<EnvironmentId | null>(null);
   const handleToggle = (environmentId: EnvironmentId) => {
     setExpandedId((prev) => (prev === environmentId ? null : environmentId));
@@ -55,7 +65,9 @@ export function ConnectionsRouteScreen() {
         }}
       >
         <LocalEnvironmentList
-          environments={connectedEnvironments}
+          environments={connectedEnvironments.filter(
+            (environment) => !clusterMemberIds.has(environment.environmentId),
+          )}
           expandedId={expandedId}
           onToggle={handleToggle}
           onReconnect={onReconnectEnvironment}
@@ -77,6 +89,13 @@ export function ConnectionsRouteScreen() {
               />
             </Fragment>
           ))}
+        {clusterHosts.map((environment) => (
+          <ClusterSection
+            key={environment.environmentId}
+            environmentId={environment.environmentId}
+            environmentLabel={environment.label}
+          />
+        ))}
         <PullRequestRoutingSettings />
       </ScrollView>
     </View>

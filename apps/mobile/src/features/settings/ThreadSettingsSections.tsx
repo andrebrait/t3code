@@ -55,6 +55,15 @@ export function SettingsLabsRouteScreen() {
           )}
         />
         <MachineBetaSection
+          title={gt("Cluster")}
+          icon="link"
+          capability="cluster"
+          setting="clusterEnabled"
+          description={gt(
+            "Drive a machine's members through it. Turn it on for the main host and each member. While off, a machine adds no members and forwards nothing to them.",
+          )}
+        />
+        <MachineBetaSection
           title={gt("Fast worktree checkout")}
           icon="bolt.circle"
           capability="fastWorktreeCheckout"
@@ -261,7 +270,7 @@ export function NewThreadSettingsSection() {
   );
 }
 
-type MachineBetaSetting = "linkedEnvironmentsEnabled" | "fastWorktreeCheckout";
+type MachineBetaSetting = "linkedEnvironmentsEnabled" | "fastWorktreeCheckout" | "clusterEnabled";
 
 /** One switch per connected machine that offers the beta, since each machine's own setting decides. */
 function MachineBetaSection({
@@ -273,7 +282,7 @@ function MachineBetaSection({
 }: {
   readonly title: string;
   readonly icon: ComponentProps<typeof SettingsSwitchRow>["icon"];
-  readonly capability: "peerLinks" | "fastWorktreeCheckout";
+  readonly capability: "peerLinks" | "fastWorktreeCheckout" | "cluster";
   readonly setting: MachineBetaSetting;
   readonly description: string;
 }) {
@@ -317,7 +326,9 @@ function MachineBetaSection({
                     patch:
                       setting === "linkedEnvironmentsEnabled"
                         ? { linkedEnvironmentsEnabled: value }
-                        : { fastWorktreeCheckout: value },
+                        : setting === "clusterEnabled"
+                          ? { clusterEnabled: value }
+                          : { fastWorktreeCheckout: value },
                   },
                 })
               }

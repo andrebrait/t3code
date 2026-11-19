@@ -127,7 +127,7 @@ const proxyWebSocket = Effect.fn("DeviceHubProxy.proxyWebSocket")(function* (
   return HttpServerResponse.empty();
 });
 
-const pumpFrames =
+export const pumpFrames =
   /* Frame pumping runs continuously; a span per frame stream adds no diagnostic value. */
   Effect.fnUntraced(function* (source: Socket.Socket, sink: Socket.Writer) {
     const { pull } = yield* source.reader;

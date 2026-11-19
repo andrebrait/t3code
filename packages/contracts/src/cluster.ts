@@ -7,7 +7,7 @@ import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
 
 export const CLUSTER_SCOPES_HEADER = "x-t3-cluster-scopes";
 
-const CLUSTER_ROUTE_PREFIX = "/cluster";
+export const CLUSTER_ROUTE_PREFIX = "/cluster";
 
 export const ClusterMemberStatus = Schema.Literals([
   "online",

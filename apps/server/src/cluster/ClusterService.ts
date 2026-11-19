@@ -102,7 +102,7 @@ interface MembershipRow {
 }
 
 const REQUEST_TIMEOUT = Duration.seconds(10);
-const CERTIFICATE_CHANGED =
+export const CERTIFICATE_CHANGED =
   "Certificate changed: it presented a certificate other than the pinned one. Invite it again.";
 
 const MemberRow = Schema.Struct({

@@ -652,6 +652,17 @@ describe("ssh tunnel scripts", () => {
     }).pipe(Effect.provide(layerProcess));
   });
 
+  it("mints cluster invites with the runner that mints client pairing codes", () => {
+    assert.match(
+      SshTunnel.buildRemotePairingScript("state", ARCHIVE),
+      /"\$RUNNER_FILE" auth pairing create --base-dir "\$PAIRING_BASE_DIR" --json\n$/,
+    );
+    assert.match(
+      SshTunnel.buildRemotePairingScript("state", ARCHIVE, "cluster-member"),
+      /"\$RUNNER_FILE" cluster invite --base-dir "\$PAIRING_BASE_DIR" --json\n$/,
+    );
+  });
+
   it.effect("retains a bounded diagnostic tail when the tunnel exits before readiness", () =>
     Effect.gen(function* () {
       const diagnostic = "Connection refused: café";

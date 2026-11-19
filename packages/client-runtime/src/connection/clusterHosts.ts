@@ -21,7 +21,6 @@ export class ClusterHosts extends Context.Service<
   }
 >()("@t3tools/client-runtime/connection/clusterHosts") {}
 
-/** @public */
 export const layer = Layer.effect(
   ClusterHosts,
   Effect.gen(function* () {

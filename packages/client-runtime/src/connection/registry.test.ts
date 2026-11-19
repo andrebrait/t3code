@@ -18,6 +18,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Scheduler from "effect/Scheduler";
@@ -2268,12 +2269,36 @@ describe("EnvironmentRegistry cluster members", () => {
         yield* awaitConnectionState(registry, MEMBER_ID, (state) => state.phase === "connected");
         const sessionsBefore = (yield* Ref.get(harness.sessions)).length;
         const releasedBefore = yield* Ref.get(harness.releasedSessions);
+        // Stands in for an open thread view: it reports each start, then the labels it sees.
+        const starts = yield* Ref.make(0);
+        const seen = yield* Queue.unbounded<string>();
+        yield* registry
+          .followStream(
+            MEMBER_ID,
+            Stream.concat(
+              Stream.fromEffect(Ref.updateAndGet(starts, (count) => count + 1)).pipe(
+                Stream.map((count) => `start ${count}`),
+              ),
+              SubscriptionRef.changes(registry.entries).pipe(
+                Stream.map((entries) => entries.get(MEMBER_ID)?.target.label ?? "gone"),
+              ),
+            ),
+          )
+          .pipe(
+            Stream.runForEach((item) => Queue.offer(seen, item)),
+            Effect.forkScoped,
+          );
+        expect(yield* Queue.take(seen)).toBe("start 1");
 
         yield* registry.reconcileCluster({
           hostEnvironmentId: TARGET.environmentId,
           hostLabel: "Workshop",
           members: [{ ...clusterMember(MEMBER_ID, "Renamed"), lastError: "slow" }],
         });
+        while ((yield* Queue.take(seen)) !== "Renamed") {
+          // Labels from before the rename.
+        }
+        expect(yield* Ref.get(starts)).toBe(1);
 
         expect((yield* SubscriptionRef.get(registry.entries)).get(MEMBER_ID)?.target).toMatchObject(
           { label: "Renamed", hostLabel: "Workshop", statusDetail: "slow" },

@@ -919,7 +919,7 @@ const layerMakeRoutes = Layer.mergeAll(
         ClusterService.layer.pipe(
           Layer.provide(
             ClusterUpstream.layer.pipe(
-              Layer.provide(SshTunnel.SshEnvironmentManager.layer()),
+              Layer.provide(SshTunnel.SshEnvironmentManager.layer({ keepRemoteServer: true })),
               // The server's own ssh keys or agent; no client answers its prompts, desktop included.
               Layer.provide(SshAuth.SshPasswordPrompt.disabledLayer),
               Layer.provide(NetService.layer),

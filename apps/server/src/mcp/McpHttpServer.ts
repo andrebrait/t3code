@@ -31,6 +31,7 @@ import {
 import packageJson from "../../package.json" with { type: "json" };
 import { parseBearerToken } from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
+import * as ClusterRole from "../cluster/ClusterRole.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as DeviceService from "../device/DeviceService.ts";
 import * as HtmlRender from "../htmlRender/HtmlRender.ts";
@@ -273,11 +274,30 @@ const linkedEnvironmentsOff = HttpServerResponse.jsonUnsafe(
   { status: 403, headers: { "cache-control": "no-store" } },
 );
 
+// Clustered environments take no part in peer links; older peers read this like the beta being off.
+const clusteredLinksOff = HttpServerResponse.jsonUnsafe(
+  {
+    error: "linked_environments_off",
+    message: "This environment is part of a cluster, so it takes no part in linked environments.",
+  },
+  { status: 403, headers: { "cache-control": "no-store" } },
+);
+
 const makeMcpAuthMiddleware = Effect.gen(function* () {
   const registry = yield* McpSessionRegistry.McpSessionRegistry;
   const clients = yield* Effect.serviceOption(McpClientAuthenticator);
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const runtimeModeCeiling = serverSettings.managedPolicy?.limits?.maxRuntimeMode;
+  // Optional: in-process MCP hosts without a database have no cluster.
+  const clusterRole = yield* Effect.serviceOption(ClusterRole.ClusterRole);
+  const clustered = Option.match(clusterRole, {
+    onNone: () => Effect.succeed(false),
+    onSome: (role) =>
+      role.current.pipe(
+        Effect.map((state) => state.role !== "standalone"),
+        Effect.orElseSucceed(() => false),
+      ),
+  });
   const linksEnabled = serverSettings.getSettings.pipe(
     Effect.map((settings) => settings.linkedEnvironmentsEnabled),
     Effect.orElseSucceed(() => false),
@@ -332,6 +352,8 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     const limited = McpInvocationContext.withRuntimeModeCeiling(asked, runtimeModeCeiling);
     const linkedEnvironments = yield* linksEnabled;
     if (limited.client?.linked === true && !linkedEnvironments) return linkedEnvironmentsOff;
+    // Cluster-host sessions are not peer links (`linked` is false), so they pass.
+    if (limited.client?.linked === true && (yield* clustered)) return clusteredLinksOff;
     const origin = Option.getOrUndefined(Option.map(requestUrl(request), (url) => url.origin));
     const forge =
       limited.thread === undefined

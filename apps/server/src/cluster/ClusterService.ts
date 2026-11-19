@@ -2,26 +2,48 @@ import {
   AuthSessionId,
   AuthStandardClientScopes,
   type AuthClientMetadata,
+  type ClusterAddMemberInput,
   ClusterError,
   type ClusterInvite,
   type ClusterInviteInput,
   type ClusterJoinRequest,
   type ClusterJoinResult,
   type ClusterLeaveResult,
+  type ClusterMember,
+  ClusterMemberStatus,
+  type ClusterRemoveMemberResult,
+  type ClusterRenameMemberInput,
   type ClusterStatus,
+  ClusterTransport,
+  EnvironmentHttpApi,
   EnvironmentId,
+  type ExecutionEnvironmentDescriptor,
   formatClusterJoinString,
+  formatClusterSshTarget,
+  ORCHESTRATION_PROTOCOL_VERSION,
+  parseClusterJoinString,
+  parseClusterSshTarget,
 } from "@t3tools/contracts";
 import { isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
 import * as Context from "effect/Context";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpApi from "effect/http-api/HttpApi";
+import * as HttpApiClient from "effect/http-api/HttpApiClient";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
 import { CLUSTER_MEMBER_PAIRING_SUBJECT } from "../persistence/AuthPairingLinks.ts";
@@ -29,8 +51,11 @@ import type * as ManagedLimits from "../policy/managedLimits.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ServerTls from "../tls/ServerTls.ts";
 import * as ClusterRole from "./ClusterRole.ts";
+import * as ClusterUpstream from "./ClusterUpstream.ts";
+import * as PinnedTransport from "./pinnedTransport.ts";
 
 const INVITE_TTL = Duration.minutes(10);
+const CLUSTER_OFF = "Cluster is off on this machine. Turn it on in Settings → Labs.";
 
 const storageError = (cause: unknown) =>
   new ClusterError({
@@ -62,6 +87,71 @@ interface MembershipRow {
   readonly host_session_id: string;
 }
 
+const REQUEST_TIMEOUT = Duration.seconds(10);
+const CERTIFICATE_CHANGED =
+  "Certificate changed: it presented a certificate other than the pinned one. Invite it again.";
+
+const MemberRow = Schema.Struct({
+  environment_id: EnvironmentId,
+  label: Schema.String,
+  transport: ClusterTransport,
+  url: Schema.NullOr(Schema.String),
+  ssh_target: Schema.NullOr(Schema.String),
+  cert_sha256: Schema.NullOr(Schema.String),
+  secret_name: Schema.String,
+  status: ClusterMemberStatus,
+  joined_at: Schema.DateTimeUtcFromString,
+  last_reached_at: Schema.NullOr(Schema.DateTimeUtcFromString),
+  last_error: Schema.NullOr(Schema.String),
+});
+type MemberRow = typeof MemberRow.Type;
+const decodeRows = Schema.decodeUnknownEffect(Schema.Array(MemberRow));
+
+const toMember = (row: MemberRow): ClusterMember => ({
+  environmentId: row.environment_id,
+  label: row.label,
+  transport: row.transport,
+  address: row.url ?? row.ssh_target ?? "",
+  status: row.status,
+  joinedAt: row.joined_at,
+  lastReachedAt: row.last_reached_at,
+  lastError: row.last_error,
+});
+
+const MemberApi = HttpApi.make(EnvironmentHttpApi.identifier)
+  .add(EnvironmentHttpApi.groups.metadata)
+  .add(EnvironmentHttpApi.groups.auth)
+  .add(EnvironmentHttpApi.groups.cluster)
+  .annotateMerge(EnvironmentHttpApi.annotations);
+
+const isCompatible = (descriptor: ExecutionEnvironmentDescriptor) =>
+  descriptor.orchestrationProtocolVersion === ORCHESTRATION_PROTOCOL_VERSION &&
+  descriptor.capabilities.cluster === true;
+
+const isClusterError = Schema.is(ClusterError);
+
+/** Why `origin` failed a join, keeping the member's own refusal. */
+const reachError = (origin: string) => (error: unknown) =>
+  isClusterError(error)
+    ? error
+    : PinnedTransport.isPinMismatch(error)
+      ? new ClusterError({
+          reason: "certificate_changed",
+          message: `${origin}: ${CERTIFICATE_CHANGED}`,
+          cause: error,
+        })
+      : new ClusterError({
+          reason: "unreachable",
+          message: `${origin} did not answer as a T3 Code environment.`,
+          cause: error,
+        });
+
+interface MemberConnection {
+  readonly upstream: ClusterUpstream.Upstream;
+  readonly token: string;
+  readonly member: ClusterMember;
+}
+
 /** Join, leave, members and refusals for both sides of a cluster. */
 export class ClusterService extends Context.Service<
   ClusterService,
@@ -76,6 +166,21 @@ export class ClusterService extends Context.Service<
     ) => Effect.Effect<ClusterJoinResult, ClusterError>;
     /** Member side: ends the membership and revokes the host's session. Needs no network. */
     readonly leave: Effect.Effect<ClusterLeaveResult, ClusterError>;
+    readonly members: Stream.Stream<ReadonlyArray<ClusterMember>>;
+    readonly addMember: (
+      input: ClusterAddMemberInput,
+    ) => Effect.Effect<ClusterMember, ClusterError>;
+    /** Forgets the member here and asks it to leave; it may be offline. */
+    readonly removeMember: (
+      memberId: EnvironmentId,
+    ) => Effect.Effect<ClusterRemoveMemberResult, ClusterError>;
+    readonly renameMember: (
+      input: ClusterRenameMemberInput,
+    ) => Effect.Effect<ClusterMember, ClusterError>;
+    /** Where to reach a member and the `cluster-host` token to send it. */
+    readonly connect: (memberId: EnvironmentId) => Effect.Effect<MemberConnection, ClusterError>;
+    /** Completes once the member is removed or revoked. */
+    readonly awaitGone: (memberId: EnvironmentId) => Effect.Effect<void>;
   }
 >()("t3/cluster/ClusterService") {}
 
@@ -89,6 +194,14 @@ const make = Effect.gen(function* () {
   const role = yield* ClusterRole.ClusterRole;
   // One join or leave at a time, so two hosts racing for this member cannot both win.
   const memberLock = yield* Semaphore.make(1);
+  const upstream = yield* ClusterUpstream.ClusterUpstream;
+  const secrets = yield* ServerSecretStore.ServerSecretStore;
+  const random = yield* SecureRandom.SecureRandom;
+  // Each join rotates the member's token; racing adds could store one it already revoked.
+  const hostLock = yield* Semaphore.make(1);
+  // Mirrors cluster_members so proxied requests read no database.
+  const rowsRef = yield* SubscriptionRef.make<ReadonlyArray<MemberRow>>([]);
+  const tokens = new Map<string, string>();
 
   const enabled = serverSettings.getSettings.pipe(
     Effect.map((settings) => settings.clusterEnabled),
@@ -130,7 +243,13 @@ const make = Effect.gen(function* () {
         });
       }
       const url = input.url === undefined ? undefined : URL.parse(input.url);
-      if (url === null || (url !== undefined && url.protocol !== "https:")) {
+      // Plain http only to this machine, as ClusterUpstream allows.
+      if (
+        url === null ||
+        (url !== undefined &&
+          url.protocol !== "https:" &&
+          !(url.protocol === "http:" && isLocalLoopbackHost(url.hostname)))
+      ) {
         return yield* new ClusterError({
           reason: "invalid_target",
           message: `${input.url} is not an https address the main host can reach.`,
@@ -262,13 +381,253 @@ const make = Effect.gen(function* () {
     return { left: true };
   }).pipe(memberLock.withPermits(1), Effect.withSpan("ClusterService.leave"));
 
+  const requireEnabled = enabled.pipe(
+    Effect.flatMap((on) =>
+      on
+        ? Effect.void
+        : Effect.fail(new ClusterError({ reason: "disabled", message: CLUSTER_OFF })),
+    ),
+  );
+  const enabledChanges = Stream.concat(
+    Stream.fromEffect(enabled),
+    serverSettings.streamChanges.pipe(Stream.map((settings) => settings.clusterEnabled)),
+  ).pipe(Stream.changes);
+
+  let lastRows = "";
+  const reload = sql`SELECT * FROM cluster_members ORDER BY label, environment_id`.pipe(
+    Effect.flatMap((raw) => {
+      const serialized = JSON.stringify(raw);
+      // Unchanged rows publish nothing, so `members` sends clients only real changes.
+      if (serialized === lastRows) return Effect.void;
+      return decodeRows(raw).pipe(
+        Effect.flatMap((rows) => SubscriptionRef.set(rowsRef, rows)),
+        Effect.andThen(Effect.sync(() => (lastRows = serialized))),
+      );
+    }),
+    Effect.mapError(storageError),
+    Effect.withSpan("ClusterService.reload"),
+  );
+  yield* reload.pipe(
+    Effect.catch((cause) => Effect.logWarning("Cluster members could not be read", { cause })),
+  );
+
+  const findRow = Effect.fn("ClusterService.findRow")(function* (memberId: EnvironmentId) {
+    const row = (yield* SubscriptionRef.get(rowsRef)).find(
+      (candidate) => candidate.environment_id === memberId,
+    );
+    if (row === undefined) {
+      return yield* new ClusterError({
+        reason: "unknown_member",
+        message: `${memberId} is not a member of this cluster.`,
+      });
+    }
+    return row;
+  });
+
+  const tokenOf = Effect.fn("ClusterService.tokenOf")(function* (secretName: string) {
+    const cached = tokens.get(secretName);
+    if (cached !== undefined) return cached;
+    const stored = yield* secrets.get(secretName).pipe(Effect.mapError(storageError));
+    if (Option.isNone(stored)) {
+      return yield* new ClusterError({
+        reason: "unknown_member",
+        message: "This member lost its credential here. Invite it again.",
+      });
+    }
+    const token = new TextDecoder().decode(stored.value);
+    tokens.set(secretName, token);
+    return token;
+  });
+
+  const clientFor = (connection: ClusterUpstream.Upstream) =>
+    HttpApiClient.make(MemberApi, { baseUrl: connection.origin }).pipe(
+      Effect.provideService(HttpClient.HttpClient, connection.httpClient),
+    );
+
+  const connect: ClusterService["Service"]["connect"] = Effect.fn("ClusterService.connect")(
+    function* (memberId) {
+      yield* requireEnabled;
+      const row = yield* findRow(memberId);
+      const token = yield* tokenOf(row.secret_name);
+      const connection = yield* upstream.connect(
+        row.transport === "https"
+          ? { transport: "https", url: row.url ?? "", certSha256: row.cert_sha256 }
+          : { transport: "ssh", sshTarget: row.ssh_target ?? "" },
+      );
+      return { upstream: connection, token, member: toMember(row) };
+    },
+  );
+
+  const addMember: ClusterService["Service"]["addMember"] = Effect.fn("ClusterService.addMember")(
+    function* (input) {
+      yield* requireEnabled;
+      yield* role.refuseIfMember("Adding a cluster member");
+      const self = yield* environment.getDescriptor;
+      const join = parseClusterJoinString(input.target);
+      const sshTarget = join === undefined ? parseClusterSshTarget(input.target) : undefined;
+      const resolved =
+        join !== undefined
+          ? {
+              target: { transport: "https", url: join.url, certSha256: join.fingerprint } as const,
+              code: Effect.succeed(join.code),
+            }
+          : sshTarget !== undefined
+            ? {
+                target: { transport: "ssh", sshTarget: formatClusterSshTarget(sshTarget) } as const,
+                code: upstream
+                  .inviteOverSsh(formatClusterSshTarget(sshTarget))
+                  .pipe(Effect.map((invited) => invited.code)),
+              }
+            : undefined;
+      if (resolved === undefined) {
+        return yield* new ClusterError({
+          reason: "invalid_target",
+          message:
+            "Paste the join string from the member's Settings → Cluster or `t3 cluster invite`, or an ssh target such as me@box.",
+        });
+      }
+      const code = yield* resolved.code;
+      const connection = yield* upstream.connect(resolved.target);
+      const client = yield* clientFor(connection);
+      const descriptor = yield* client.metadata
+        .descriptor()
+        .pipe(Effect.timeout(REQUEST_TIMEOUT), Effect.mapError(reachError(connection.origin)));
+      if (descriptor.environmentId === self.environmentId) {
+        return yield* new ClusterError({
+          reason: "self",
+          message: "That address is this environment.",
+        });
+      }
+      if (!isCompatible(descriptor)) {
+        return yield* new ClusterError({
+          reason: "incompatible",
+          message: `${descriptor.label} runs a T3 Code version without clusters or speaks another protocol. Update both environments.`,
+        });
+      }
+      const joined = yield* client.cluster
+        .join({ payload: { code, host: { environmentId: self.environmentId, label: self.label } } })
+        .pipe(Effect.timeout(REQUEST_TIMEOUT), Effect.mapError(reachError(connection.origin)));
+      if (joined.environmentId !== descriptor.environmentId) {
+        return yield* new ClusterError({
+          reason: "unreachable",
+          message: `${connection.origin} answered as another environment while joining.`,
+        });
+      }
+      const wasStandalone = (yield* role.current).role === "standalone";
+      const previous = (yield* SubscriptionRef.get(rowsRef)).find(
+        (row) => row.environment_id === joined.environmentId,
+      );
+      const secretName = `cluster-member-${Hex.encode(yield* random.randomBytes(16))}`;
+      const target = resolved.target;
+      yield* Effect.gen(function* () {
+        yield* secrets.set(secretName, new TextEncoder().encode(joined.token));
+        const now = DateTime.formatIso(yield* DateTime.now);
+        yield* sql`
+          INSERT INTO cluster_members (environment_id, label, transport, url, ssh_target, cert_sha256, secret_name, status, joined_at, last_reached_at, last_error)
+          VALUES (
+            ${joined.environmentId}, ${input.label ?? joined.label}, ${target.transport},
+            ${target.transport === "https" ? target.url : null},
+            ${target.transport === "ssh" ? target.sshTarget : null},
+            ${target.transport === "https" && target.url.startsWith("https:") ? target.certSha256 : null},
+            ${secretName}, 'offline', ${now}, ${now}, NULL
+          )
+          ON CONFLICT (environment_id) DO UPDATE SET
+            transport = excluded.transport, url = excluded.url, ssh_target = excluded.ssh_target,
+            cert_sha256 = excluded.cert_sha256, secret_name = excluded.secret_name,
+            status = 'offline', last_reached_at = excluded.last_reached_at, last_error = NULL
+        `;
+        if (previous !== undefined) {
+          tokens.delete(previous.secret_name);
+          yield* secrets.remove(previous.secret_name);
+        }
+      }).pipe(
+        Effect.mapError(storageError),
+        Effect.onError(() => secrets.remove(secretName).pipe(Effect.ignore)),
+      );
+      // A main host reaches other environments through its members, not its own peer links.
+      if (wasStandalone) yield* peerLinks.unlinkAll.pipe(Effect.mapError(storageError));
+      yield* reload;
+      return toMember(yield* findRow(joined.environmentId));
+    },
+    (effect) => hostLock.withPermits(1)(effect),
+  );
+
+  const removeMember: ClusterService["Service"]["removeMember"] = Effect.fn(
+    "ClusterService.removeMember",
+  )(
+    function* (memberId) {
+      const row = (yield* SubscriptionRef.get(rowsRef)).find(
+        (candidate) => candidate.environment_id === memberId,
+      );
+      if (row === undefined) return { removed: false, memberNotified: false };
+      const memberNotified = yield* connect(memberId).pipe(
+        Effect.flatMap(({ upstream: connection, token }) =>
+          clientFor(connection).pipe(
+            Effect.flatMap((client) =>
+              client.cluster.leave({ headers: { authorization: `Bearer ${token}` } }),
+            ),
+          ),
+        ),
+        Effect.timeout(REQUEST_TIMEOUT),
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
+      );
+      yield* sql`DELETE FROM cluster_members WHERE environment_id = ${memberId}`.pipe(
+        Effect.mapError(storageError),
+      );
+      tokens.delete(row.secret_name);
+      yield* secrets.remove(row.secret_name).pipe(Effect.mapError(storageError));
+      yield* reload;
+      return { removed: true, memberNotified };
+    },
+    (effect) => hostLock.withPermits(1)(effect),
+  );
+
+  const renameMember: ClusterService["Service"]["renameMember"] = Effect.fn(
+    "ClusterService.renameMember",
+  )(function* (input) {
+    yield* findRow(input.memberId);
+    yield* sql`UPDATE cluster_members SET label = ${input.label} WHERE environment_id = ${input.memberId}`.pipe(
+      Effect.mapError(storageError),
+    );
+    yield* reload;
+    return toMember(yield* findRow(input.memberId));
+  });
+
+  // Clients would otherwise list members the proxy answers 403 for.
+  const members = Stream.zipLatestWith(
+    SubscriptionRef.changes(rowsRef),
+    enabledChanges,
+    (rows, on) => (on ? rows.map(toMember) : []),
+  );
+
+  const awaitGone: ClusterService["Service"]["awaitGone"] = (memberId) =>
+    SubscriptionRef.changes(rowsRef).pipe(
+      Stream.filter(
+        (rows) => !rows.some((row) => row.environment_id === memberId && row.status !== "revoked"),
+      ),
+      Stream.take(1),
+      Stream.runDrain,
+    );
+
   // A member that stopped between a join's commit and its revocations finishes them here.
   const membership = yield* readMembership.pipe(Effect.orElseSucceed(() => null));
   if (membership !== null) {
     yield* keepOnlyHostAndLoopback(AuthSessionId.make(membership.host_session_id));
   }
 
-  return ClusterService.of({ status, invite, acceptJoin, leave });
+  return ClusterService.of({
+    status,
+    invite,
+    acceptJoin,
+    leave,
+    members,
+    addMember,
+    removeMember,
+    renameMember,
+    connect,
+    awaitGone,
+  });
 });
 
 export const layer = Layer.effect(ClusterService, make);

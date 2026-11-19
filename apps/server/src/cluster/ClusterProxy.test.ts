@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - A real TLS listener stands in for a re-keyed member.
 import * as NodeFS from "node:fs";
+import * as NodeHttp from "node:http";
 import * as NodeHttps from "node:https";
 import type * as NodeNet from "node:net";
 
@@ -92,6 +93,48 @@ const serveOtherCertificate = Effect.acquireRelease(
   Effect.map((server) => `https://127.0.0.1:${(server.address() as NodeNet.AddressInfo).port}`),
 );
 
+/** The first frames a socket at `url` receives; fails when it does not open. */
+const firstFrames = (url: string) =>
+  Effect.scoped(
+    Socket.makeWebSocket(url).pipe(
+      Effect.provide(NodeSocket.layerWebSocketConstructor),
+      Effect.flatMap((socket) => socket.reader),
+      Effect.flatMap(({ pull }) => pull),
+    ),
+  );
+
+/** Whether a socket at `url` opens at all. */
+const opens = (url: string) =>
+  Effect.scoped(
+    Socket.makeWebSocket(url).pipe(
+      Effect.provide(NodeSocket.layerWebSocketConstructor),
+      Effect.flatMap((socket) => socket.reader),
+      Effect.as(true),
+      Effect.orElseSucceed(() => false),
+    ),
+  );
+
+const ticketFor = (url: string, token: string) =>
+  HttpClient.execute(HttpClientRequest.post(url).pipe(HttpClientRequest.bearerToken(token))).pipe(
+    Effect.flatMap((response) => response.json),
+    Effect.map((body) => (body as { readonly ticket: string }).ticket),
+  );
+
+/** A POST as curl sends it, with headers fetch would refuse to set. */
+const rawPost = (url: string, headers: Record<string, string>, body: string) =>
+  Effect.callback<{ readonly status: number; readonly body: string }>((resume) => {
+    const request = NodeHttp.request(url, { method: "POST", headers }, (response) => {
+      let text = "";
+      response.setEncoding("utf8");
+      response.on("data", (chunk: string) => (text += chunk));
+      response.on("end", () =>
+        resume(Effect.succeed({ status: response.statusCode ?? 0, body: text })),
+      );
+    });
+    request.on("error", (error) => resume(Effect.die(error)));
+    request.end(body);
+  });
+
 it.effect("forwards HTTP to the member under the client's scopes, never the client's header", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -132,6 +175,53 @@ it.effect("forwards HTTP to the member under the client's scopes, never the clie
         expect((yield* get(`${base}${path}`, admin)).status).toBe(404);
       }
       expect(yield* member.cluster.status).toMatchObject({ role: "member" });
+    }),
+  ).pipe(Effect.provide(FetchHttpClient.layer)),
+);
+
+it.effect("decides by the path the member routes, not the path the client spelled", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { main, base } = yield* joinCluster;
+      const operator = yield* clientToken(main, ["orchestration:read", "orchestration:operate"]);
+      const wsBase = base.replace(/^http/, "ws");
+      // A media ticket never opens the member's RPC socket, however `/ws` is spelled.
+      for (const path of ["//ws", "/WS", "/ws/"]) {
+        const media = yield* ticketFor(`${base}/api/auth/websocket-ticket/media`, operator);
+        expect(yield* opens(`${wsBase}${path}?wsTicket=${media}`)).toBe(false);
+      }
+      // The main host answers ticket requests, so the ticket opens sockets through it.
+      const ticket = yield* ticketFor(`${base}//api/auth/websocket-ticket/media`, operator);
+      const [hello] = yield* firstFrames(`${wsBase}/echo?wsTicket=${ticket}`);
+      expect(JSON.parse(String(hello))).toMatchObject({
+        scopes: "orchestration:read orchestration:operate",
+      });
+    }),
+  ).pipe(Effect.provide(FetchHttpClient.layer)),
+);
+
+it.effect("forwards bodies sent chunked or after 100-continue", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { main, base } = yield* joinCluster;
+      const admin = yield* clientToken(main, AuthStandardClientScopes);
+      const body = JSON.stringify({ id: "x".repeat(2048) });
+      for (const framing of [
+        { "transfer-encoding": "chunked" },
+        { expect: "100-continue", "content-length": String(body.length) },
+      ]) {
+        const response = yield* rawPost(
+          `${base}/api/auth/pairing-links/revoke`,
+          {
+            authorization: `Bearer ${admin}`,
+            "content-type": "application/json",
+            "keep-alive": "timeout=5",
+            ...framing,
+          },
+          body,
+        );
+        expect(response.status, response.body).toBe(200);
+      }
     }),
   ).pipe(Effect.provide(FetchHttpClient.layer)),
 );

@@ -27,6 +27,7 @@ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "../auth/http.ts";
 import * as SessionStore from "../auth/SessionStore.ts";
 import { pumpFrames } from "../device/DeviceHubProxy.ts";
+import { forwardedRequestHeaders, forwardedResponseHeaders } from "../proxyHeaders.ts";
 import { requestUrl } from "../requestUrl.ts";
 import * as ClusterService from "./ClusterService.ts";
 import * as PinnedTransport from "./pinnedTransport.ts";
@@ -36,29 +37,6 @@ const MEMBER_PATH = /^\/cluster\/([^/]+)(\/.*)?$/;
 const TICKET_PATH = /^\/api\/auth\/websocket-ticket(?:\/(rpc|media))?$/;
 // Join, leave and the control link belong to the main host; a capped client must not reach them.
 const MEMBER_CLUSTER_PATH = /^\/api\/cluster(?:\/|$)/;
-
-// Client credentials never reach a member; the proxy sends its own and the scope cap.
-const DROPPED_REQUEST_HEADERS = new Set([
-  "host",
-  "connection",
-  "upgrade",
-  "sec-websocket-key",
-  "sec-websocket-version",
-  "sec-websocket-extensions",
-  "sec-websocket-protocol",
-  "cookie",
-  "authorization",
-  "dpop",
-  "content-length",
-  "accept-encoding",
-  CLUSTER_SCOPES_HEADER,
-]);
-const DROPPED_RESPONSE_HEADERS = new Set([
-  "content-encoding",
-  "transfer-encoding",
-  "connection",
-  "set-cookie",
-]);
 
 const encodeTicket = Schema.encodeEffect(AuthWebSocketTicketResult);
 const notFound = () => HttpServerResponse.text("Not Found", { status: 404 });
@@ -125,23 +103,28 @@ const handler = Effect.gen(function* () {
   const match = Option.isSome(url) ? MEMBER_PATH.exec(url.value.pathname) : null;
   if (Option.isNone(url) || match === null) return notFound();
   const path = match[2] ?? "/";
+  // Every decision below uses the path as the member's router matches it, however it was spelled.
   const decoded = Option.liftThrowable(() => ({
     memberId: decodeURIComponent(match[1]!),
-    // Spelled the way a lenient router could still route it to the member's cluster endpoints.
-    path: decodeURIComponent(path).replaceAll(/\/+/g, "/").toLowerCase(),
+    route: decodeURIComponent(path)
+      .replaceAll(/\/+/g, "/")
+      .replace(/(.)\/$/, "$1")
+      .toLowerCase(),
   }))();
-  if (Option.isNone(decoded) || MEMBER_CLUSTER_PATH.test(decoded.value.path)) return notFound();
+  if (Option.isNone(decoded)) return notFound();
+  const { route } = decoded.value;
+  if (MEMBER_CLUSTER_PATH.test(route)) return notFound();
   const memberId = EnvironmentId.make(decoded.value.memberId);
   const upgrade = request.headers.upgrade?.toLowerCase() === "websocket";
 
   // The descriptor is public on every environment; clients read it before they hold credentials.
-  if (!upgrade && request.method === "GET" && path === "/.well-known/t3/environment") {
+  if (!upgrade && request.method === "GET" && route === "/.well-known/t3/environment") {
     return yield* forwardPublicDescriptor(memberId, request);
   }
   const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
   const session = yield* (
     upgrade
-      ? serverAuth.authenticateWebSocketUpgrade(request, path === "/ws" ? "rpc" : "media")
+      ? serverAuth.authenticateWebSocketUpgrade(request, route === "/ws" ? "rpc" : "media")
       : serverAuth.authenticateHttpRequest(request)
   ).pipe(
     Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
@@ -155,7 +138,7 @@ const handler = Effect.gen(function* () {
     ),
   );
 
-  const ticketUse = request.method === "POST" ? TICKET_PATH.exec(path) : null;
+  const ticketUse = request.method === "POST" ? TICKET_PATH.exec(route) : null;
   if (ticketUse !== null) {
     const use = ticketUse[1] === "rpc" || ticketUse[1] === "media" ? ticketUse[1] : undefined;
     const ticket = yield* serverAuth
@@ -169,10 +152,6 @@ const handler = Effect.gen(function* () {
   if (Result.isFailure(connected)) return connectFailure(memberId, connected.failure);
   const { upstream, token, member } = connected.success;
 
-  const headers: Record<string, string> = {};
-  for (const [name, value] of Object.entries(request.headers)) {
-    if (!DROPPED_REQUEST_HEADERS.has(name) && value !== undefined) headers[name] = value;
-  }
   const credentials = {
     authorization: `Bearer ${token}`,
     [CLUSTER_SCOPES_HEADER]: encodeOAuthScope(session.scopes),
@@ -232,7 +211,11 @@ const handler = Effect.gen(function* () {
   const response = yield* HttpClient.withScope(upstream.httpClient)
     .execute(
       HttpClientRequest.make(method)(upstreamUrl).pipe(
-        HttpClientRequest.setHeaders({ ...headers, ...credentials }),
+        // Last, so a client-sent scope cap is always replaced.
+        HttpClientRequest.setHeaders({
+          ...forwardedRequestHeaders(request.headers),
+          ...credentials,
+        }),
         method === "GET" || method === "HEAD"
           ? (self) => self
           : HttpClientRequest.bodyStream(request.stream, {
@@ -244,10 +227,7 @@ const handler = Effect.gen(function* () {
   // Status is the control link's to record; the proxy only answers this request.
   if (Result.isFailure(response)) return unreachable(memberId, response.failure);
   if (response.success.status === 401) return memberFailure(memberId, "revoked");
-  const responseHeaders: Record<string, string> = {};
-  for (const [name, value] of Object.entries(response.success.headers)) {
-    if (!DROPPED_RESPONSE_HEADERS.has(name) && value !== undefined) responseHeaders[name] = value;
-  }
+  const responseHeaders = forwardedResponseHeaders(response.success.headers);
   return HttpServerResponse.stream(response.success.stream.pipe(Stream.interruptWhen(ended)), {
     status: response.success.status,
     headers: responseHeaders,

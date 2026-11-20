@@ -7832,7 +7832,7 @@
   "3202e5e7e3ac64f4": "Det gick inte att läsa in klustermedlemmar",
   "20ec2553636ff8b6": "Läser in klustermedlemmar…",
   "185c47873cbc3a58": "Inga medlemmar ännu",
-  "038890c68421f5d0": "Välj Gå med i ett kluster… under Inställningar → Miljöer → Kluster på den andra maskinen och lägg sedan till dess anslutningssträng här.",
+  "b67ffe2892c0809f": "Välj Gå med i ett kluster… på den andra maskinen och klistra in dess anslutningssträng i Lägg till medlem.",
   "e83d7e0f8edc2a67": "Aldrig nådd",
   "6e5bd943c29069ba": "Senast sedd {time}",
   "4b8e5df2cc93095e": "Ta bort {label} från klustret? Den blir en fristående miljö igen.",

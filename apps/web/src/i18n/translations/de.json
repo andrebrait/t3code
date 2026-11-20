@@ -7827,7 +7827,7 @@
   "3202e5e7e3ac64f4": "Clustermitglieder konnten nicht geladen werden",
   "20ec2553636ff8b6": "Clustermitglieder werden geladen…",
   "185c47873cbc3a58": "Noch keine Mitglieder",
-  "038890c68421f5d0": "Wähle auf dem anderen Rechner unter Einstellungen → Umgebungen → Cluster „Einem Cluster beitreten…“ und füge seine Beitrittszeichenfolge dann hier hinzu.",
+  "b67ffe2892c0809f": "Wähle auf dem anderen Rechner „Einem Cluster beitreten…“ und füge seine Beitrittszeichenfolge unter „Mitglied hinzufügen“ ein.",
   "e83d7e0f8edc2a67": "Nie erreicht",
   "6e5bd943c29069ba": "Zuletzt gesehen {time}",
   "4b8e5df2cc93095e": "{label} aus dem Cluster entfernen? Es wird wieder zu einer eigenständigen Umgebung.",

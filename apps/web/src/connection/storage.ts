@@ -702,13 +702,18 @@ export function makeBrowserPullRequestRoutingPermissions(
       ).pipe(Effect.asVoid),
     ),
     set: Effect.fn("PullRequestRoutingPermissions.set")(function* (entry, permission) {
+      if (entry.target._tag === "ClusterConnectionTarget")
+        return yield* new ConnectionBlockedError({
+          reason: "configuration",
+          detail: m(msg("A cluster member follows its main host's permission.")),
+        });
       const connectionKey = pullRequestRoutingConnectionKey(entry);
       if (connectionKey === null)
         return yield* new ConnectionBlockedError({
           reason: "configuration",
           detail: m(msg("This environment does not have a saved connection endpoint.")),
         });
-      const environmentId = pullRequestRoutingOwnerId(entry);
+      const environmentId = entry.target.environmentId;
       return yield* write(
         environmentId,
         permission === "off" ? null : { environmentId, connectionKey, permission },

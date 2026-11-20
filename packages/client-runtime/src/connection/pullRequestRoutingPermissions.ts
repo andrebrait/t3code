@@ -154,6 +154,13 @@ export const makePullRequestRoutingPermissions = Effect.fn("makePullRequestRouti
       }),
       changes: SubscriptionRef.changes(state),
       set: Effect.fn("PullRequestRoutingPermissions.set")(function (entry, permission) {
+        if (entry.target._tag === "ClusterConnectionTarget")
+          return Effect.fail(
+            new ConnectionBlockedError({
+              reason: "configuration",
+              ...translatableDetail(msg("A cluster member follows its main host's permission.")),
+            }),
+          );
         const connectionKey = pullRequestRoutingConnectionKey(entry);
         if (connectionKey === null)
           return Effect.fail(
@@ -164,7 +171,7 @@ export const makePullRequestRoutingPermissions = Effect.fn("makePullRequestRouti
               ),
             }),
           );
-        const environmentId = pullRequestRoutingOwnerId(entry);
+        const environmentId = entry.target.environmentId;
         return update((current) => [
           ...current.filter((value) => value.environmentId !== environmentId),
           ...(permission === "off" ? [] : [{ environmentId, connectionKey, permission }]),

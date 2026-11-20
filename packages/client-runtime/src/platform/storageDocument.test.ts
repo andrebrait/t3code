@@ -121,7 +121,7 @@ describe("ConnectionCatalogDocument", () => {
       ).toBe("off");
       yield* restarted.set(entry, "read-write");
       expect(yield* restarted.get(entry)).toBe("read-write");
-      // A cluster member follows its main host, so setting it sets the host's own permission.
+      // A cluster member follows its main host and is never set on its own.
       const member = {
         target: new ClusterConnectionTarget({
           environmentId: EnvironmentId.make("environment-member"),
@@ -135,11 +135,11 @@ describe("ConnectionCatalogDocument", () => {
         profile: Option.none(),
         enabled: true,
       };
-      yield* restarted.set(member, "read");
-      expect(yield* restarted.get(entry)).toBe("read");
-      yield* restarted.set(entry, "off");
-      expect(yield* restarted.get(member)).toBe("off");
-      yield* restarted.set(entry, "read-write");
+      expect(yield* restarted.get(member)).toBe("read-write");
+      expect((yield* Effect.flip(restarted.set(member, "off")))._tag).toBe(
+        "ConnectionBlockedError",
+      );
+      expect(yield* restarted.get(entry)).toBe("read-write");
       yield* restarted.forget(ENVIRONMENT_ID);
       expect(yield* restarted.get(entry)).toBe("off");
       const afterRemoval = yield* makePullRequestRoutingPermissions(storage);

@@ -1,6 +1,8 @@
 import {
+  ClusterConnectionTarget,
   ConnectionTransientError,
   PrimaryConnectionTarget,
+  pullRequestRoutingConnectionKey,
 } from "@t3tools/client-runtime/connection";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { ConnectionCatalogDocument, Persistence } from "@t3tools/client-runtime/platform";
@@ -241,6 +243,23 @@ describe("browser GitHub routing permissions", () => {
       expect(yield* first.get(entry)).toBe("off");
       yield* first.set(entry, "read-write");
       expect(yield* second.get(entry)).toBe("read-write");
+      // A cluster member follows its main host and is never set on its own.
+      const member = {
+        target: new ClusterConnectionTarget({
+          environmentId: EnvironmentId.make("member"),
+          label: "Member",
+          hostEnvironmentId: entry.target.environmentId,
+          hostLabel: "First",
+          hostConnectionKey: pullRequestRoutingConnectionKey(entry),
+          status: "online",
+          statusDetail: null,
+        }),
+        profile: Option.none(),
+        enabled: true,
+      };
+      expect(yield* second.get(member)).toBe("read-write");
+      expect((yield* Effect.flip(second.set(member, "off")))._tag).toBe("ConnectionBlockedError");
+      expect(yield* first.get(entry)).toBe("read-write");
       const oldPermissions = Option.getOrThrow(yield* Stream.runHead(first.changes));
       const staleCatalog = yield* ConnectionStorage.makeCatalogStore({
         read: Effect.succeed(

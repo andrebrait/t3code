@@ -2,6 +2,8 @@ import {
   ClusterError,
   type ClusterMember,
   type ClusterSshLogin,
+  parseClusterJoinString,
+  parseClusterSshTarget,
   ClusterInvite,
   ClusterRemoveMemberResult,
   EnvironmentId,
@@ -159,6 +161,7 @@ const readStdinSecret = Effect.gen(function* () {
 );
 
 const sshLogin = (flags: {
+  readonly target: string;
   readonly passwordStdin: boolean;
   readonly key: Option.Option<string>;
   readonly passphraseStdin: boolean;
@@ -168,6 +171,19 @@ const sshLogin = (flags: {
       new ClusterError({
         reason: "invalid_target",
         message: "Pass --password-stdin or --key, not both.",
+      }),
+    );
+  }
+  const signsIn = flags.passwordStdin || Option.isSome(flags.key) || flags.passphraseStdin;
+  if (
+    signsIn &&
+    (parseClusterJoinString(flags.target) !== undefined ||
+      parseClusterSshTarget(flags.target) === undefined)
+  ) {
+    return Effect.fail(
+      new ClusterError({
+        reason: "invalid_target",
+        message: "--password-stdin, --key and --passphrase-stdin are only for an ssh target.",
       }),
     );
   }

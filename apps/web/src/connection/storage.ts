@@ -28,6 +28,7 @@ import {
   PullRequestRoutingPermissions,
   StoredPullRequestRoutingPermission,
   pullRequestRoutingConnectionKey,
+  pullRequestRoutingOwnerId,
   pullRequestRoutingPermissionFor,
 } from "@t3tools/client-runtime/connection";
 import { EnvironmentQueryStore } from "@t3tools/client-runtime/state/query-persistence";
@@ -674,7 +675,7 @@ export function makeBrowserPullRequestRoutingPermissions(
   return PullRequestRoutingPermissions.of({
     get: Effect.fn("PullRequestRoutingPermissions.get")(function (entry) {
       return Effect.sync(() => {
-        const value = read(`${PULL_REQUEST_ROUTING_KEY_PREFIX}${entry.target.environmentId}`);
+        const value = read(`${PULL_REQUEST_ROUTING_KEY_PREFIX}${pullRequestRoutingOwnerId(entry)}`);
         return pullRequestRoutingPermissionFor(entry, value === null ? [] : [value]);
       });
     }),

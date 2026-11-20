@@ -7,7 +7,11 @@ import {
   type ConnectionCatalogEntry,
   type ConnectionRoute,
 } from "./catalog.ts";
-import { pullRequestRoutingConnectionKey } from "./pullRequestRoutingPermissions.ts";
+import {
+  pullRequestRoutingConnectionKey,
+  pullRequestRoutingOwnerId,
+  pullRequestRoutingPermissionFor,
+} from "./pullRequestRoutingPermissions.ts";
 import { BearerConnectionTarget, ClusterConnectionTarget, RelayConnectionTarget } from "./model.ts";
 import {
   connectionRouteId,
@@ -500,6 +504,19 @@ describe("cluster member pull request routing key", () => {
 
   it("is null when the main host has no key", () => {
     expect(pullRequestRoutingConnectionKey(member(null))).toBeNull();
+  });
+
+  it("follows the main host's permission", () => {
+    const hostPermission = {
+      environmentId: EnvironmentId.make("environment-studio"),
+      connectionKey: "host-key",
+      permission: "read-write" as const,
+    };
+    expect(pullRequestRoutingOwnerId(member("host-key"))).toBe("environment-studio");
+    expect(pullRequestRoutingPermissionFor(member("host-key"), [hostPermission])).toBe(
+      "read-write",
+    );
+    expect(pullRequestRoutingPermissionFor(member("host-key-2"), [hostPermission])).toBe("off");
   });
 });
 

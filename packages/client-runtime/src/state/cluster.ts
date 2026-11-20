@@ -72,6 +72,15 @@ export const offersCluster = (
     | undefined,
 ): boolean => config?.environment.capabilities.cluster === true && config.settings.clusterEnabled;
 
+/** A main host only adds members; joining another cluster is for a standalone machine. */
+export const clusterActions = (
+  role: ClusterStatus["role"],
+  access: { readonly enabled: boolean; readonly canAdd: boolean; readonly canInvite: boolean },
+) => ({
+  add: access.enabled && access.canAdd && role !== "member",
+  join: access.enabled && access.canInvite && role === "standalone",
+});
+
 /** Pasted join strings often wrap or carry stray spaces; none of their characters is a space. */
 export function clusterAddTarget(raw: string, options: { readonly ssh: boolean }): string | null {
   const target = raw.replace(/\s+/g, "");

@@ -3,6 +3,7 @@ import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  clusterActions,
   clusterAddTarget,
   clusterMemberStatusText,
   clusterName,
@@ -53,6 +54,22 @@ describe("cluster presentation", () => {
     expect(offersCluster(config(true, false))).toBe(false);
     expect(offersCluster(config(undefined, true))).toBe(false);
     expect(offersCluster(null)).toBe(false);
+  });
+
+  it("offers joining only to a standalone machine and adding to all but members", () => {
+    const all = { enabled: true, canAdd: true, canInvite: true };
+    expect(clusterActions("standalone", all)).toEqual({ add: true, join: true });
+    expect(clusterActions("main", all)).toEqual({ add: true, join: false });
+    expect(clusterActions("member", all)).toEqual({ add: false, join: false });
+    expect(clusterActions("main", { ...all, enabled: false })).toEqual({ add: false, join: false });
+    expect(clusterActions("standalone", { ...all, canAdd: false })).toEqual({
+      add: false,
+      join: true,
+    });
+    expect(clusterActions("standalone", { ...all, canInvite: false })).toEqual({
+      add: true,
+      join: false,
+    });
   });
 
   it("reads member status, showing the last error or Connecting while offline", () => {

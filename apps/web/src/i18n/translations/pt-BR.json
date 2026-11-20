@@ -7846,7 +7846,7 @@
   "9ff2b973feb1f701": "Saindo…",
   "102b7b49ef3cdee1": "Sair do cluster",
   "32b30e32d451d005": "Adicionar um membro",
-  "db3aa4a62b85e301": "Cole a string de adesão de Entrar em um cluster… da outra máquina ou informe user@host para adicioná-la por SSH. O SSH precisa de uma chave ou de um ssh-agent em execução nesta máquina.",
+  "c54285d78ba3d478": "Cole a string de adesão da outra máquina ou informe user@host para adicioná-la por SSH. O SSH precisa de uma chave ou de um ssh-agent em execução nesta máquina.",
   "7310ad79a8ffca7d": "String de adesão ou destino SSH",
   "3953d1cccd71ab7e": "Nome (opcional)",
   "ccfce317440dbd50": "Permite que um host principal adicione esta máquina como membro.",

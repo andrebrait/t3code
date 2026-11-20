@@ -435,8 +435,8 @@ function AddMemberAction({
           </DialogTitle>
           <DialogDescription>
             <T>
-              Paste the join string from the other machine's Join a cluster…, or enter user@host to
-              add it over SSH. SSH needs a key or a running ssh-agent on this machine.
+              Paste the join string from the other machine, or enter user@host to add it over SSH.
+              SSH needs a key or a running ssh-agent on this machine.
             </T>
           </DialogDescription>
         </DialogHeader>

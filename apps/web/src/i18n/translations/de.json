@@ -7847,7 +7847,7 @@
   "9ff2b973feb1f701": "Verlasse…",
   "102b7b49ef3cdee1": "Cluster verlassen",
   "32b30e32d451d005": "Mitglied hinzufügen",
-  "db3aa4a62b85e301": "Füge die Beitrittszeichenfolge aus „Einem Cluster beitreten…“ des anderen Rechners ein oder gib user@host ein, um ihn per SSH hinzuzufügen. SSH benötigt einen Schlüssel oder einen laufenden ssh-agent auf diesem Rechner.",
+  "c54285d78ba3d478": "Füge die Beitrittszeichenfolge vom anderen Rechner ein oder gib user@host ein, um ihn per SSH hinzuzufügen. SSH benötigt einen Schlüssel oder einen laufenden ssh-agent auf diesem Rechner.",
   "7310ad79a8ffca7d": "Beitrittszeichenfolge oder SSH-Ziel",
   "3953d1cccd71ab7e": "Name (optional)",
   "ccfce317440dbd50": "Erlaubt einem Haupthost, diesen Rechner als Mitglied hinzuzufügen.",

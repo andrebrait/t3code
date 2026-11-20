@@ -1655,7 +1655,10 @@ export const make = Effect.gen(function* () {
       mapSessionVerificationErrors,
       Effect.flatMap(
         Effect.fnUntraced(function* (session) {
-          if (session.method === "bearer-access-token" && session.subject === CLUSTER_HOST_SUBJECT) {
+          if (
+            session.method === "bearer-access-token" &&
+            session.subject === CLUSTER_HOST_SUBJECT
+          ) {
             return {
               sessionId: session.sessionId,
               label: session.client.label ?? "Cluster host",

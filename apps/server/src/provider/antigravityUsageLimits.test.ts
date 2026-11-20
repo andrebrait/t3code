@@ -70,6 +70,8 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
     userId?: string;
     userInfoAt?: number;
     missingToken?: boolean;
+    /** The native CLI's sign-in is the one quota requests use, so they carry no project. */
+    cliSignIn?: boolean;
     authMethod?: "oauth-personal" | "oauth-business" | "gemini-api-key";
     keyringSecret?: string;
     /** Reads the OS keyring instead of `keyringSecret`. */
@@ -119,7 +121,9 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
             : Response.json({}, { status: 403 }),
         );
       }
-      expect(JSON.parse(body)).toEqual(options.missingToken ? {} : { project: "project-id" });
+      expect(JSON.parse(body)).toEqual(
+        options.missingToken || options.cliSignIn ? {} : { project: "project-id" },
+      );
       expect(request.headers["user-agent"]).toMatch(/^antigravity\/hub\/2\.24\.0 /);
       return HttpClientResponse.fromWeb(
         request,
@@ -688,6 +692,35 @@ describe("Antigravity subscription limits", () => {
         "Sign in with Google to see Antigravity limits.",
       );
       expect(limits.unavailable?.reason).not.toBe("unsupported");
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("prefers the native CLI's sign-in over an acp_token.json it never updates", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-09T12:00:00Z")));
+      // A leftover token from the old ACP runtime or an earlier account; Google refuses it here.
+      const { probe, tokenPath, requests } = yield* fixture({
+        refreshToken: "stale-refresh",
+        tokenStatus: 401,
+        userId: "google-user-b",
+        cliSignIn: true,
+      });
+      yield* fs.writeFileString(
+        path.join(path.dirname(tokenPath), "antigravity-oauth-token"),
+        JSON.stringify({
+          token: {
+            access_token: "access-token",
+            refresh_token: "refresh-b",
+            expiry: "2099-01-01T00:00:00Z",
+          },
+        }),
+      );
+      const limits = yield* probe;
+      expect(requests.some((request) => request.url.endsWith("/token"))).toBe(false);
+      expect(limits.unavailable).toBeUndefined();
+      expect(limits.windows).toHaveLength(4);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 

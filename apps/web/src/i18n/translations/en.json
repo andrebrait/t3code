@@ -7834,7 +7834,7 @@
   "3202e5e7e3ac64f4": "Could not load cluster members",
   "20ec2553636ff8b6": "Loading cluster members…",
   "185c47873cbc3a58": "No members yet",
-  "038890c68421f5d0": "On the other machine, choose Join a cluster… in Settings → Environments → Cluster, then add its join string here.",
+  "b67ffe2892c0809f": "On the other machine, choose Join a cluster… and paste its join string in Add member.",
   "e83d7e0f8edc2a67": "Never reached",
   "6e5bd943c29069ba": "Last seen {time}",
   "4b8e5df2cc93095e": "Remove {label} from the cluster? It becomes a standalone environment again.",

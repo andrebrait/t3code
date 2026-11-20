@@ -139,7 +139,7 @@ function ClusterMemberList({
       <SettingsRow
         title={gt("No members yet")}
         description={gt(
-          "On the other machine, choose Join a cluster… in Settings → Environments → Cluster, then add its join string here.",
+          "On the other machine, choose Join a cluster… and paste its join string in Add member.",
         )}
       />
     );

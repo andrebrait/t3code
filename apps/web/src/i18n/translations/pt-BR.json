@@ -7826,7 +7826,7 @@
   "3202e5e7e3ac64f4": "Não foi possível carregar os membros do cluster",
   "20ec2553636ff8b6": "Carregando os membros do cluster…",
   "185c47873cbc3a58": "Ainda não há membros",
-  "038890c68421f5d0": "Na outra máquina, escolha Entrar em um cluster… em Configurações → Ambientes → Cluster e depois adicione aqui a string de adesão dela.",
+  "b67ffe2892c0809f": "Na outra máquina, escolha Entrar em um cluster… e cole a string de adesão dela em Adicionar membro.",
   "e83d7e0f8edc2a67": "Nunca alcançado",
   "6e5bd943c29069ba": "Visto pela última vez {time}",
   "4b8e5df2cc93095e": "Remover {label} do cluster? Ele volta a ser um ambiente independente.",

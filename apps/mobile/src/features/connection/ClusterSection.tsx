@@ -147,7 +147,9 @@ export function ClusterSection(props: {
             <Row>
               <Text className="text-sm text-foreground-muted">{gt("No members yet")}</Text>
               <Text className="text-xs text-foreground-muted">
-                {gt("On the other machine, choose Join a cluster… and paste its join string here.")}
+                {gt(
+                  "On the other machine, choose Join a cluster… and paste its join string in Add member.",
+                )}
               </Text>
             </Row>
           ) : (

@@ -594,7 +594,7 @@ const make = Effect.gen(function* () {
       yield* forgetSecret(row.secret_name);
       if (row.ssh_target !== null) yield* upstream.closeSsh(row.ssh_target);
     },
-    Effect.ensuring(Effect.suspend(() => reload).pipe(Effect.ignore)),
+    Effect.ensuring(reload.pipe(Effect.ignore)),
   );
 
   const tokenOf = Effect.fn("ClusterService.tokenOf")(function* (secretName: string) {
@@ -708,6 +708,9 @@ const make = Effect.gen(function* () {
         undoJoin = client.cluster
           .leave({ headers: { authorization: `Bearer ${joined.token}` } })
           .pipe(Effect.timeout(REQUEST_TIMEOUT), Effect.ignore);
+        previous = (yield* SubscriptionRef.get(rowsRef)).find(
+          (row) => row.environment_id === joined.environmentId,
+        );
         if (joined.environmentId !== descriptor.environmentId) {
           return yield* new ClusterError({
             reason: "unreachable",
@@ -715,9 +718,6 @@ const make = Effect.gen(function* () {
           });
         }
         const wasStandalone = (yield* role.current).role === "standalone";
-        previous = (yield* SubscriptionRef.get(rowsRef)).find(
-          (row) => row.environment_id === joined.environmentId,
-        );
         const secretName = `cluster-member-${Hex.encode(yield* random.randomBytes(16))}`;
         const target = resolved.target;
         yield* Effect.gen(function* () {
@@ -763,11 +763,17 @@ const make = Effect.gen(function* () {
             if (rowWritten) return yield* reload.pipe(Effect.ignore);
             yield* undoJoin;
             // Joining again revoked the stored token, so the stored member is gone either way.
-            if (previous !== undefined) {
-              yield* dropRow(previous).pipe(Effect.ignore);
-              if (previous.ssh_target !== null && previous.ssh_target !== newSshTarget) {
-                yield* sshKey.revoke(previous.ssh_target);
-              }
+            const stale = previous;
+            if (stale !== undefined) {
+              // A row that survives still names its key, so the key stays with it.
+              yield* dropRow(stale).pipe(
+                Effect.andThen(
+                  stale.ssh_target !== null && stale.ssh_target !== newSshTarget
+                    ? sshKey.revoke(stale.ssh_target)
+                    : Effect.void,
+                ),
+                Effect.ignore,
+              );
             }
             if (!keyInstalled || newSshTarget === null) return;
             const rows = yield* SubscriptionRef.get(rowsRef);

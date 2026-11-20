@@ -1,5 +1,6 @@
 import {
   type ClusterMember,
+  type ClusterSshLogin,
   type ClusterStatus,
   type ServerConfig,
   parseClusterJoinString,
@@ -7,6 +8,7 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
 import { Atom } from "effect/reactivity";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
@@ -52,6 +54,10 @@ export function createClusterEnvironmentAtoms<R, E>(
       label: "environment-data:cluster:rename-member",
       tag: WS_METHODS.clusterRenameMember,
     }),
+    sshKeys: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:cluster:ssh-keys",
+      tag: WS_METHODS.clusterSshKeys,
+    }),
     leave: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:cluster:leave",
       tag: WS_METHODS.clusterLeave,
@@ -88,6 +94,30 @@ export function clusterAddTarget(raw: string, options: { readonly ssh: boolean }
   return options.ssh && !target.includes("#") && parseClusterSshTarget(target) !== undefined
     ? target
     : null;
+}
+
+/** The Add member dialog's one-time ssh login; null until its required field is filled. */
+export function clusterSshLogin(input: {
+  readonly method: ClusterSshLogin["_tag"];
+  readonly password: string;
+  readonly keyPath: string;
+  readonly passphrase: string;
+}): ClusterSshLogin | null {
+  switch (input.method) {
+    case "config":
+      return { _tag: "config" };
+    case "password":
+      return input.password === ""
+        ? null
+        : { _tag: "password", password: Redacted.make(input.password) };
+    case "keyFile": {
+      const path = input.keyPath.trim();
+      if (path === "") return null;
+      return input.passphrase === ""
+        ? { _tag: "keyFile", path }
+        : { _tag: "keyFile", path, passphrase: Redacted.make(input.passphrase) };
+    }
+  }
 }
 
 export function clusterName(

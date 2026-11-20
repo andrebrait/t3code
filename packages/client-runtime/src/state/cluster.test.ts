@@ -1,5 +1,6 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Redacted from "effect/Redacted";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -7,6 +8,7 @@ import {
   clusterAddTarget,
   clusterMemberStatusText,
   clusterName,
+  clusterSshLogin,
   defaultClusterInviteUrl,
   offersCluster,
 } from "./cluster.ts";
@@ -29,6 +31,46 @@ describe("clusterAddTarget", () => {
     );
     expect(clusterAddTarget(`me@box#K7M2Q9RZ3NWD`, { ssh: true })).toBeNull();
     expect(clusterAddTarget("", { ssh: true })).toBeNull();
+  });
+});
+
+describe("clusterSshLogin", () => {
+  const login = (input: Partial<Parameters<typeof clusterSshLogin>[0]>) => {
+    const result = clusterSshLogin({
+      method: "config",
+      password: "",
+      keyPath: "",
+      passphrase: "",
+      ...input,
+    });
+    // Secrets stay redacted until the RPC encodes them.
+    return result === null
+      ? null
+      : Object.fromEntries(
+          Object.entries(result).map(([key, value]) => [
+            key,
+            Redacted.isRedacted(value) ? `redacted:${Redacted.value(value)}` : value,
+          ]),
+        );
+  };
+
+  it("builds the one-time login, and none until its required field is filled", () => {
+    expect(login({ password: "pw" })).toEqual({ _tag: "config" });
+    expect(login({ method: "password" })).toBeNull();
+    expect(login({ method: "password", password: "pw" })).toEqual({
+      _tag: "password",
+      password: "redacted:pw",
+    });
+    expect(login({ method: "keyFile", keyPath: "  " })).toBeNull();
+    expect(login({ method: "keyFile", keyPath: " /k/id ", password: "pw" })).toEqual({
+      _tag: "keyFile",
+      path: "/k/id",
+    });
+    expect(login({ method: "keyFile", keyPath: "/k/id", passphrase: "secret" })).toEqual({
+      _tag: "keyFile",
+      path: "/k/id",
+      passphrase: "redacted:secret",
+    });
   });
 });
 

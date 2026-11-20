@@ -2087,7 +2087,13 @@ describe("EnvironmentRegistry cluster members", () => {
           const hostEntry = (yield* SubscriptionRef.get(registry.entries)).get(
             TARGET.environmentId,
           )!;
-          expect(pullRequestRoutingConnectionKey({ target: target!, profile: Option.none() })).toBe(
+          expect(
+            pullRequestRoutingConnectionKey({
+              target: target!,
+              profile: Option.none(),
+              enabled: true,
+            }),
+          ).toBe(
             JSON.stringify([
               "ClusterConnectionTarget",
               pullRequestRoutingConnectionKey(hostEntry),

@@ -3,13 +3,21 @@ import {
   clusterActions,
   clusterAddTarget,
   clusterMemberStatusText,
+  clusterSshLogin,
   defaultClusterInviteUrl,
 } from "@t3tools/client-runtime/state/cluster";
 import {
   type AtomCommandResult,
   isAtomCommandInterrupted,
 } from "@t3tools/client-runtime/state/runtime";
-import type { ClusterInvite, ClusterMember, EnvironmentId } from "@t3tools/contracts";
+import {
+  type ClusterInvite,
+  type ClusterMember,
+  type ClusterSshKeyFile,
+  type ClusterSshLogin,
+  type EnvironmentId,
+  parseClusterJoinString,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { ChevronRightIcon, LinkIcon, PlusIcon } from "lucide-react";
 import { T, useGT, useMessages, Var } from "gt-react";
@@ -26,6 +34,7 @@ import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { ConnectionStatusDot } from "../ConnectionStatusDot";
+import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -39,6 +48,8 @@ import {
   DialogTrigger,
 } from "../ui/dialog";
 import { Input } from "../ui/input";
+import { Radio, RadioGroup } from "../ui/radio-group";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { toastManager } from "../ui/toast";
 import { ITEM_ROW_CLASSNAME } from "./itemRows";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
@@ -260,6 +271,15 @@ function ClusterMemberRow({
         description: gt("It did not answer. Run t3 cluster leave on it to finish."),
       });
     }
+    if (result.value.keyRevoked === false) {
+      toastManager.add({
+        type: "warning",
+        title: gt("The cluster key is still on {label}", { label: member.label }),
+        description: gt(
+          "The main host could not reach it to remove its key. Delete the t3code-cluster line in ~/.ssh/authorized_keys there.",
+        ),
+      });
+    }
   };
   return (
     <Dialog
@@ -366,6 +386,8 @@ function ClusterMemberRow({
   );
 }
 
+const CUSTOM_KEY = "custom";
+
 function AddMemberAction({
   environmentId,
   description,
@@ -381,14 +403,53 @@ function AddMemberAction({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const formId = useId();
+  const [method, setMethod] = useState<ClusterSshLogin["_tag"]>("config");
+  const [password, setPassword] = useState("");
+  const [keyChoice, setKeyChoice] = useState<string | null>(null);
+  const [customKeyPath, setCustomKeyPath] = useState("");
+  const [passphrase, setPassphrase] = useState("");
+  const [keys, setKeys] = useState<ReadonlyArray<ClusterSshKeyFile> | null>(null);
   const addMember = useAtomCommand(clusterEnvironment.addMember, { label: "add cluster member" });
+  const listKeys = useAtomCommand(clusterEnvironment.sshKeys, { label: "list cluster ssh keys" });
   const target = clusterAddTarget(raw, { ssh: true });
+  const ssh = target !== null && parseClusterJoinString(target) === undefined;
+  const chosenKey = keys?.find((key) => key.path === keyChoice);
+  const custom = keyChoice === CUSTOM_KEY;
+  const login = ssh
+    ? clusterSshLogin({
+        method,
+        password,
+        keyPath: custom ? customKeyPath : (chosenKey?.path ?? ""),
+        passphrase: custom || chosenKey?.encrypted === true ? passphrase : "",
+      })
+    : null;
+  const reset = () => {
+    setRaw("");
+    setLabel("");
+    setMethod("config");
+    setPassword("");
+    setKeyChoice(null);
+    setCustomKeyPath("");
+    setPassphrase("");
+    setKeys(null);
+  };
+  const chooseMethod = async (next: ClusterSshLogin["_tag"]) => {
+    setMethod(next);
+    if (next !== "keyFile" || keys !== null) return;
+    const result = await listKeys({ environmentId, input: {} });
+    setKeys(result._tag === "Success" ? result.value : []);
+    setError(commandFailure(result, m));
+  };
   const submit = async () => {
-    if (busy || target === null) return;
+    if (busy || target === null || (ssh && login === null)) return;
     setBusy(true);
     const result = await addMember({
       environmentId,
-      input: { target, ...(label.trim() ? { label: label.trim() } : {}) },
+      input: {
+        target,
+        ...(label.trim() ? { label: label.trim() } : {}),
+        ...(ssh && login !== null ? { login } : {}),
+      },
     });
     setBusy(false);
     setError(commandFailure(result, m));
@@ -398,8 +459,7 @@ function AddMemberAction({
         title: gt("Added {label}", { label: result.value.label }),
       });
       setOpen(false);
-      setRaw("");
-      setLabel("");
+      reset();
     }
   };
   return (
@@ -409,10 +469,7 @@ function AddMemberAction({
         if (busy) return;
         setOpen(next);
         setError(null);
-        if (!next) {
-          setRaw("");
-          setLabel("");
-        }
+        if (!next) reset();
       }}
     >
       <DialogTrigger
@@ -436,7 +493,7 @@ function AddMemberAction({
           <DialogDescription>
             <T>
               Paste the join string from the other machine, or enter user@host to add it over SSH.
-              SSH needs a key or a running ssh-agent on this machine.
+              The main host signs in once and installs its own key, so it can reconnect on its own.
             </T>
           </DialogDescription>
         </DialogHeader>
@@ -464,6 +521,129 @@ function AddMemberAction({
                 spellCheck={false}
               />
             </label>
+            {ssh ? (
+              <>
+                <Alert variant="warning">
+                  <AlertTitle>
+                    <T>The main host will install its own key on this machine</T>
+                  </AlertTitle>
+                  <AlertDescription>
+                    <T>
+                      It signs in once with what you choose, then adds a cluster key to{" "}
+                      <code>~/.ssh/authorized_keys</code> there so it can reconnect on its own.
+                      Removing the member deletes that key.
+                    </T>
+                  </AlertDescription>
+                </Alert>
+                <div className="space-y-1.5">
+                  <span className="block text-xs font-medium text-foreground">
+                    <T>Sign in with</T>
+                  </span>
+                  <RadioGroup
+                    aria-label={gt("Sign in with")}
+                    disabled={busy}
+                    value={method}
+                    onValueChange={(value) => {
+                      if (value === "config" || value === "password" || value === "keyFile") {
+                        void chooseMethod(value);
+                      }
+                    }}
+                  >
+                    <label className="flex items-center gap-2 text-sm">
+                      <Radio value="config" />
+                      <T>SSH config or agent</T>
+                    </label>
+                    <label className="flex items-center gap-2 text-sm">
+                      <Radio value="password" />
+                      <T>Password</T>
+                    </label>
+                    <label className="flex items-center gap-2 text-sm">
+                      <Radio value="keyFile" />
+                      <T>Key file</T>
+                    </label>
+                  </RadioGroup>
+                </div>
+                {method === "password" ? (
+                  <label className="block space-y-1.5">
+                    <span className="block text-xs font-medium text-foreground">
+                      <T>Password</T>
+                    </span>
+                    <Input
+                      type="password"
+                      value={password}
+                      onChange={(event) => setPassword(event.target.value)}
+                      disabled={busy}
+                      autoComplete="off"
+                      nativeInput
+                    />
+                  </label>
+                ) : null}
+                {method === "keyFile" ? (
+                  <div className="space-y-1.5">
+                    <span className="block text-xs font-medium text-foreground">
+                      <T>Key on the main host</T>
+                    </span>
+                    <Select
+                      value={keyChoice}
+                      disabled={busy || keys === null}
+                      onValueChange={(value) => {
+                        if (typeof value === "string") setKeyChoice(value);
+                      }}
+                    >
+                      <SelectTrigger size="sm" aria-label={gt("Key on the main host")}>
+                        <SelectValue
+                          placeholder={keys === null ? gt("Loading keys…") : gt("Choose a key")}
+                        >
+                          {(value: string | null) =>
+                            value === CUSTOM_KEY
+                              ? gt("Custom key path…")
+                              : (keys?.find((key) => key.path === value)?.name ?? value)
+                          }
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectPopup>
+                        {(keys ?? []).map((key) => (
+                          <SelectItem key={key.path} value={key.path}>
+                            {key.encrypted
+                              ? gt("{name} (passphrase)", { name: key.name })
+                              : key.name}
+                          </SelectItem>
+                        ))}
+                        <SelectItem value={CUSTOM_KEY}>
+                          <T>Custom key path…</T>
+                        </SelectItem>
+                      </SelectPopup>
+                    </Select>
+                    {custom ? (
+                      <Input
+                        value={customKeyPath}
+                        onChange={(event) => setCustomKeyPath(event.target.value)}
+                        placeholder="~/.ssh/id_ed25519"
+                        aria-label={gt("Custom key path")}
+                        disabled={busy}
+                        nativeInput
+                        spellCheck={false}
+                      />
+                    ) : null}
+                    {custom || chosenKey?.encrypted === true ? (
+                      <label className="block space-y-1.5">
+                        <span className="block text-xs font-medium text-foreground">
+                          <T>Passphrase</T>
+                        </span>
+                        <Input
+                          type="password"
+                          value={passphrase}
+                          onChange={(event) => setPassphrase(event.target.value)}
+                          disabled={busy}
+                          autoComplete="off"
+                          nativeInput
+                        />
+                      </label>
+                    ) : null}
+                  </div>
+                ) : null}
+              </>
+            ) : null}
             <label className="block space-y-1.5">
               <span className="block text-xs font-medium text-foreground">
                 <T>Name (optional)</T>
@@ -482,7 +662,11 @@ function AddMemberAction({
           <DialogClose disabled={busy} render={<Button variant="outline" type="button" />}>
             <T>Cancel</T>
           </DialogClose>
-          <Button form={formId} type="submit" disabled={busy || target === null}>
+          <Button
+            form={formId}
+            type="submit"
+            disabled={busy || target === null || (ssh && login === null)}
+          >
             {busy ? gt("Adding…") : gt("Add member")}
           </Button>
         </DialogFooter>

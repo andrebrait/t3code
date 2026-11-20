@@ -346,8 +346,8 @@ export const clusterHostToken = (
   hostLabel: string,
 ) =>
   auth.createPairingLink({ subject: CLUSTER_MEMBER_PAIRING_SUBJECT }).pipe(
-    Effect.flatMap((invite) =>
-      auth.consumeClusterInvite(invite.credential, {
+    Effect.flatMap((joinCode) =>
+      auth.consumeClusterJoinCode(joinCode.credential, {
         hostLabel,
         client: { deviceType: "unknown" },
       }),

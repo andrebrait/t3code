@@ -599,7 +599,7 @@ export class EnvironmentAuth extends Context.Service<
     >;
     readonly listPairingLinks: (input?: {
       readonly excludeSubjects?: ReadonlyArray<string>;
-      /** Also lists cluster invites and app sign-in codes, which Connections never shows. */
+      /** Also lists cluster join codes and app sign-in codes, which Connections never shows. */
       readonly includePurposeBound?: boolean;
     }) => Effect.Effect<ReadonlyArray<AuthPairingLink>, ServerAuthInternalError>;
     readonly revokePairingLink: (id: string) => Effect.Effect<boolean, ServerAuthInternalError>;
@@ -674,8 +674,8 @@ export class EnvironmentAuth extends Context.Service<
       AuthMcpClientAccess,
       ServerAuthMcpApprovalCodeError | ServerAuthInternalError
     >;
-    /** Spends a cluster invite for a `cluster-host` session. Any other code is refused. */
-    readonly consumeClusterInvite: (
+    /** Spends a cluster join code for a `cluster-host` session. Any other code is refused. */
+    readonly consumeClusterJoinCode: (
       code: string,
       input: { readonly hostLabel: string; readonly client: AuthClientMetadata },
     ) => Effect.Effect<
@@ -1746,8 +1746,8 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("EnvironmentAuth.consumeMcpApprovalCode"),
     );
 
-  const consumeClusterInvite: EnvironmentAuth["Service"]["consumeClusterInvite"] = Effect.fn(
-    "EnvironmentAuth.consumeClusterInvite",
+  const consumeClusterJoinCode: EnvironmentAuth["Service"]["consumeClusterJoinCode"] = Effect.fn(
+    "EnvironmentAuth.consumeClusterJoinCode",
   )(function* (code, input) {
     const grant = yield* bootstrapCredentials
       .consume(code.trim(), {
@@ -1810,7 +1810,7 @@ export const make = Effect.gen(function* () {
     authenticateMcpClient,
     issueMcpClientSession,
     consumeMcpApprovalCode,
-    consumeClusterInvite,
+    consumeClusterJoinCode,
   });
 });
 

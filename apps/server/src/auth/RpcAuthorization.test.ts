@@ -87,7 +87,7 @@ describe("RPC authorization scopes", () => {
 
   it("keeps cluster membership changes behind access write and lets readers see members", () => {
     for (const method of [
-      WS_METHODS.clusterInvite,
+      WS_METHODS.clusterCreateJoinCode,
       WS_METHODS.clusterAddMember,
       WS_METHODS.clusterRemoveMember,
       WS_METHODS.clusterRenameMember,

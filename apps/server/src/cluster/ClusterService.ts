@@ -7,8 +7,8 @@ import {
   type ClusterHostReplyInput,
   type ClusterHostRequest,
   type ClusterHostResult,
-  type ClusterInvite,
-  type ClusterInviteInput,
+  type ClusterJoinCode,
+  type ClusterJoinCodeInput,
   type ClusterJoinRequest,
   type ClusterJoinResult,
   type ClusterLeaveResult,
@@ -70,7 +70,7 @@ import * as ClusterSshKey from "./ClusterSshKey.ts";
 import * as ClusterUpstream from "./ClusterUpstream.ts";
 import * as PinnedTransport from "./pinnedTransport.ts";
 
-const INVITE_TTL = Duration.minutes(10);
+const JOIN_CODE_TTL = Duration.minutes(10);
 const CLUSTER_OFF = "Cluster is off on this machine. Turn it on in Settings → Labs.";
 
 const storageError = (cause: unknown) =>
@@ -277,8 +277,10 @@ export class ClusterService extends Context.Service<
   {
     readonly status: Effect.Effect<ClusterStatus, ClusterError>;
     /** Mints a one-time `cluster-member` code; with `url`, the join URL a main host adds. */
-    readonly invite: (input: ClusterInviteInput) => Effect.Effect<ClusterInvite, ClusterError>;
-    /** Member side of a join: spends the invite, records the host, keeps only loopback sessions. */
+    readonly createJoinCode: (
+      input: ClusterJoinCodeInput,
+    ) => Effect.Effect<ClusterJoinCode, ClusterError>;
+    /** Member side of a join: spends the join code, records the host, keeps only loopback sessions. */
     readonly acceptJoin: (
       input: ClusterJoinRequest,
       client: AuthClientMetadata,
@@ -379,48 +381,48 @@ const make = Effect.gen(function* () {
     } satisfies ClusterStatus;
   }).pipe(Effect.withSpan("ClusterService.status"));
 
-  const invite: ClusterService["Service"]["invite"] = Effect.fn("ClusterService.invite")(
-    function* (input) {
-      if ((yield* role.current).role === "main") {
-        return yield* isMainHost();
-      }
-      const url = input.url === undefined ? undefined : URL.parse(input.url);
-      // Plain http only to this machine, as ClusterUpstream allows.
-      if (
-        url === null ||
-        (url !== undefined &&
-          url.protocol !== "https:" &&
-          !(url.protocol === "http:" && isLocalLoopbackHost(url.hostname)))
-      ) {
-        return yield* new ClusterError({
-          reason: "invalid_target",
-          message: `${input.url} is not an https address the main host can reach.`,
-        });
-      }
-      const issued = yield* auth
-        .createPairingLink({
-          subject: CLUSTER_MEMBER_PAIRING_SUBJECT,
-          scopes: AuthStandardClientScopes,
-          ttl: INVITE_TTL,
-          label: "Cluster join code",
-        })
-        .pipe(Effect.mapError(fromPairingError));
-      const fingerprint = tls.fingerprint;
-      return {
-        code: issued.credential,
-        fingerprint,
-        joinString:
-          url === undefined
-            ? null
-            : formatClusterJoinUrl({
-                url: url.href,
-                code: issued.credential,
-                fingerprint,
-              }),
-        expiresAt: issued.expiresAt,
-      } satisfies ClusterInvite;
-    },
-  );
+  const createJoinCode: ClusterService["Service"]["createJoinCode"] = Effect.fn(
+    "ClusterService.createJoinCode",
+  )(function* (input) {
+    if ((yield* role.current).role === "main") {
+      return yield* isMainHost();
+    }
+    const url = input.url === undefined ? undefined : URL.parse(input.url);
+    // Plain http only to this machine, as ClusterUpstream allows.
+    if (
+      url === null ||
+      (url !== undefined &&
+        url.protocol !== "https:" &&
+        !(url.protocol === "http:" && isLocalLoopbackHost(url.hostname)))
+    ) {
+      return yield* new ClusterError({
+        reason: "invalid_target",
+        message: `${input.url} is not an https address the main host can reach.`,
+      });
+    }
+    const issued = yield* auth
+      .createPairingLink({
+        subject: CLUSTER_MEMBER_PAIRING_SUBJECT,
+        scopes: AuthStandardClientScopes,
+        ttl: JOIN_CODE_TTL,
+        label: "Cluster join code",
+      })
+      .pipe(Effect.mapError(fromPairingError));
+    const fingerprint = tls.fingerprint;
+    return {
+      code: issued.credential,
+      fingerprint,
+      joinUrl:
+        url === undefined
+          ? null
+          : formatClusterJoinUrl({
+              url: url.href,
+              code: issued.credential,
+              fingerprint,
+            }),
+      expiresAt: issued.expiresAt,
+    } satisfies ClusterJoinCode;
+  });
 
   /**
    * Revokes every session but the host's and this machine's, every unspent code and peer link.
@@ -457,13 +459,13 @@ const make = Effect.gen(function* () {
   )(
     function* (input, client) {
       const self = yield* environment.getDescriptor;
-      // One transaction: a refusal or failure rolls back the spent invite and the host session.
+      // One transaction: a refusal or failure rolls back the spent join code and the host session.
       const session = yield* sql
         .withTransaction(
           Effect.gen(function* () {
             // The code is checked first, so an unauthenticated caller learns nothing about the role.
             const session = yield* auth
-              .consumeClusterInvite(input.code, { hostLabel: input.host.label, client })
+              .consumeClusterJoinCode(input.code, { hostLabel: input.host.label, client })
               .pipe(
                 Effect.mapError((cause) =>
                   EnvironmentAuth.isServerAuthInternalError(cause)
@@ -668,7 +670,9 @@ const make = Effect.gen(function* () {
                   )
                   .pipe(
                     Effect.tap(() => Effect.sync(() => (keyInstalled = true))),
-                    Effect.andThen(upstream.inviteOverSsh(formatClusterSshTarget(sshTarget))),
+                    Effect.andThen(
+                      upstream.createJoinCodeOverSsh(formatClusterSshTarget(sshTarget)),
+                    ),
                     Effect.map((invited) => invited.code),
                   ),
               }
@@ -978,7 +982,7 @@ const make = Effect.gen(function* () {
   const start: ClusterService["Service"]["start"] = Effect.fn("ClusterService.start")(
     function* (serve) {
       // A member that stopped between a join's commit and its revocations finishes them here.
-      // Not when the layer is built: `t3 cluster` commands build it, and would revoke fresh invites.
+      // Not when the layer is built: `t3 cluster` commands build it, and would revoke fresh join codes.
       const membership = yield* readMembership.pipe(Effect.orElseSucceed(() => null));
       if (membership !== null) {
         yield* keepOnlyHostAndLoopback(AuthSessionId.make(membership.host_session_id));
@@ -1158,7 +1162,7 @@ const make = Effect.gen(function* () {
 
   return ClusterService.of({
     status,
-    invite,
+    createJoinCode,
     acceptJoin,
     leave,
     members,

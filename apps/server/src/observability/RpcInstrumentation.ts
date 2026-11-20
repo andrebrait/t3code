@@ -71,7 +71,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.peerLinksAnswerRequest]: "peerLinks",
   [WS_METHODS.clusterStatus]: "cluster",
   [WS_METHODS.clusterMembers]: "cluster",
-  [WS_METHODS.clusterInvite]: "cluster",
+  [WS_METHODS.clusterCreateJoinCode]: "cluster",
   [WS_METHODS.clusterAddMember]: "cluster",
   [WS_METHODS.clusterRemoveMember]: "cluster",
   [WS_METHODS.clusterRenameMember]: "cluster",

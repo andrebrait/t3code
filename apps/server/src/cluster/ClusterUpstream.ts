@@ -38,7 +38,7 @@ export class ClusterUpstream extends Context.Service<
       options?: { readonly refresh?: boolean },
     ) => Effect.Effect<Upstream, ClusterError>;
     /** Starts or reuses T3 on the member over ssh and mints a cluster join code there. */
-    readonly inviteOverSsh: (
+    readonly createJoinCodeOverSsh: (
       sshTarget: string,
     ) => Effect.Effect<{ readonly origin: string; readonly code: string }, ClusterError>;
     /** Closes the ssh tunnel to a removed member; its server keeps running. */
@@ -134,8 +134,8 @@ const make = Effect.gen(function* () {
     },
   );
 
-  const inviteOverSsh: ClusterUpstream["Service"]["inviteOverSsh"] = Effect.fn(
-    "ClusterUpstream.inviteOverSsh",
+  const createJoinCodeOverSsh: ClusterUpstream["Service"]["createJoinCodeOverSsh"] = Effect.fn(
+    "ClusterUpstream.createJoinCodeOverSsh",
   )(function* (sshTarget) {
     const bootstrap = yield* sshBaseUrl(sshTarget, "cluster-member");
     if (bootstrap.pairingToken === null) {
@@ -160,7 +160,7 @@ const make = Effect.gen(function* () {
     );
   };
 
-  return ClusterUpstream.of({ connect, inviteOverSsh, closeSsh });
+  return ClusterUpstream.of({ connect, createJoinCodeOverSsh, closeSsh });
 });
 
 export const layer = Layer.effect(ClusterUpstream, make);

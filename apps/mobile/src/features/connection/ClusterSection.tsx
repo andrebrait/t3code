@@ -11,7 +11,7 @@ import {
   isAtomCommandInterrupted,
 } from "@t3tools/client-runtime/state/runtime";
 import {
-  type ClusterInvite,
+  type ClusterJoinCode,
   type ClusterMember,
   type EnvironmentId,
   parseClusterJoinUrl,
@@ -72,7 +72,7 @@ export function ClusterSection(props: {
   const actions = clusterActions(role ?? "standalone", {
     enabled,
     canAdd: useAtomValue(clusterEnvironment.addMember.permissionAtom(props.environmentId)),
-    canInvite: useAtomValue(clusterEnvironment.invite.permissionAtom(props.environmentId)),
+    canJoin: useAtomValue(clusterEnvironment.createJoinCode.permissionAtom(props.environmentId)),
   });
   const canLeave = useAtomValue(clusterEnvironment.leave.permissionAtom(props.environmentId));
   const leave = useAtomCommand(clusterEnvironment.leave, { label: "leave cluster" });
@@ -420,14 +420,16 @@ function AddMemberSheet(props: {
 function JoinSheet(props: { readonly environmentId: EnvironmentId; readonly onClose: () => void }) {
   const gt = useGT();
   const m = useMessages();
-  const invite = useAtomCommand(clusterEnvironment.invite, { label: "create cluster join code" });
+  const createJoinCode = useAtomCommand(clusterEnvironment.createJoinCode, {
+    label: "create cluster join code",
+  });
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
   // Lives only in this sheet: the join code carries a one-time secret.
-  const [created, setCreated] = useState<ClusterInvite | null>(null);
+  const [created, setCreated] = useState<ClusterJoinCode | null>(null);
   const submit = async () => {
     setBusy(true);
-    const result = await invite({
+    const result = await createJoinCode({
       environmentId: props.environmentId,
       input: url.trim() ? { url: url.trim() } : {},
     });
@@ -443,12 +445,12 @@ function JoinSheet(props: { readonly environmentId: EnvironmentId; readonly onCl
             "Joining signs out this machine's other clients and ends its linked environments. Afterwards it is reached through the main host.",
           )}
         </Text>
-        {created?.joinString ? (
+        {created?.joinUrl ? (
           <>
             <CopyField
               label={gt("Join URL")}
               copyLabel={gt("Copy join URL")}
-              value={created.joinString}
+              value={created.joinUrl}
             />
             <CopyField
               label={gt("Join code")}

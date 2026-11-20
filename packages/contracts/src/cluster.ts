@@ -39,7 +39,7 @@ export type ClusterRole = typeof ClusterRole.Type;
 export const ClusterStatus = Schema.Struct({
   enabled: Schema.Boolean,
   role: ClusterRole,
-  /** This server's certificate SHA-256, shown beside invites. */
+  /** This server's certificate SHA-256, shown beside join codes. */
   fingerprint: Schema.String,
   host: Schema.NullOr(
     Schema.Struct({
@@ -51,19 +51,19 @@ export const ClusterStatus = Schema.Struct({
 });
 export type ClusterStatus = typeof ClusterStatus.Type;
 
-export const ClusterInviteInput = Schema.Struct({
+export const ClusterJoinCodeInput = Schema.Struct({
   /** Where the main host reaches this environment. Without it no join URL is built. */
   url: Schema.optionalKey(TrimmedNonEmptyString),
 });
-export type ClusterInviteInput = typeof ClusterInviteInput.Type;
+export type ClusterJoinCodeInput = typeof ClusterJoinCodeInput.Type;
 
-export const ClusterInvite = Schema.Struct({
+export const ClusterJoinCode = Schema.Struct({
   code: TrimmedNonEmptyString,
   fingerprint: TrimmedNonEmptyString,
-  joinString: Schema.NullOr(TrimmedNonEmptyString),
+  joinUrl: Schema.NullOr(TrimmedNonEmptyString),
   expiresAt: Schema.DateTimeUtc,
 });
-export type ClusterInvite = typeof ClusterInvite.Type;
+export type ClusterJoinCode = typeof ClusterJoinCode.Type;
 
 /** How the main host signs in to an ssh member once, to install its cluster key. Never stored. */
 export const ClusterSshLogin = Schema.Union([

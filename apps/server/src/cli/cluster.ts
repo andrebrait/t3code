@@ -6,7 +6,7 @@ import {
   formatClusterJoinUrl,
   parseClusterJoinUrl,
   parseClusterSshTarget,
-  ClusterInvite,
+  ClusterJoinCode,
   ClusterRemoveMemberResult,
   EnvironmentId,
   ClusterMember as ClusterMemberSchema,
@@ -81,16 +81,7 @@ const jsonFlag = Flag.Boolean("json").pipe(
   Flag.withDefault(false),
 );
 
-const encodeInviteJson = Schema.encodeSync(
-  Schema.fromJsonString(
-    Schema.Struct({
-      credential: ClusterInvite.fields.code,
-      fingerprint: ClusterInvite.fields.fingerprint,
-      joinString: ClusterInvite.fields.joinString,
-      expiresAt: ClusterInvite.fields.expiresAt,
-    }),
-  ),
-);
+const encodeJoinCodeJson = Schema.encodeSync(Schema.fromJsonString(ClusterJoinCode));
 const encodeRemoveJson = Schema.encodeSync(Schema.fromJsonString(ClusterRemoveMemberResult));
 const encodeList = Schema.encodeSync(
   Schema.fromJsonString(
@@ -119,17 +110,17 @@ const formatList = (status: ClusterStatus, members: ReadonlyArray<ClusterMember>
           .join("\n")}`;
 
 /** Laid out like `t3 pair`: a QR code of the join URL, then the URL and its parts. */
-export const formatJoinOutput = (invite: ClusterInvite) => {
-  const expires = `Expires: ${DateTime.formatIso(invite.expiresAt)}`;
-  return invite.joinString === null
-    ? [`Join code: ${invite.code}`, expires, "Pass --url to print a join URL."].join("\n")
+export const formatJoinOutput = (joinCode: ClusterJoinCode) => {
+  const expires = `Expires: ${DateTime.formatIso(joinCode.expiresAt)}`;
+  return joinCode.joinUrl === null
+    ? [`Join code: ${joinCode.code}`, expires, "Pass --url to print a join URL."].join("\n")
     : [
-        `Add ${new URL(invite.joinString).origin} to a cluster from its main host.`,
+        `Add ${new URL(joinCode.joinUrl).origin} to a cluster from its main host.`,
         "",
-        renderTerminalQrCode(invite.joinString),
+        renderTerminalQrCode(joinCode.joinUrl),
         "",
-        `Join URL: ${invite.joinString}`,
-        `Join code: ${invite.code}`,
+        `Join URL: ${joinCode.joinUrl}`,
+        `Join code: ${joinCode.code}`,
         expires,
         "",
       ].join("\n");
@@ -153,14 +144,10 @@ const joinCommand = Command.make("join", {
       flags,
       (cluster) =>
         cluster
-          .invite(Option.isSome(flags.url) ? { url: flags.url.value } : {})
+          .createJoinCode(Option.isSome(flags.url) ? { url: flags.url.value } : {})
           .pipe(
-            Effect.flatMap((invite) =>
-              Console.log(
-                flags.json
-                  ? encodeInviteJson({ ...invite, credential: invite.code })
-                  : formatJoinOutput(invite),
-              ),
+            Effect.flatMap((joinCode) =>
+              Console.log(flags.json ? encodeJoinCodeJson(joinCode) : formatJoinOutput(joinCode)),
             ),
           ),
       { quietLogs: flags.json },

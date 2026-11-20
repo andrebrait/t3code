@@ -35,9 +35,9 @@ export function createClusterEnvironmentAtoms<R, E>(
       label: "environment-data:cluster:members",
       tag: WS_METHODS.clusterMembers,
     }),
-    invite: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:cluster:invite",
-      tag: WS_METHODS.clusterInvite,
+    createJoinCode: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:cluster:createJoinCode",
+      tag: WS_METHODS.clusterCreateJoinCode,
     }),
     addMember: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:cluster:add-member",
@@ -83,10 +83,10 @@ export const offersCluster = (
 /** A main host only adds members; joining another cluster is for a standalone machine. */
 export const clusterActions = (
   role: ClusterStatus["role"],
-  access: { readonly enabled: boolean; readonly canAdd: boolean; readonly canInvite: boolean },
+  access: { readonly enabled: boolean; readonly canAdd: boolean; readonly canJoin: boolean },
 ) => ({
   add: access.enabled && access.canAdd && role !== "member",
-  join: access.enabled && access.canInvite && role === "standalone",
+  join: access.enabled && access.canJoin && role === "standalone",
 });
 
 /** The Add member join URL from its fields; pasted codes may carry spaces, which no code has. */
@@ -186,7 +186,7 @@ export function clusterMemberStatusText(
 }
 
 /** Members answer HTTPS on the port they already serve, which is what the main host dials. */
-export function defaultClusterInviteUrl(httpBaseUrl: string | null): string {
+export function defaultClusterJoinAddress(httpBaseUrl: string | null): string {
   const url = httpBaseUrl === null ? null : URL.parse(httpBaseUrl);
   return url === null ? "" : `https://${url.host}`;
 }

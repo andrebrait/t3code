@@ -733,37 +733,44 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
       }).pipe(Effect.provide(layerEnvironmentAuth())),
     );
 
-    it.effect("spends a cluster invite only as a cluster join, for a cluster-host session", () =>
+    it.effect("spends a cluster join code only as a cluster join, for a cluster-host session", () =>
       Effect.gen(function* () {
         const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
-        const invite = yield* serverAuth.createPairingLink({
+        const joinCode = yield* serverAuth.createPairingLink({
           subject: CLUSTER_MEMBER_PAIRING_SUBJECT,
           scopes: AuthStandardClientScopes,
-          label: "Cluster invite",
+          label: "Cluster join code",
         });
         const ordinary = yield* serverAuth
-          .exchangeBootstrapCredentialForAccessToken(invite.credential, undefined, requestMetadata)
+          .exchangeBootstrapCredentialForAccessToken(
+            joinCode.credential,
+            undefined,
+            requestMetadata,
+          )
           .pipe(Effect.flip);
         expect(ordinary._tag).toBe("ServerAuthInvalidCredentialError");
         expect(yield* serverAuth.listPairingLinks()).toEqual([]);
 
-        const host = yield* serverAuth.consumeClusterInvite(invite.credential, {
+        const host = yield* serverAuth.consumeClusterJoinCode(joinCode.credential, {
           hostLabel: "Studio",
           client: requestMetadata,
         });
         const reused = yield* serverAuth
-          .consumeClusterInvite(invite.credential, { hostLabel: "Studio", client: requestMetadata })
-          .pipe(Effect.flip);
-        expect(reused._tag).toBe("ServerAuthInvalidCredentialError");
-
-        const pairing = yield* serverAuth.issuePairingCredential();
-        const notAnInvite = yield* serverAuth
-          .consumeClusterInvite(pairing.credential, {
+          .consumeClusterJoinCode(joinCode.credential, {
             hostLabel: "Studio",
             client: requestMetadata,
           })
           .pipe(Effect.flip);
-        expect(notAnInvite._tag).toBe("ServerAuthInvalidCredentialError");
+        expect(reused._tag).toBe("ServerAuthInvalidCredentialError");
+
+        const pairing = yield* serverAuth.issuePairingCredential();
+        const notAJoinCode = yield* serverAuth
+          .consumeClusterJoinCode(pairing.credential, {
+            hostLabel: "Studio",
+            client: requestMetadata,
+          })
+          .pipe(Effect.flip);
+        expect(notAJoinCode._tag).toBe("ServerAuthInvalidCredentialError");
         yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
           pairing.credential,
           undefined,
@@ -786,10 +793,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
     it.effect("caps a cluster-host request to the forwarded scopes, failing closed", () =>
       Effect.gen(function* () {
         const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
-        const invite = yield* serverAuth.createPairingLink({
+        const joinCode = yield* serverAuth.createPairingLink({
           subject: CLUSTER_MEMBER_PAIRING_SUBJECT,
         });
-        const host = yield* serverAuth.consumeClusterInvite(invite.credential, {
+        const host = yield* serverAuth.consumeClusterJoinCode(joinCode.credential, {
           hostLabel: "Studio",
           client: requestMetadata,
         });
@@ -830,10 +837,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
     it.effect("keeps the cluster scope cap on a websocket ticket redeemed without the header", () =>
       Effect.gen(function* () {
         const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
-        const invite = yield* serverAuth.createPairingLink({
+        const joinCode = yield* serverAuth.createPairingLink({
           subject: CLUSTER_MEMBER_PAIRING_SUBJECT,
         });
-        const host = yield* serverAuth.consumeClusterInvite(invite.credential, {
+        const host = yield* serverAuth.consumeClusterJoinCode(joinCode.credential, {
           hostLabel: "Studio",
           client: requestMetadata,
         });
@@ -883,7 +890,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
     );
 
     it.effect(
-      "refuses client pairing on a cluster member but mints invites and startup links",
+      "refuses client pairing on a cluster member but mints join codes and startup links",
       () =>
         Effect.gen(function* () {
           const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;

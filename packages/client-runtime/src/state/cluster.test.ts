@@ -11,7 +11,7 @@ import {
   clusterName,
   clusterSshLogin,
   clusterSshTarget,
-  defaultClusterInviteUrl,
+  defaultClusterJoinAddress,
   offersCluster,
 } from "./cluster.ts";
 
@@ -129,7 +129,7 @@ describe("cluster presentation", () => {
   });
 
   it("offers joining only to a standalone machine and adding to all but members", () => {
-    const all = { enabled: true, canAdd: true, canInvite: true };
+    const all = { enabled: true, canAdd: true, canJoin: true };
     expect(clusterActions("standalone", all)).toEqual({ add: true, join: true });
     expect(clusterActions("main", all)).toEqual({ add: true, join: false });
     expect(clusterActions("member", all)).toEqual({ add: false, join: false });
@@ -138,7 +138,7 @@ describe("cluster presentation", () => {
       add: false,
       join: true,
     });
-    expect(clusterActions("standalone", { ...all, canInvite: false })).toEqual({
+    expect(clusterActions("standalone", { ...all, canJoin: false })).toEqual({
       add: true,
       join: false,
     });
@@ -154,9 +154,9 @@ describe("cluster presentation", () => {
     );
   });
 
-  it("defaults the invite URL to https on the served host and port", () => {
-    expect(defaultClusterInviteUrl("http://box.local:3773/x")).toBe("https://box.local:3773");
-    expect(defaultClusterInviteUrl(null)).toBe("");
-    expect(defaultClusterInviteUrl("nonsense")).toBe("");
+  it("defaults the join address to https on the served host and port", () => {
+    expect(defaultClusterJoinAddress("http://box.local:3773/x")).toBe("https://box.local:3773");
+    expect(defaultClusterJoinAddress(null)).toBe("");
+    expect(defaultClusterJoinAddress("nonsense")).toBe("");
   });
 });

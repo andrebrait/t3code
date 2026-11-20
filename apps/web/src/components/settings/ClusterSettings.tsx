@@ -7,7 +7,7 @@ import {
   clusterMemberStatusText,
   clusterSshLogin,
   clusterSshTarget,
-  defaultClusterInviteUrl,
+  defaultClusterJoinAddress,
 } from "@t3tools/client-runtime/state/cluster";
 import {
   type AtomCommandResult,
@@ -16,7 +16,7 @@ import {
 import {
   type ClusterAddMemberInput,
   ClusterError,
-  type ClusterInvite,
+  type ClusterJoinCode,
   type ClusterMember,
   type ClusterSshKeyFile,
   type ClusterSshLogin,
@@ -125,7 +125,7 @@ export function ClusterSettings({
   const actions = clusterActions(role ?? "standalone", {
     enabled,
     canAdd: useAtomValue(clusterEnvironment.addMember.permissionAtom(environmentId)),
-    canInvite: useAtomValue(clusterEnvironment.invite.permissionAtom(environmentId)),
+    canJoin: useAtomValue(clusterEnvironment.createJoinCode.permissionAtom(environmentId)),
   });
   if (!enabled && role !== "main" && role !== "member") return null;
   return (
@@ -850,16 +850,18 @@ function JoinAction({ environmentId }: { readonly environmentId: EnvironmentId }
   const [open, setOpen] = useState(false);
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
-  const [created, setCreated] = useState<ClusterInvite | null>(null);
+  const [created, setCreated] = useState<ClusterJoinCode | null>(null);
   const [error, setError] = useState<string | null>(null);
   const formId = useId();
-  const invite = useAtomCommand(clusterEnvironment.invite, { label: "create cluster join code" });
+  const createJoinCode = useAtomCommand(clusterEnvironment.createJoinCode, {
+    label: "create cluster join code",
+  });
   const [copied, setCopied] = useState<"url" | "code" | null>(null);
   const { copyToClipboard, isCopied } = useCopyToClipboard<"url" | "code">({ onCopy: setCopied });
   const submit = async () => {
     if (busy) return;
     setBusy(true);
-    const result = await invite({
+    const result = await createJoinCode({
       environmentId,
       input: url.trim() ? { url: url.trim() } : {},
     });
@@ -876,7 +878,7 @@ function JoinAction({ environmentId }: { readonly environmentId: EnvironmentId }
         // The join code carries a one-time secret, so it does not outlive the dialog.
         setCreated(null);
         setError(null);
-        if (next) setUrl(defaultClusterInviteUrl(httpBaseUrl));
+        if (next) setUrl(defaultClusterJoinAddress(httpBaseUrl));
       }}
     >
       <DialogTrigger
@@ -930,12 +932,12 @@ function JoinAction({ environmentId }: { readonly environmentId: EnvironmentId }
             </form>
           ) : (
             <div className="space-y-3 text-sm">
-              {created.joinString === null ? null : (
+              {created.joinUrl === null ? null : (
                 <CopyField
                   label={gt("Join URL")}
-                  value={created.joinString}
+                  value={created.joinUrl}
                   copied={isCopied && copied === "url"}
-                  onCopy={() => copyToClipboard(created.joinString ?? "", "url")}
+                  onCopy={() => copyToClipboard(created.joinUrl ?? "", "url")}
                 />
               )}
               <CopyField
@@ -945,7 +947,7 @@ function JoinAction({ environmentId }: { readonly environmentId: EnvironmentId }
                 onCopy={() => copyToClipboard(created.code, "code")}
               />
               <p className="text-xs text-muted-foreground">
-                {created.joinString === null ? (
+                {created.joinUrl === null ? (
                   <T>Add an address to get a join URL.</T>
                 ) : (
                   <T>

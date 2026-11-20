@@ -57,8 +57,8 @@ const clientToken = (main: ClusterEnvironment, scopes: ReadonlyArray<AuthGrantSc
 const joinCluster = Effect.gen(function* () {
   const member = yield* serveMember(box);
   const main = yield* serveMain;
-  const invite = yield* member.cluster.invite({ url: member.url });
-  yield* main.cluster.addMember({ target: invite.joinString ?? "" });
+  const joinCode = yield* member.cluster.createJoinCode({ url: member.url });
+  yield* main.cluster.addMember({ target: joinCode.joinUrl ?? "" });
   yield* main.cluster.start(ClusterService.refuseHostRequests);
   yield* awaitStatus(main, box.environmentId, "online");
   return { member, main, base: `${main.url}/cluster/${box.environmentId}` };
@@ -325,8 +325,8 @@ it.effect("answers 502 for a member that stopped answering", () =>
       const memberScope = yield* Scope.make();
       const member = yield* serveMember(box).pipe(Effect.provideService(Scope.Scope, memberScope));
       const main = yield* serveMain;
-      const invite = yield* member.cluster.invite({ url: member.url });
-      yield* main.cluster.addMember({ target: invite.joinString ?? "" });
+      const joinCode = yield* member.cluster.createJoinCode({ url: member.url });
+      yield* main.cluster.addMember({ target: joinCode.joinUrl ?? "" });
       // Unauthenticated, so it never dials a member without a live link (for ssh, a spawned ssh).
       const anonymous = yield* get(
         `${main.url}/cluster/${box.environmentId}/.well-known/t3/environment`,
@@ -353,8 +353,8 @@ it.effect("refuses a member that presents another certificate", () =>
     Effect.gen(function* () {
       const member = yield* serveMember(box);
       const main = yield* serveMain;
-      const invite = yield* member.cluster.invite({ url: member.url });
-      yield* main.cluster.addMember({ target: invite.joinString ?? "" });
+      const joinCode = yield* member.cluster.createJoinCode({ url: member.url });
+      yield* main.cluster.addMember({ target: joinCode.joinUrl ?? "" });
       const reader = yield* clientToken(main, ["orchestration:read"]);
       const rekeyed = yield* serveOtherCertificate;
       yield* main.sql`

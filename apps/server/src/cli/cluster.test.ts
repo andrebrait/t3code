@@ -28,13 +28,13 @@ it("tells a script which flags trust the host key it was shown", () => {
 });
 
 it("prints a join URL with its join code and expiry, like t3 pair", () => {
-  const invite = {
+  const joinCode = {
     code: "K7M2Q9RZ3NWD",
     fingerprint: "ab".repeat(32),
-    joinString: "https://box.example/pair#token=K7M2Q9RZ3NWD",
+    joinUrl: "https://box.example/pair#token=K7M2Q9RZ3NWD",
     expiresAt: DateTime.makeUnsafe("2026-11-20T12:00:00.000Z"),
   };
-  const lines = formatJoinOutput(invite).split("\n");
+  const lines = formatJoinOutput(joinCode).split("\n");
   assert.equal(lines[0], "Add https://box.example to a cluster from its main host.");
   assert.includeMembers(lines, [
     "Join URL: https://box.example/pair#token=K7M2Q9RZ3NWD",
@@ -42,7 +42,7 @@ it("prints a join URL with its join code and expiry, like t3 pair", () => {
     "Expires: 2026-11-20T12:00:00.000Z",
   ]);
   assert.equal(
-    formatJoinOutput({ ...invite, joinString: null }),
+    formatJoinOutput({ ...joinCode, joinUrl: null }),
     "Join code: K7M2Q9RZ3NWD\nExpires: 2026-11-20T12:00:00.000Z\nPass --url to print a join URL.",
   );
 });

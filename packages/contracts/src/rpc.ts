@@ -19,8 +19,8 @@ import {
 import {
   ClusterAddMemberInput,
   ClusterError,
-  ClusterInvite,
-  ClusterInviteInput,
+  ClusterJoinCode,
+  ClusterJoinCodeInput,
   ClusterLeaveResult,
   ClusterMember,
   ClusterMemberRef,
@@ -564,7 +564,7 @@ export const WS_METHODS = {
   peerLinksAnswerRequest: "peerLinks.answerRequest",
   clusterStatus: "cluster.status",
   clusterMembers: "cluster.members",
-  clusterInvite: "cluster.invite",
+  clusterCreateJoinCode: "cluster.createJoinCode",
   clusterAddMember: "cluster.addMember",
   clusterRemoveMember: "cluster.removeMember",
   clusterRenameMember: "cluster.renameMember",
@@ -943,9 +943,9 @@ const WsClusterMembersRpc = Rpc.make(WS_METHODS.clusterMembers, {
   error: ClusterRpcError,
 });
 
-const WsClusterInviteRpc = Rpc.make(WS_METHODS.clusterInvite, {
-  payload: ClusterInviteInput,
-  success: ClusterInvite,
+const WsClusterCreateJoinCodeRpc = Rpc.make(WS_METHODS.clusterCreateJoinCode, {
+  payload: ClusterJoinCodeInput,
+  success: ClusterJoinCode,
   error: ClusterRpcError,
 });
 
@@ -2379,7 +2379,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPeerLinksAnswerRequestRpc,
   WsClusterStatusRpc,
   WsClusterMembersRpc,
-  WsClusterInviteRpc,
+  WsClusterCreateJoinCodeRpc,
   WsClusterAddMemberRpc,
   WsClusterRemoveMemberRpc,
   WsClusterRenameMemberRpc,

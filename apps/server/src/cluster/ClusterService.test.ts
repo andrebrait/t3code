@@ -85,10 +85,10 @@ it.effect("a member keeps only its cluster host and loopback sessions after join
         VALUES ('environment-peer', 'peer-link-1', 'Peer', '[]', 'auto', '2026-11-19T00:00:00.000Z', '2026-12-19T00:00:00.000Z')
       `;
 
-      const invite = yield* member.cluster.invite({ url: "https://box.local:3773" });
-      expect(invite).toMatchObject({
+      const joinCode = yield* member.cluster.createJoinCode({ url: "https://box.local:3773" });
+      expect(joinCode).toMatchObject({
         fingerprint: FINGERPRINT,
-        joinString: `https://box.local:3773/pair#token=${invite.code}&sha256=${FINGERPRINT}`,
+        joinUrl: `https://box.local:3773/pair#token=${joinCode.code}&sha256=${FINGERPRINT}`,
       });
       // The main host trusts either the pin or a CA-valid chain, so every address carries the pin.
       for (const url of [
@@ -98,10 +98,10 @@ it.effect("a member keeps only its cluster host and loopback sessions after join
         "https://box.lan:3773",
         "https://box.tail1234.ts.net",
       ]) {
-        const { code, joinString } = yield* member.cluster.invite({ url });
-        expect(joinString).toBe(`${new URL(url).origin}/pair#token=${code}&sha256=${FINGERPRINT}`);
+        const { code, joinUrl } = yield* member.cluster.createJoinCode({ url });
+        expect(joinUrl).toBe(`${new URL(url).origin}/pair#token=${code}&sha256=${FINGERPRINT}`);
       }
-      const joined = yield* member.cluster.acceptJoin({ code: invite.code, host: studio }, bot);
+      const joined = yield* member.cluster.acceptJoin({ code: joinCode.code, host: studio }, bot);
       expect(joined).toMatchObject({ environmentId: box.environmentId, label: "Box" });
 
       expect(
@@ -136,14 +136,14 @@ it.effect("a member refuses another cluster and itself; a main host refuses to j
   Effect.scoped(
     Effect.gen(function* () {
       const member = yield* makeEnvironment(box);
-      const first = yield* member.cluster.invite({});
+      const first = yield* member.cluster.createJoinCode({});
       yield* member.cluster.acceptJoin({ code: first.code, host: studio }, bot);
       expect(
         yield* member.cluster
           .acceptJoin({ code: "K7M2Q9RZ3NWD", host: other }, bot)
           .pipe(Effect.flip),
       ).toMatchObject({ reason: "pairing_rejected" });
-      const second = yield* member.cluster.invite({});
+      const second = yield* member.cluster.createJoinCode({});
       expect(
         yield* member.cluster.acceptJoin({ code: second.code, host: other }, bot).pipe(Effect.flip),
       ).toMatchObject({
@@ -151,7 +151,7 @@ it.effect("a member refuses another cluster and itself; a main host refuses to j
         message:
           "This environment is already a member of the cluster hosted by Studio. Leave it there first.",
       });
-      const third = yield* member.cluster.invite({});
+      const third = yield* member.cluster.createJoinCode({});
       expect(
         yield* member.cluster
           .acceptJoin(
@@ -162,12 +162,12 @@ it.effect("a member refuses another cluster and itself; a main host refuses to j
       ).toMatchObject({ reason: "self" });
 
       const main = yield* makeEnvironment(studioDescriptor);
-      const unspent = yield* main.cluster.invite({});
+      const unspent = yield* main.cluster.createJoinCode({});
       yield* main.sql`
         INSERT INTO cluster_members (environment_id, label, transport, url, cert_sha256, secret_name, status, joined_at)
         VALUES ('environment-x', 'X', 'https', 'https://x:3773', ${FINGERPRINT}, 'cluster-member-1', 'online', '2026-11-19T00:00:00.000Z')
       `;
-      expect(yield* main.cluster.invite({}).pipe(Effect.flip)).toMatchObject({
+      expect(yield* main.cluster.createJoinCode({}).pipe(Effect.flip)).toMatchObject({
         reason: "is_main_host",
       });
       expect(
@@ -191,11 +191,11 @@ it.effect("rejoining from the same host rotates its token and keeps the join tim
   Effect.scoped(
     Effect.gen(function* () {
       const member = yield* makeEnvironment(box);
-      const first = yield* member.cluster.invite({});
+      const first = yield* member.cluster.createJoinCode({});
       const joined = yield* member.cluster.acceptJoin({ code: first.code, host: studio }, bot);
       const before = yield* member.cluster.status;
       yield* TestClock.adjust("1 hour");
-      const second = yield* member.cluster.invite({});
+      const second = yield* member.cluster.createJoinCode({});
       const rejoined = yield* member.cluster.acceptJoin({ code: second.code, host: studio }, bot);
 
       expect(
@@ -243,8 +243,8 @@ it.effect("two hosts racing to join one member: one wins", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const member = yield* makeEnvironment(box);
-      const first = yield* member.cluster.invite({});
-      const second = yield* member.cluster.invite({});
+      const first = yield* member.cluster.createJoinCode({});
+      const second = yield* member.cluster.createJoinCode({});
       const results = yield* Effect.all(
         [
           member.cluster.acceptJoin({ code: first.code, host: studio }, bot),
@@ -253,7 +253,7 @@ it.effect("two hosts racing to join one member: one wins", () =>
         { concurrency: 2, mode: "result" },
       );
       expect(results.filter(Result.isSuccess)).toHaveLength(1);
-      // The winner revokes every outstanding invite, so the loser's code is gone.
+      // The winner revokes every outstanding join code, so the loser's code is gone.
       expect(results.filter(Result.isFailure).map((result) => result.failure.reason)).toEqual([
         "pairing_rejected",
       ]);
@@ -270,8 +270,8 @@ it.effect("a member leaves without its main host and is standalone again", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const member = yield* makeEnvironment(box);
-      const invite = yield* member.cluster.invite({});
-      const joined = yield* member.cluster.acceptJoin({ code: invite.code, host: studio }, bot);
+      const joinCode = yield* member.cluster.createJoinCode({});
+      const joined = yield* member.cluster.acceptJoin({ code: joinCode.code, host: studio }, bot);
 
       expect(yield* member.cluster.leave).toEqual({ left: true });
       expect(
@@ -290,8 +290,8 @@ it.effect(
     Effect.scoped(
       Effect.gen(function* () {
         const member = yield* serveMember(box);
-        const join = Effect.flatMap(member.cluster.invite({}), (invite) =>
-          member.cluster.acceptJoin({ code: invite.code, host: studio }, bot),
+        const join = Effect.flatMap(member.cluster.createJoinCode({}), (joinCode) =>
+          member.cluster.acceptJoin({ code: joinCode.code, host: studio }, bot),
         );
         const leave = (token: string) =>
           HttpClient.execute(
@@ -352,8 +352,8 @@ it.effect("adds a member with its join code, and neither side nests", () =>
     Effect.gen(function* () {
       const member = yield* serveMember(box);
       const main = yield* makeEnvironment(studioDescriptor);
-      const joinString = (yield* member.cluster.invite({ url: member.url })).joinString ?? "";
-      const added = yield* main.cluster.addMember({ target: joinString });
+      const joinUrl = (yield* member.cluster.createJoinCode({ url: member.url })).joinUrl ?? "";
+      const added = yield* main.cluster.addMember({ target: joinUrl });
       // Online once its control link is up (Task 8).
       expect(added).toMatchObject({
         environmentId: box.environmentId,
@@ -368,10 +368,10 @@ it.effect("adds a member with its join code, and neither side nests", () =>
       });
       expect(yield* main.cluster.status).toMatchObject({ role: "main", host: null });
 
-      expect(
-        yield* member.cluster.addMember({ target: joinString }).pipe(Effect.flip),
-      ).toMatchObject({ reason: "is_member" });
-      expect(yield* main.cluster.invite({}).pipe(Effect.flip)).toMatchObject({
+      expect(yield* member.cluster.addMember({ target: joinUrl }).pipe(Effect.flip)).toMatchObject({
+        reason: "is_member",
+      });
+      expect(yield* main.cluster.createJoinCode({}).pipe(Effect.flip)).toMatchObject({
         reason: "is_main_host",
       });
 
@@ -386,9 +386,9 @@ it.effect("adds a member with its join code, and neither side nests", () =>
       expect(yield* main.cluster.members.pipe(Stream.runHead)).toEqual(Option.some([]));
       // `t3 cluster list` still shows the ids `t3 cluster remove` takes.
       expect(yield* main.cluster.storedMembers).toEqual([renamed]);
-      expect(yield* main.cluster.addMember({ target: joinString }).pipe(Effect.flip)).toMatchObject(
-        { reason: "disabled" },
-      );
+      expect(yield* main.cluster.addMember({ target: joinUrl }).pipe(Effect.flip)).toMatchObject({
+        reason: "disabled",
+      });
     }),
   ),
 );
@@ -399,9 +399,9 @@ it.effect("removal tells a reachable member, and forgets one that already left",
       const member = yield* serveMember(box);
       const main = yield* makeEnvironment(studioDescriptor);
       const add = member.cluster
-        .invite({ url: member.url })
+        .createJoinCode({ url: member.url })
         .pipe(
-          Effect.flatMap((invite) => main.cluster.addMember({ target: invite.joinString ?? "" })),
+          Effect.flatMap((joinCode) => main.cluster.addMember({ target: joinCode.joinUrl ?? "" })),
         );
       yield* add;
       yield* member.cluster.leave;
@@ -455,10 +455,10 @@ it.effect(
         const main = yield* makeEnvironment(studioDescriptor);
         const addAt = (url: string) =>
           member.cluster
-            .invite({ url })
+            .createJoinCode({ url })
             .pipe(
-              Effect.flatMap((invite) =>
-                main.cluster.addMember({ target: invite.joinString ?? "" }),
+              Effect.flatMap((joinCode) =>
+                main.cluster.addMember({ target: joinCode.joinUrl ?? "" }),
               ),
             );
         yield* addAt(member.url);
@@ -467,10 +467,10 @@ it.effect(
         const moved = yield* member.serveAgain;
         expect(
           yield* member.cluster
-            .invite({ url: moved })
+            .createJoinCode({ url: moved })
             .pipe(
-              Effect.flatMap((invite) =>
-                main.cluster.addMember({ target: invite.joinString ?? "", label: "Moved box" }),
+              Effect.flatMap((joinCode) =>
+                main.cluster.addMember({ target: joinCode.joinUrl ?? "", label: "Moved box" }),
               ),
             ),
         ).toMatchObject({ address: moved, label: "Moved box" });
@@ -490,13 +490,13 @@ it.effect("two adds of one member racing leave the stored token the live one", (
     Effect.gen(function* () {
       const member = yield* serveMember(box);
       const main = yield* makeEnvironment(studioDescriptor);
-      const first = (yield* member.cluster.invite({ url: member.url })).joinString ?? "";
-      const second = (yield* member.cluster.invite({ url: member.url })).joinString ?? "";
+      const first = (yield* member.cluster.createJoinCode({ url: member.url })).joinUrl ?? "";
+      const second = (yield* member.cluster.createJoinCode({ url: member.url })).joinUrl ?? "";
       const results = yield* Effect.all(
         [main.cluster.addMember({ target: first }), main.cluster.addMember({ target: second })],
         { concurrency: 2, mode: "result" },
       );
-      // The winning join revokes the member's other invites.
+      // The winning join revokes the member's other join codes.
       expect(results.filter(Result.isFailure).map((result) => result.failure.reason)).toEqual([
         "pairing_rejected",
       ]);
@@ -533,13 +533,14 @@ it.effect(
                     stderr: "",
                   }),
                 )
-              : served.cluster.invite({}).pipe(
+              : served.cluster.createJoinCode({}).pipe(
                   Effect.orDie,
-                  Effect.map((invite) => ({
+                  Effect.map((joinCode) => ({
                     target,
                     httpBaseUrl: served.url,
                     wsBaseUrl: served.url.replace(/^http/, "ws"),
-                    pairingToken: options?.pairingPurpose === "cluster-member" ? invite.code : null,
+                    pairingToken:
+                      options?.pairingPurpose === "cluster-member" ? joinCode.code : null,
                   })),
                 );
           },
@@ -691,8 +692,8 @@ it.effect(
       Effect.gen(function* () {
         const member = yield* serveMember(box);
         const main = yield* makeEnvironment(studioDescriptor);
-        const invite = yield* member.cluster.invite({ url: member.url });
-        yield* main.cluster.addMember({ target: invite.joinString ?? "" });
+        const joinCode = yield* member.cluster.createJoinCode({ url: member.url });
+        yield* main.cluster.addMember({ target: joinCode.joinUrl ?? "" });
         // No link yet: an agent's call fails at once instead of waiting for one.
         expect(yield* member.cluster.hostCall(readCall).pipe(Effect.flip)).toMatchObject({
           reason: "unreachable",
@@ -770,8 +771,8 @@ it.effect(
       Effect.gen(function* () {
         const member = yield* serveMember(box);
         const main = yield* makeEnvironment(studioDescriptor);
-        const invite = yield* member.cluster.invite({ url: member.url });
-        yield* main.cluster.addMember({ target: invite.joinString ?? "" });
+        const joinCode = yield* member.cluster.createJoinCode({ url: member.url });
+        yield* main.cluster.addMember({ target: joinCode.joinUrl ?? "" });
         const host = yield* hostSessionOf(member);
         // The main host's end of the link, held by hand: nothing fetches unless the test does.
         const link = yield* Scope.make();
@@ -819,8 +820,8 @@ it.effect("a call its host never answers fails after 5 minutes and is forgotten"
   Effect.scoped(
     Effect.gen(function* () {
       const member = yield* makeEnvironment(box);
-      const invite = yield* member.cluster.invite({});
-      yield* member.cluster.acceptJoin({ code: invite.code, host: studio }, bot);
+      const joinCode = yield* member.cluster.createJoinCode({});
+      yield* member.cluster.acceptJoin({ code: joinCode.code, host: studio }, bot);
       const host = yield* hostSessionOf(member);
       const doorbells = yield* Queue.unbounded<ClusterLinkEvent>();
       yield* member.cluster
@@ -854,8 +855,8 @@ it.effect("a call the main host cannot fetch or run is answered with an error at
           request.tool === "unfetchable" ? Effect.die("the fetch broke") : Effect.void,
       });
       const main = yield* makeEnvironment(studioDescriptor);
-      const invite = yield* member.cluster.invite({ url: member.url });
-      yield* main.cluster.addMember({ target: invite.joinString ?? "" });
+      const joinCode = yield* member.cluster.createJoinCode({ url: member.url });
+      yield* main.cluster.addMember({ target: joinCode.joinUrl ?? "" });
       yield* main.cluster.start((_from, request) =>
         request.tool === "crash"
           ? Effect.die("serve broke")
@@ -881,8 +882,8 @@ it.effect("a member that leaves shows revoked over its link, and only its host o
     Effect.gen(function* () {
       const member = yield* serveMember(box);
       const main = yield* makeEnvironment(studioDescriptor);
-      const invite = yield* member.cluster.invite({ url: member.url });
-      yield* main.cluster.addMember({ target: invite.joinString ?? "" });
+      const joinCode = yield* member.cluster.createJoinCode({ url: member.url });
+      yield* main.cluster.addMember({ target: joinCode.joinUrl ?? "" });
       yield* main.cluster.start(ClusterService.refuseHostRequests);
       yield* awaitStatus(main, box.environmentId, "online");
       expect(yield* member.cluster.hostCall(readCall)).toMatchObject({ isError: true });
@@ -919,8 +920,8 @@ it.effect("the control link runs at most 32 of a member's calls at a time", () =
     Effect.gen(function* () {
       const member = yield* serveMember(box);
       const main = yield* makeEnvironment(studioDescriptor);
-      const invite = yield* member.cluster.invite({ url: member.url });
-      yield* main.cluster.addMember({ target: invite.joinString ?? "" });
+      const joinCode = yield* member.cluster.createJoinCode({ url: member.url });
+      yield* main.cluster.addMember({ target: joinCode.joinUrl ?? "" });
       const served = yield* Queue.unbounded<ClusterHostRequest>();
       yield* main.cluster.start((_from, request) =>
         Queue.offer(served, request).pipe(Effect.andThen(Effect.never)),
@@ -971,8 +972,8 @@ it.effect("a large request or reply on the control link does not hold back a sma
             : Effect.void,
       });
       const main = yield* makeEnvironment(studioDescriptor);
-      const invite = yield* member.cluster.invite({ url: member.url });
-      yield* main.cluster.addMember({ target: invite.joinString ?? "" });
+      const joinCode = yield* member.cluster.createJoinCode({ url: member.url });
+      yield* main.cluster.addMember({ target: joinCode.joinUrl ?? "" });
       yield* main.cluster.start((_from, request) =>
         Effect.succeed({ isError: false, text: request.tool === "large" ? large : "small" }),
       );
@@ -1034,8 +1035,8 @@ it.effect("rereads members a CLI add wrote, except on a member, which never has 
       const standalone = yield* makeEnvironment(studioDescriptor);
       yield* standalone.cluster.start(ClusterService.refuseHostRequests);
       const member = yield* makeEnvironment(box);
-      const invite = yield* member.cluster.invite({});
-      yield* member.cluster.acceptJoin({ code: invite.code, host: studio }, bot);
+      const joinCode = yield* member.cluster.createJoinCode({});
+      yield* member.cluster.acceptJoin({ code: joinCode.code, host: studio }, bot);
       yield* member.cluster.start(ClusterService.refuseHostRequests);
       yield* writeRow(member);
       yield* writeRow(standalone);

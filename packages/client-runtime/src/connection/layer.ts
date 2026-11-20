@@ -90,6 +90,7 @@ export const watchClusterMembers = Effect.fn("connection.watchClusterMembers")(f
   const borrowed = new Map<EnvironmentId, string>();
   const dropMembers = (hostEnvironmentId: EnvironmentId) =>
     registry.reconcileCluster({ hostEnvironmentId, hostLabel: "", members: [] });
+  // Untraced: it runs on every change of a host's prepared connection.
   const publishHost = Effect.fnUntraced(function* (
     hostEnvironmentId: EnvironmentId,
     host: Option.Option<PreparedConnection>,

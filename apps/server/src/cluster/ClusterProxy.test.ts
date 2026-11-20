@@ -233,31 +233,39 @@ it.effect("decides by the path the member routes, not the path the client spelle
   ).pipe(Effect.provide(FetchHttpClient.layer)),
 );
 
-it.effect("forwards bodies sent chunked or after 100-continue", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const { main, base } = yield* joinCluster;
-      const admin = yield* clientToken(main, AuthStandardClientScopes);
-      const body = JSON.stringify({ id: "x".repeat(2048) });
-      for (const framing of [
-        { "transfer-encoding": "chunked" },
-        { expect: "100-continue", "content-length": String(body.length) },
-      ]) {
-        const response = yield* rawPost(
-          `${base}/echo`,
-          {
-            authorization: `Bearer ${admin}`,
-            "content-type": "application/json",
-            "keep-alive": "timeout=5",
-            ...framing,
-          },
-          body,
-        );
-        expect(response.status, response.body).toBe(200);
-        expect(JSON.parse(response.body).length).toBe(body.length);
-      }
-    }),
-  ).pipe(Effect.provide(FetchHttpClient.layer)),
+it.effect(
+  "forwards bodies sent chunked or after 100-continue, never the client's credentials",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { main, base } = yield* joinCluster;
+        const admin = yield* clientToken(main, AuthStandardClientScopes);
+        const body = JSON.stringify({ id: "x".repeat(2048) });
+        for (const framing of [
+          { "transfer-encoding": "chunked" },
+          { expect: "100-continue", "content-length": String(body.length) },
+        ]) {
+          const response = yield* rawPost(
+            `${base}/echo`,
+            {
+              authorization: `Bearer ${admin}`,
+              cookie: "other=1",
+              dpop: "proof",
+              "content-type": "application/json",
+              "keep-alive": "timeout=5",
+              ...framing,
+            },
+            body,
+          );
+          expect(response.status, response.body).toBe(200);
+          const echoed = JSON.parse(response.body);
+          expect(echoed.length).toBe(body.length);
+          expect(echoed.headers).not.toHaveProperty("cookie");
+          expect(echoed.headers).not.toHaveProperty("dpop");
+          expect(echoed.headers.authorization).not.toBe(`Bearer ${admin}`);
+        }
+      }),
+    ).pipe(Effect.provide(FetchHttpClient.layer)),
 );
 
 it.effect(

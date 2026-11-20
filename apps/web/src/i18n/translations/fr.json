@@ -7829,7 +7829,7 @@
   "3202e5e7e3ac64f4": "Impossible de charger les membres du cluster",
   "20ec2553636ff8b6": "Chargement des membres du cluster…",
   "185c47873cbc3a58": "Aucun membre pour l’instant",
-  "038890c68421f5d0": "Sur l’autre machine, choisissez Rejoindre un cluster… dans Paramètres → Environnements → Cluster, puis ajoutez ici sa chaîne d’adhésion.",
+  "b67ffe2892c0809f": "Sur l’autre machine, choisissez Rejoindre un cluster… et collez sa chaîne d’adhésion dans Ajouter un membre.",
   "e83d7e0f8edc2a67": "Jamais joint",
   "6e5bd943c29069ba": "Vu pour la dernière fois {time}",
   "4b8e5df2cc93095e": "Retirer {label} du cluster ? Il redeviendra un environnement autonome.",

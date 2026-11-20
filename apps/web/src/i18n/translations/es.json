@@ -7828,7 +7828,7 @@
   "3202e5e7e3ac64f4": "No se pudieron cargar los miembros del clúster",
   "20ec2553636ff8b6": "Cargando los miembros del clúster…",
   "185c47873cbc3a58": "Aún no hay miembros",
-  "038890c68421f5d0": "En la otra máquina, elige Unirse a un clúster… en Ajustes → Entornos → Clúster y luego añade aquí su cadena de unión.",
+  "b67ffe2892c0809f": "En la otra máquina, elige Unirse a un clúster… y pega su cadena de unión en Añadir miembro.",
   "e83d7e0f8edc2a67": "Nunca alcanzado",
   "6e5bd943c29069ba": "Visto por última vez {time}",
   "4b8e5df2cc93095e": "¿Quitar {label} del clúster? Volverá a ser un entorno independiente.",

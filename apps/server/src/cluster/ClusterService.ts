@@ -585,6 +585,18 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const dropRow = Effect.fn("ClusterService.dropRow")(
+    function* (row: MemberRow) {
+      yield* sql`DELETE FROM cluster_members WHERE environment_id = ${row.environment_id}`.pipe(
+        Effect.mapError(storageError),
+      );
+      tokens.delete(row.secret_name);
+      yield* forgetSecret(row.secret_name);
+      if (row.ssh_target !== null) yield* upstream.closeSsh(row.ssh_target);
+    },
+    Effect.ensuring(Effect.suspend(() => reload).pipe(Effect.ignore)),
+  );
+
   const tokenOf = Effect.fn("ClusterService.tokenOf")(function* (secretName: string) {
     const cached = tokens.get(secretName);
     if (cached !== undefined) return cached;
@@ -635,8 +647,9 @@ const make = Effect.gen(function* () {
       const sshTarget = join === undefined ? parseClusterSshTarget(input.target) : undefined;
       let keyInstalled = false;
       let rowWritten = false;
-      // Set once the member has joined: a failure after that must not leave it joined to no one.
+      // Set once the member's join answer arrives; a lost answer leaves no token to undo it with.
       let undoJoin: Effect.Effect<void> = Effect.void;
+      let previous: MemberRow | undefined;
       const resolved =
         join !== undefined
           ? {
@@ -702,7 +715,7 @@ const make = Effect.gen(function* () {
           });
         }
         const wasStandalone = (yield* role.current).role === "standalone";
-        const previous = (yield* SubscriptionRef.get(rowsRef)).find(
+        previous = (yield* SubscriptionRef.get(rowsRef)).find(
           (row) => row.environment_id === joined.environmentId,
         );
         const secretName = `cluster-member-${Hex.encode(yield* random.randomBytes(16))}`;
@@ -749,6 +762,13 @@ const make = Effect.gen(function* () {
           Effect.gen(function* () {
             if (rowWritten) return yield* reload.pipe(Effect.ignore);
             yield* undoJoin;
+            // Joining again revoked the stored token, so the stored member is gone either way.
+            if (previous !== undefined) {
+              yield* dropRow(previous).pipe(Effect.ignore);
+              if (previous.ssh_target !== null && previous.ssh_target !== newSshTarget) {
+                yield* sshKey.revoke(previous.ssh_target);
+              }
+            }
             if (!keyInstalled || newSshTarget === null) return;
             const rows = yield* SubscriptionRef.get(rowsRef);
             if (rows.some((row) => row.ssh_target === newSshTarget)) return;
@@ -781,14 +801,7 @@ const make = Effect.gen(function* () {
         Effect.orElseSucceed(() => false),
       );
       const keyRevoked = row.ssh_target === null ? null : yield* sshKey.revoke(row.ssh_target);
-      yield* Effect.gen(function* () {
-        yield* sql`DELETE FROM cluster_members WHERE environment_id = ${memberId}`.pipe(
-          Effect.mapError(storageError),
-        );
-        tokens.delete(row.secret_name);
-        yield* forgetSecret(row.secret_name);
-        if (row.ssh_target !== null) yield* upstream.closeSsh(row.ssh_target);
-      }).pipe(Effect.ensuring(reload.pipe(Effect.ignore)));
+      yield* dropRow(row);
       return { removed: true, memberNotified, keyRevoked };
     },
     (effect) => hostLock.withPermits(1)(effect),

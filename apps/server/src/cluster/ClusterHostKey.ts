@@ -16,21 +16,78 @@ export interface TrustHostKey {
 
 const PROBE_TIMEOUT_MS = 30_000;
 
-/** `ssh-keygen -l` lines: `256 SHA256:… host (ED25519)`, or `host ED25519 SHA256:…` with `-F`. */
-const parseFingerprints = (stdout: string) =>
+// OpenSSH has no translations, so these phrases are stable.
+/** What ssh made of the host key, from a strict check that never authenticates. */
+export const classifyHostKeyCheck = (exitCode: number | null, stderr: string) => {
+  if (/REVOKED HOST KEY|is marked as revoked/.test(stderr)) return { _tag: "revoked" } as const;
+  if (stderr.includes("REMOTE HOST IDENTIFICATION HAS CHANGED")) {
+    const sent =
+      /The fingerprint for the (\S+) key sent by the remote host is\s+(SHA256:[A-Za-z0-9+/]+)/.exec(
+        stderr,
+      );
+    return sent === null
+      ? ({ _tag: "unrecognized" } as const)
+      : ({ _tag: "changed", keyType: sent[1]!, fingerprint: sent[2]! } as const);
+  }
+  if (stderr.includes("Host key verification failed")) {
+    const keyType = /No (\S+) host key is known for/.exec(stderr)?.[1] ?? null;
+    return { _tag: "unknown", keyType } as const;
+  }
+  if (exitCode === 0 || /Permission denied|No more authentication methods/.test(stderr)) {
+    return { _tag: "known" } as const;
+  }
+  return { _tag: "unrecognized" } as const;
+};
+
+/**
+ * `ssh -G`'s userknownhostsfile list. shortcut: ssh prints the paths joined by spaces, so a
+ * token that is not an absolute path is taken as the rest of the previous one; a path whose
+ * space is followed by `/` would still split.
+ */
+export const parseKnownHostsFiles = (value: string, isAbsolute: (file: string) => boolean) => {
+  const files: Array<string> = [];
+  for (const token of value.split(" ")) {
+    if (files.length > 0 && !isAbsolute(token)) files[files.length - 1] += ` ${token}`;
+    else if (token !== "") files.push(token);
+  }
+  return files.filter(isAbsolute);
+};
+
+// Keys of the type ssh named, so the probe captures the key it judged.
+const HOST_KEY_ALGORITHMS: Record<string, string> = {
+  ED25519: "ssh-ed25519",
+  ECDSA: "ecdsa-sha2-nistp256,ecdsa-sha2-nistp384,ecdsa-sha2-nistp521",
+  RSA: "rsa-sha2-512,rsa-sha2-256,ssh-rsa",
+  "ED25519-SK": "sk-ssh-ed25519@openssh.com",
+  "ECDSA-SK": "sk-ecdsa-sha2-nistp256@openssh.com",
+};
+
+/** `ssh-keygen -l -f` lines: `256 SHA256:… host (ED25519)`. */
+const parsePresented = (stdout: string) =>
   stdout.split("\n").flatMap((line) => {
-    const fingerprint = /\bSHA256:[A-Za-z0-9+/]+/.exec(line)?.[0];
-    if (fingerprint === undefined || line.startsWith("#")) return [];
-    const keyType = /\(([^)]+)\)\s*$/.exec(line)?.[1] ?? line.trim().split(/\s+/)[1] ?? "";
-    return [{ fingerprint, keyType }];
+    const match = /\b(SHA256:[A-Za-z0-9+/]+)\s.*\(([^)]+)\)\s*$/.exec(line);
+    return match === null ? [] : [{ fingerprint: match[1]!, keyType: match[2]! }];
   });
+
+/** `ssh-keygen -l -F` output: each match follows a `# Host … found: line N [REVOKED|CA]` header. */
+const parseKnownEntries = (stdout: string) => {
+  let plain = false;
+  return stdout.split("\n").flatMap((line) => {
+    if (line.startsWith("#")) {
+      plain = /found: line \d+\s*$/.test(line);
+      return [];
+    }
+    const fingerprint = /\bSHA256:[A-Za-z0-9+/]+/.exec(line)?.[0];
+    return plain && fingerprint !== undefined ? [fingerprint] : [];
+  });
+};
 
 const sshError = (message: string, cause?: unknown) =>
   new ClusterError({ reason: "ssh", message, ...(cause === undefined ? {} : { cause }) });
 
 /**
- * Checks the host key `target` presents against this machine's known_hosts the way ssh would,
- * and, once the user approved that exact key, records it there as ssh does.
+ * Lets ssh judge the host key `target` presents against this machine's known hosts, and, once
+ * the user approved that exact key, records it in known_hosts as ssh does.
  */
 export const verifyHostKey = Effect.fn("ClusterHostKey.verifyHostKey")(function* (
   target: DesktopSshEnvironmentTarget,
@@ -41,8 +98,34 @@ export const verifyHostKey = Effect.fn("ClusterHostKey.verifyHostKey")(function*
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const keygen = (args: ReadonlyArray<string>) =>
     spawner.string(ChildProcess.make("ssh-keygen", args, { stdin: "ignore" }));
+  const noAuth = ["-o", "PreferredAuthentications=none", "-o", "ControlPath=none"];
 
-  // ssh -G resolves the same config, aliases and ports the real runs use.
+  const check = yield* runSshCommand(target, {
+    batchMode: "yes",
+    preHostArgs: [...noAuth, "-o", "StrictHostKeyChecking=yes"],
+    remoteCommandArgs: ["true"],
+    timeoutMs: PROBE_TIMEOUT_MS,
+  }).pipe(
+    Effect.as({ verdict: classifyHostKeyCheck(0, ""), message: "" }),
+    Effect.catch((cause) =>
+      Effect.succeed({
+        verdict:
+          cause._tag === "SshCommandError"
+            ? classifyHostKeyCheck(cause.exitCode, cause.stderr)
+            : ({ _tag: "unrecognized" } as const),
+        message: cause.message,
+      }),
+    ),
+  );
+  const verdict = check.verdict;
+  if (verdict._tag === "known") return;
+  if (verdict._tag === "revoked") {
+    return yield* sshError(
+      `${target.hostname} presents a host key this machine marked as revoked. It cannot be trusted here.`,
+    );
+  }
+  if (verdict._tag === "unrecognized") return yield* sshError(check.message);
+
   const config = parseSshConfigOutput(
     (yield* runSshCommand(target, { preHostArgs: ["-G"] }).pipe(
       Effect.mapError((cause) => sshError(cause.message, cause)),
@@ -52,9 +135,10 @@ export const verifyHostKey = Effect.fn("ClusterHostKey.verifyHostKey")(function*
   const port = Number(config.get("port") ?? 22);
   const hostname = config.get("hostname") ?? target.hostname;
   const host = alias ?? (port === 22 ? hostname : `[${hostname}]:${port}`);
-  const knownHostsFiles = (config.get("userknownhostsfile") ?? "")
-    .split(" ")
-    .filter((file) => path.isAbsolute(file));
+  const knownHostsFiles = parseKnownHostsFiles(config.get("userknownhostsfile") ?? "", (file) =>
+    path.isAbsolute(file),
+  );
+  const algorithms = verdict.keyType === null ? undefined : HOST_KEY_ALGORITHMS[verdict.keyType];
 
   const probe = yield* Effect.scoped(
     Effect.gen(function* () {
@@ -62,17 +146,14 @@ export const verifyHostKey = Effect.fn("ClusterHostKey.verifyHostKey")(function*
       const failure = yield* runSshCommand(target, {
         batchMode: "yes",
         preHostArgs: [
-          "-o",
-          "PreferredAuthentications=none",
+          ...noAuth,
           "-o",
           "StrictHostKeyChecking=accept-new",
           "-o",
           `UserKnownHostsFile=${file}`,
           "-o",
           "GlobalKnownHostsFile=/dev/null",
-          // A shared connection would skip the key exchange this reads.
-          "-o",
-          "ControlPath=none",
+          ...(algorithms === undefined ? [] : ["-o", `HostKeyAlgorithms=${algorithms}`]),
         ],
         remoteCommandArgs: ["true"],
         timeoutMs: PROBE_TIMEOUT_MS,
@@ -81,16 +162,13 @@ export const verifyHostKey = Effect.fn("ClusterHostKey.verifyHostKey")(function*
         Effect.catch((cause) => Effect.succeed(cause)),
       );
       const lines = yield* fs.readFileString(file).pipe(Effect.orElseSucceed(() => ""));
-      const keys = parseFingerprints(yield* keygen(["-l", "-E", "sha256", "-f", file]));
-      const first = keys[0];
-      if (first === undefined) {
-        return yield* sshError(
-          failure?.message ?? `SSH to ${host} did not present a host key.`,
-          failure,
-        );
+      if (lines.trim() === "") {
+        return yield* sshError(failure?.message ?? `SSH to ${host} did not present a host key.`);
       }
-      if (keys.some((key) => key.fingerprint !== first.fingerprint)) {
-        return yield* sshError(`SSH to ${host} presented more than one host key.`);
+      const keys = parsePresented(yield* keygen(["-l", "-E", "sha256", "-f", file]));
+      const first = keys[0];
+      if (first === undefined || keys.some((key) => key.fingerprint !== first.fingerprint)) {
+        return yield* sshError(`SSH to ${host} did not present one clear host key.`);
       }
       return { ...first, lines };
     }),
@@ -99,25 +177,28 @@ export const verifyHostKey = Effect.fn("ClusterHostKey.verifyHostKey")(function*
       cause._tag === "ClusterError" ? cause : sshError(cause.message, cause),
     ),
   );
+  if (verdict._tag === "changed" && verdict.fingerprint !== probe.fingerprint) {
+    return yield* sshError(
+      `${host} presented ${verdict.fingerprint} to ssh but ${probe.fingerprint} on a second look. Nothing was trusted.`,
+    );
+  }
 
-  const known = yield* Effect.forEach(knownHostsFiles, (file) =>
-    fs.exists(file).pipe(
-      Effect.flatMap((exists) =>
-        exists ? keygen(["-l", "-E", "sha256", "-F", host, "-f", file]) : Effect.succeed(""),
-      ),
-      Effect.map((stdout) => ({
-        file,
-        fingerprints: parseFingerprints(stdout).map((key) => key.fingerprint),
-      })),
-    ),
-  ).pipe(Effect.mapError((cause) => sshError(cause.message, cause)));
-  const knownFingerprints = [...new Set(known.flatMap((entry) => entry.fingerprints))];
-  if (knownFingerprints.includes(probe.fingerprint)) return;
-
-  const changed = knownFingerprints.length > 0;
+  const changed = verdict._tag === "changed";
   const approved =
     trust !== undefined && trust.fingerprint === probe.fingerprint && (trust.replace || !changed);
   if (!approved) {
+    // Shown to the user only; ssh made the decision.
+    const knownFingerprints = changed
+      ? yield* Effect.forEach(knownHostsFiles, (file) =>
+          fs.exists(file).pipe(
+            Effect.flatMap((exists) =>
+              exists ? keygen(["-l", "-E", "sha256", "-F", host, "-f", file]) : Effect.succeed(""),
+            ),
+            Effect.map(parseKnownEntries),
+            Effect.orElseSucceed((): ReadonlyArray<string> => []),
+          ),
+        ).pipe(Effect.map((lists) => [...new Set(lists.flat())]))
+      : [];
     const hostKey: ClusterHostKey = {
       host,
       keyType: probe.keyType,
@@ -128,7 +209,11 @@ export const verifyHostKey = Effect.fn("ClusterHostKey.verifyHostKey")(function*
       changed
         ? {
             reason: "host_key_changed",
-            message: `The host key for ${host} has changed. Someone may be intercepting the connection, or the machine was reinstalled. It now presents ${probe.keyType} key ${probe.fingerprint}; this machine knew ${knownFingerprints.join(", ")}.`,
+            message: `The host key for ${host} has changed. Someone may be intercepting the connection, or the machine was reinstalled. It now presents ${probe.keyType} key ${probe.fingerprint}${
+              knownFingerprints.length > 0
+                ? `; this machine knew ${knownFingerprints.join(", ")}`
+                : ""
+            }.`,
             hostKey,
           }
         : {
@@ -144,13 +229,15 @@ export const verifyHostKey = Effect.fn("ClusterHostKey.verifyHostKey")(function*
     return yield* sshError(`SSH has no known_hosts file to record ${host} in.`);
   }
   yield* Effect.gen(function* () {
-    for (const entry of known) {
-      if (entry.fingerprints.length === 0) continue;
-      const exitCode = yield* spawner.exitCode(
-        ChildProcess.make("ssh-keygen", ["-R", host, "-f", entry.file], { stdin: "ignore" }),
-      );
-      if (exitCode !== 0) {
-        return yield* sshError(`Could not remove the old host key for ${host} from ${entry.file}.`);
+    if (changed) {
+      for (const file of knownHostsFiles) {
+        if (!(yield* fs.exists(file))) continue;
+        const exitCode = yield* spawner.exitCode(
+          ChildProcess.make("ssh-keygen", ["-R", host, "-f", file], { stdin: "ignore" }),
+        );
+        if (exitCode !== 0) {
+          return yield* sshError(`Could not remove the old host key for ${host} from ${file}.`);
+        }
       }
     }
     yield* fs.makeDirectory(path.dirname(destination), { recursive: true, mode: 0o700 });

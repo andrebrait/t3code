@@ -27,6 +27,14 @@ const PROTOCOL_VERSION = "2025-06-18";
 /** A title can be any length; the header carrying it stays well under HTTP header limits. */
 const SENDER_TITLE_MAX_LENGTH = 200;
 
+const unreachable = (route: { readonly messages: { readonly unreachable: string } }) =>
+  Effect.fail(
+    new OrchestratorMcpFailure({
+      code: "orchestration_error",
+      message: route.messages.unreachable,
+    }),
+  );
+
 /** The limits a call carries to the peer: the calling agent's modes here. */
 export interface PeerCallLimits {
   readonly runtimeMode: RuntimeMode;
@@ -354,20 +362,8 @@ const make = Effect.gen(function* () {
         Effect.tap(() => route.recordOutcome(null)),
         // Recorded above with the transport's own message; the agent hears it plainly.
         Effect.catchTags({
-          HttpClientError: () =>
-            Effect.fail(
-              new OrchestratorMcpFailure({
-                code: "orchestration_error",
-                message: route.messages.unreachable,
-              }),
-            ),
-          TimeoutError: () =>
-            Effect.fail(
-              new OrchestratorMcpFailure({
-                code: "orchestration_error",
-                message: route.messages.unreachable,
-              }),
-            ),
+          HttpClientError: () => unreachable(route),
+          TimeoutError: () => unreachable(route),
         }),
         Effect.flatMap(Effect.fromResult),
       ),

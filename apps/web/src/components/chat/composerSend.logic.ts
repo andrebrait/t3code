@@ -46,9 +46,9 @@ export function referencedThreadContexts(draft: {
 }
 
 /**
- * Machines Auto balance may pick: connected, weighted above zero, able to read every attached
- * thread, and running the selected provider. A machine that would clone checks the provider
- * with the machine's own defaults, since the project has no settings there yet.
+ * Machines Auto balance may pick: ones that already have the project (never one that would
+ * clone it), connected, weighted above zero, able to read every attached thread, and running
+ * the selected provider.
  */
 export function loadBalancingCandidateIds(input: {
   readonly candidates: ReadonlyArray<{
@@ -72,6 +72,7 @@ export function loadBalancingCandidateIds(input: {
     .filter((candidate) => {
       const environment = input.environmentById.get(candidate.environmentId);
       return (
+        candidate.projectId !== null &&
         environment?.connection.phase === "connected" &&
         (input.weights[candidate.environmentId] ?? 50) > 0 &&
         input.referencedThreadContexts.every(

@@ -554,11 +554,12 @@ code only.
   already running on a member continues.
 - A new thread in a project with a git remote can run on any online member,
   and on the main host, even before that machine has the project. The machine
-  picker marks such a machine **clones the project**, and Auto balance counts
-  it too. Picking it, or sending when Auto balance chose it, clones the project
-  from its remote into that machine's Add Project folder; the composer shows
-  the clone, and the thread starts there once it finishes. Ignored files such
-  as `.env` are not copied; use **Add to another machine** for those.
+  picker marks such a machine **clones the project**. Choosing it asks first,
+  then clones the project from its remote into that machine's Add Project
+  folder; the composer shows the clone, and the thread starts there once it
+  finishes. Auto balance only uses machines that already have the project.
+  Ignored files such as `.env` are not copied; use **Add to another machine**
+  for those.
 
 To take a machine out, select it on the main host and choose **Remove**, or run
 `t3 cluster remove <id>`. Removing an SSH member also deletes the main host's

@@ -1642,6 +1642,8 @@
   "b77a2b4d9abda043": "Espacio de trabajo",
   "656e5640ed1b3e70": "Añadir a otra máquina",
   "d55b312aac0fe009": "clona el proyecto",
+  "ff5963f46707f5f1": "Clonar",
+  "deb6e4967359adb8": "¿Clonar {repository} en {machine}?\nSe clonará en {path} antes de que empiece el hilo.",
   "3b4ca180fef92e21": "Observación",
   "cc8cdd1ece34cd75": "Nota",
   "19842b180a7e5a5f": "Consejo",

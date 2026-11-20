@@ -43,7 +43,8 @@ export interface RunSshCommandOptions extends SshAuthOptions {
   readonly keepErrorOutputTail?: boolean;
 }
 
-function parseSshConfigOutput(stdout: string): Map<string, string> {
+/** `ssh -G` output as option name to value; the first line for a name wins, as in ssh. */
+export function parseSshConfigOutput(stdout: string): ReadonlyMap<string, string> {
   const values = new Map<string, string>();
   for (const line of stdout.split(/\r?\n/u)) {
     const trimmed = line.trim();
@@ -134,8 +135,11 @@ export function controlMasterArgs(controlPath: string): string[] {
   return ["-F", "none", "-o", `ControlPath=${controlPath}`, "-o", "ProxyCommand=false"];
 }
 
+// A run that signs in with only its own key also trusts only host keys already in known_hosts.
 export const sshIdentityArgs = (identityFile: string | undefined): string[] =>
-  identityFile === undefined ? [] : ["-i", identityFile, "-o", "IdentitiesOnly=yes"];
+  identityFile === undefined
+    ? []
+    : ["-i", identityFile, "-o", "IdentitiesOnly=yes", "-o", "StrictHostKeyChecking=yes"];
 
 export function getLastNonEmptyOutputLine(stdout: string): string | null {
   return (

@@ -112,7 +112,11 @@ it("generates an ed25519 key pair OpenSSH reads", () => {
 });
 
 it("signs in once with only what the user chose", () => {
-  assert.deepEqual(ClusterSshKey.loginOptions({ _tag: "config" }), { batchMode: "yes" });
+  // Every run refuses a host key known_hosts lacks; an identity file's runs do so on their own.
+  assert.deepEqual(ClusterSshKey.loginOptions({ _tag: "config" }), {
+    batchMode: "yes",
+    preHostArgs: ["-o", "StrictHostKeyChecking=yes"],
+  });
   assert.deepEqual(
     ClusterSshKey.loginOptions({ _tag: "password", password: Redacted.make("pw") }),
     {
@@ -147,8 +151,7 @@ it("signs in once with only what the user chose", () => {
       authSecret: "secret",
       batchMode: "no",
       interactiveAuth: true,
-      // askpass would answer an unknown host's yes/no prompt with the secret.
-      preHostArgs: ["-o", "StrictHostKeyChecking=yes", "-o", "PreferredAuthentications=publickey"],
+      preHostArgs: ["-o", "PreferredAuthentications=publickey"],
     },
   );
 });

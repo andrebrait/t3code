@@ -1044,11 +1044,13 @@ describe("ssh tunnel scripts", () => {
       assert.isTrue(authenticated.some((args) => args.includes("-N")));
       for (const args of authenticated) {
         const at = args.indexOf("-i");
-        assert.deepEqual(args.slice(at, at + 4), [
+        assert.deepEqual(args.slice(at, at + 6), [
           "-i",
           "/state/cluster_ed25519",
           "-o",
           "IdentitiesOnly=yes",
+          "-o",
+          "StrictHostKeyChecking=yes",
         ]);
       }
     }),

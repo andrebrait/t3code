@@ -280,6 +280,8 @@ export class ClusterService extends Context.Service<
     /** Member side: ends the membership and revokes the host's session. Needs no network. */
     readonly leave: Effect.Effect<ClusterLeaveResult, ClusterError>;
     readonly members: Stream.Stream<ReadonlyArray<ClusterMember>>;
+    /** Every member stored here, even while the cluster is off, so the CLI can remove them. */
+    readonly storedMembers: Effect.Effect<ReadonlyArray<ClusterMember>>;
     readonly addMember: (
       input: ClusterAddMemberInput,
     ) => Effect.Effect<ClusterMember, ClusterError>;
@@ -803,6 +805,8 @@ const make = Effect.gen(function* () {
     (rows, on) => (on ? rows.map(toMember) : []),
   );
 
+  const storedMembers = Effect.map(SubscriptionRef.get(rowsRef), (rows) => rows.map(toMember));
+
   const awaitGone: ClusterService["Service"]["awaitGone"] = (memberId) =>
     SubscriptionRef.changes(rowsRef).pipe(
       Stream.filter(
@@ -1131,6 +1135,7 @@ const make = Effect.gen(function* () {
     acceptJoin,
     leave,
     members,
+    storedMembers,
     addMember,
     removeMember,
     renameMember,

@@ -334,10 +334,20 @@ function ConnectionsSettingsContent({
       ];
     },
   );
-  const loadBalancingEnvironments = [
+  const pullRequestRoutingEnvironments = [
     ...(primaryEnvironment ? [primaryEnvironment] : []),
     ...savedEnvironments.filter((environment) => environment.entry.enabled),
   ].filter((environment) => environment.connection.phase !== "unsupported");
+  // Members run threads like any machine, so each gets its own share of the load.
+  const loadBalancingEnvironments = [
+    ...pullRequestRoutingEnvironments,
+    ...environments.filter(
+      (environment) =>
+        environment.entry.target._tag === "ClusterConnectionTarget" &&
+        environment.entry.enabled &&
+        environment.connection.phase !== "unsupported",
+    ),
+  ];
   const [desktopServerExposureMutationError, setDesktopServerExposureMutationError] = useState<
     string | null
   >(null);
@@ -1898,7 +1908,7 @@ function ConnectionsSettingsContent({
         />
       ))}
       <LoadBalancingSettings environments={loadBalancingEnvironments} />
-      <PullRequestRoutingSettings environments={loadBalancingEnvironments} />
+      <PullRequestRoutingSettings environments={pullRequestRoutingEnvironments} />
     </SettingsPageContainer>
   );
 }

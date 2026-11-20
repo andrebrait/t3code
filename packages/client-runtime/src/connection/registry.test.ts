@@ -66,6 +66,7 @@ import * as ConnectionProfileStore from "./profileStore.ts";
 import * as EnvironmentRegistry from "./registry.ts";
 import {
   PullRequestRoutingPermissions,
+  pullRequestRoutingConnectionKey,
   type StoredPullRequestRoutingPermission,
   makePullRequestRoutingPermissions,
 } from "./pullRequestRoutingPermissions.ts";

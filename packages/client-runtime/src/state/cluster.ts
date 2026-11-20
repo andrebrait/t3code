@@ -96,6 +96,9 @@ export function clusterAddTarget(raw: string, options: { readonly ssh: boolean }
     : null;
 }
 
+/** A key path the main host resolves the same way from any working directory. */
+export const clusterKeyPathValid = (path: string) => /^(?:~|\/|[A-Za-z]:[\\/])/.test(path.trim());
+
 /** The Add member dialog's one-time ssh login; null until its required field is filled. */
 export function clusterSshLogin(input: {
   readonly method: ClusterSshLogin["_tag"];
@@ -112,7 +115,7 @@ export function clusterSshLogin(input: {
         : { _tag: "password", password: Redacted.make(input.password) };
     case "keyFile": {
       const path = input.keyPath.trim();
-      if (path === "") return null;
+      if (!clusterKeyPathValid(path)) return null;
       return input.passphrase === ""
         ? { _tag: "keyFile", path }
         : { _tag: "keyFile", path, passphrase: Redacted.make(input.passphrase) };

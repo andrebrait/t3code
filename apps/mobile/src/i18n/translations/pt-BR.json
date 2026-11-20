@@ -1942,6 +1942,8 @@
   "77786d60b52150dd": "Não foi possível remover {label}",
   "273389bda2366710": "{label} removido aqui",
   "372d2d33a8ca8db8": "Não respondeu. Execute t3 cluster leave nela para concluir.",
+  "5596d3a6af9c2db4": "A chave do cluster ainda está em {label}",
+  "bacdab8c7c77200c": "O host principal não conseguiu alcançá-lo para remover a chave. Apague lá a linha t3code-cluster em ~/.ssh/authorized_keys.",
   "887009bf8c4df3ab": "Remover {label}?",
   "4c9f798d43774921": "Ele volta a ser um ambiente independente.",
   "651052b5c10b8205": "Não foi possível adicionar o membro",

@@ -7882,6 +7882,7 @@
   "86944335d5ded30f": "Key file",
   "c7eb1ca065ab71e6": "Key on the main host",
   "93bbd9bbc3bf0fce": "Custom key path…",
+  "eb90caeca80020cf": "Enter a full path, or one that starts with ~.",
   "caeef5373ed7dc22": "Passphrase",
   "3953d1cccd71ab7e": "Name (optional)",
   "ccfce317440dbd50": "Lets a main host add this machine as a member.",

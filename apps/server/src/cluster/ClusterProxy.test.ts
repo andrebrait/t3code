@@ -177,11 +177,13 @@ it.effect("forwards HTTP to the member under the client's scopes, never the clie
         "/API/cluster%2Fevents",
         "/api/cluster;x",
         "/api/cluster/events;x",
+        "/%61pi/cluster/events",
+        "/%61pi/cluster/leave",
       ]) {
         expect((yield* get(`${base}${path}`, admin)).status).toBe(404);
       }
       // MCP is the main host's own route to the member, at full access; a client never reaches it.
-      for (const path of ["/mcp", "/mcp;x", "/MCP", "//mcp/", "/Mcp/tools"]) {
+      for (const path of ["/mcp", "/mcp;x", "/MCP", "//mcp/", "/Mcp/tools", "/%6dcp"]) {
         const mcp = yield* HttpClient.execute(
           HttpClientRequest.post(`${base}${path}`).pipe(
             HttpClientRequest.bearerToken(admin),

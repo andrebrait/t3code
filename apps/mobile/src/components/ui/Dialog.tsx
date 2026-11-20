@@ -11,14 +11,20 @@ export function alert(...args: Parameters<typeof Alert.alert>): void {
 }
 
 export function confirm(request: ConfirmDialogRequest): void {
-  Alert.alert(request.title, request.message, [
-    { text: request.cancelText ?? m(msg("Cancel")), style: "cancel", onPress: request.onCancel },
-    {
-      text: request.confirmText,
-      style: request.destructive ? "destructive" : "default",
-      onPress: request.onConfirm,
-    },
-  ]);
+  Alert.alert(
+    request.title,
+    request.message,
+    [
+      { text: request.cancelText ?? m(msg("Cancel")), style: "cancel", onPress: request.onCancel },
+      {
+        text: request.confirmText,
+        style: request.destructive ? "destructive" : "default",
+        onPress: request.onConfirm,
+      },
+    ],
+    // Android dismisses on an outside tap without pressing a button.
+    { cancelable: true, onDismiss: request.onCancel },
+  );
 }
 
 export function prompt(request: TextInputDialogRequest): void {

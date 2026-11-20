@@ -525,7 +525,9 @@ choose your SSH config or agent, a password, or a key file on the main host (wit
 its passphrase if it has one). On the command line, pass `--password-stdin`, or
 `--key <path>` with `--passphrase-stdin` for an encrypted key. The main host signs
 in once that way, then adds its own cluster key to `~/.ssh/authorized_keys` on
-the member and reconnects with only that key. Nothing you type is saved. The
+the member and reconnects with that key. Nothing you type is saved. The main
+host must already trust the member's host key; if it does not, run
+`ssh user@host` once in a terminal on the main host and check the fingerprint. The
 mobile app adds members by join string only.
 
 - Joining signs out the member's other remote clients and ends its linked

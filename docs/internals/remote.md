@@ -208,9 +208,10 @@ renderer uses the forwarded endpoint through the shared connection runtime.
 [SSH cleanup](../../packages/ssh/src/tunnel.ts) stops a remote server only if the
 launcher owns it; a server it discovered already running must survive a client
 disconnect. A cluster's main host never stops a member's server
-(`keepRemoteServer`), and its links sign in with only its own cluster key
-(`-i <key> -o IdentitiesOnly=yes`, [ClusterSshKey](../../apps/server/src/cluster/ClusterSshKey.ts)),
-so whichever keys a user's agent or ssh config offers never decide whether a member reconnects. Reconnection restores the forward before opening the application
+(`keepRemoteServer`), and its links offer its own cluster key with
+`-i <key> -o IdentitiesOnly=yes` ([ClusterSshKey](../../apps/server/src/cluster/ClusterSshKey.ts)),
+so keys loaded in a user's agent do not decide whether a member reconnects. `IdentityFile`
+entries and `ProxyJump` hops from the user's ssh config still apply. Reconnection restores the forward before opening the application
 transport.
 
 Remote servers can outlive several client releases. Clients must use advertised

@@ -267,6 +267,14 @@ function MemberSheet(props: {
         gt("It did not answer. Run t3 cluster leave on it to finish."),
       );
     }
+    if (result.value.keyRevoked === false) {
+      Dialog.alert(
+        gt("The cluster key is still on {label}", { label: member.label }),
+        gt(
+          "The main host could not reach it to remove its key. Delete the t3code-cluster line in ~/.ssh/authorized_keys there.",
+        ),
+      );
+    }
     props.onClose();
   };
   return (

@@ -1945,6 +1945,8 @@
   "77786d60b52150dd": "{label} konnte nicht entfernt werden",
   "273389bda2366710": "{label} hier entfernt",
   "372d2d33a8ca8db8": "Keine Antwort. Führe zum Abschluss auf dem Rechner t3 cluster leave aus.",
+  "5596d3a6af9c2db4": "Der Cluster-Schlüssel ist noch auf {label}",
+  "bacdab8c7c77200c": "Der Haupthost konnte den Rechner nicht erreichen, um seinen Schlüssel zu entfernen. Lösche dort die t3code-cluster-Zeile in ~/.ssh/authorized_keys.",
   "887009bf8c4df3ab": "{label} entfernen?",
   "4c9f798d43774921": "Es wird wieder zu einer eigenständigen Umgebung.",
   "651052b5c10b8205": "Mitglied konnte nicht hinzugefügt werden",

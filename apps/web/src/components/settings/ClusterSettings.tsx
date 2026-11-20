@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   clusterActions,
   clusterAddTarget,
+  clusterKeyPathValid,
   clusterMemberStatusText,
   clusterSshLogin,
   defaultClusterInviteUrl,
@@ -624,6 +625,13 @@ function AddMemberAction({
                         nativeInput
                         spellCheck={false}
                       />
+                    ) : null}
+                    {custom &&
+                    customKeyPath.trim() !== "" &&
+                    !clusterKeyPathValid(customKeyPath) ? (
+                      <p role="alert" className="text-xs text-destructive">
+                        <T>Enter a full path, or one that starts with ~.</T>
+                      </p>
                     ) : null}
                     {custom || chosenKey?.encrypted === true ? (
                       <label className="block space-y-1.5">

@@ -1945,6 +1945,8 @@
   "77786d60b52150dd": "Det gick inte att ta bort {label}",
   "273389bda2366710": "{label} borttagen här",
   "372d2d33a8ca8db8": "Ingen respons. Kör t3 cluster leave på den för att slutföra.",
+  "5596d3a6af9c2db4": "Klusternyckeln finns kvar på {label}",
+  "bacdab8c7c77200c": "Huvudvärden kunde inte nå den för att ta bort sin nyckel. Ta bort raden t3code-cluster i ~/.ssh/authorized_keys där.",
   "887009bf8c4df3ab": "Ta bort {label}?",
   "4c9f798d43774921": "Den blir en fristående miljö igen.",
   "651052b5c10b8205": "Det gick inte att lägga till medlemmen",

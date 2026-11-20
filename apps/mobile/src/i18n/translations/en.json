@@ -1945,6 +1945,8 @@
   "77786d60b52150dd": "Could not remove {label}",
   "273389bda2366710": "Removed {label} here",
   "372d2d33a8ca8db8": "It did not answer. Run t3 cluster leave on it to finish.",
+  "5596d3a6af9c2db4": "The cluster key is still on {label}",
+  "bacdab8c7c77200c": "The main host could not reach it to remove its key. Delete the t3code-cluster line in ~/.ssh/authorized_keys there.",
   "887009bf8c4df3ab": "Remove {label}?",
   "4c9f798d43774921": "It becomes a standalone environment again.",
   "651052b5c10b8205": "Could not add the member",

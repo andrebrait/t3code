@@ -62,6 +62,13 @@ describe("clusterSshLogin", () => {
       password: "redacted:pw",
     });
     expect(login({ method: "keyFile", keyPath: "  " })).toBeNull();
+    // A relative path would resolve against the server's working directory.
+    expect(login({ method: "keyFile", keyPath: "id_ed25519" })).toBeNull();
+    expect(login({ method: "keyFile", keyPath: "~/.ssh/id" })).toEqual({
+      _tag: "keyFile",
+      path: "~/.ssh/id",
+    });
+    expect(login({ method: "keyFile", keyPath: String.raw`C:\Users\me\.ssh\id` })).not.toBeNull();
     expect(login({ method: "keyFile", keyPath: " /k/id ", password: "pw" })).toEqual({
       _tag: "keyFile",
       path: "/k/id",

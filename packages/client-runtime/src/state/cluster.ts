@@ -14,6 +14,7 @@ import { Atom } from "effect/reactivity";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
 
+import type { EnvironmentConnectionPhase } from "../connection/presentation.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import {
   createEnvironmentRpcCommand,
@@ -147,6 +148,15 @@ export function clusterName(
     case "member":
       return status.host?.label ?? ownLabel;
   }
+}
+
+/** A member's light: this device's connection to it, unless the main host rules the member out. */
+export function clusterMemberConnectionPhase(
+  member: Pick<ClusterMember, "status">,
+  devicePhase: EnvironmentConnectionPhase | undefined,
+): EnvironmentConnectionPhase {
+  if (member.status === "revoked" || member.status === "incompatible") return "error";
+  return devicePhase ?? (member.status === "online" ? "connected" : "offline");
 }
 
 export function clusterMemberStatusText(

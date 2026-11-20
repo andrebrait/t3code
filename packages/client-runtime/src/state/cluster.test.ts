@@ -4,6 +4,7 @@ import * as Redacted from "effect/Redacted";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  clusterMemberConnectionPhase,
   clusterActions,
   clusterJoinTarget,
   clusterMemberStatusText,
@@ -95,6 +96,15 @@ describe("clusterSshLogin", () => {
 });
 
 describe("cluster presentation", () => {
+  it("lights a member by this device's connection unless the main host rules it out", () => {
+    expect(clusterMemberConnectionPhase({ status: "online" }, "reconnecting")).toBe("reconnecting");
+    expect(clusterMemberConnectionPhase({ status: "offline" }, "connecting")).toBe("connecting");
+    expect(clusterMemberConnectionPhase({ status: "revoked" }, "connected")).toBe("error");
+    expect(clusterMemberConnectionPhase({ status: "incompatible" }, undefined)).toBe("error");
+    expect(clusterMemberConnectionPhase({ status: "online" }, undefined)).toBe("connected");
+    expect(clusterMemberConnectionPhase({ status: "offline" }, undefined)).toBe("offline");
+  });
+
   it("names the cluster after its main host", () => {
     const joinedAt = DateTime.makeUnsafe(0);
     const host = {

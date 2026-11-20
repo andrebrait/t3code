@@ -3,6 +3,7 @@ import {
   clusterActions,
   clusterJoinTarget,
   clusterKeyPathValid,
+  clusterMemberConnectionPhase,
   clusterMemberStatusText,
   clusterSshLogin,
   clusterSshTarget,
@@ -32,14 +33,18 @@ import { type ComponentProps, type ReactNode, useId, useState } from "react";
 import { requestConfirmDialog } from "~/confirmDialog";
 import { cn } from "~/lib/utils";
 import { clusterEnvironment } from "~/state/cluster";
-import { useEnvironmentHttpBaseUrl } from "~/state/environments";
+import { useEnvironmentHttpBaseUrl, useEnvironments } from "~/state/environments";
 import { formatEnvironmentQueryError, useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import type { MessageResolver } from "../../i18n/messages";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
-import { ConnectionStatusDot } from "../ConnectionStatusDot";
+import {
+  ConnectionStatusDot,
+  connectionPhaseDotClassName,
+  connectionPhasePingClassName,
+} from "../ConnectionStatusDot";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import {
   AlertDialog,
@@ -240,6 +245,11 @@ function ClusterMemberRow({
   const gt = useGT();
   const m = useMessages();
   const nowMs = Date.parse(useNowMinute());
+  const { presentationById } = useEnvironments();
+  const phase = clusterMemberConnectionPhase(
+    member,
+    presentationById.get(member.environmentId)?.connection.phase,
+  );
   const canWrite = useAtomValue(clusterEnvironment.removeMember.permissionAtom(environmentId));
   const removeMember = useAtomCommand(clusterEnvironment.removeMember, {
     label: "remove cluster member",
@@ -327,14 +337,8 @@ function ClusterMemberRow({
             icon={
               <ConnectionStatusDot
                 tooltipText={null}
-                dotClassName={
-                  member.status === "online"
-                    ? "bg-success"
-                    : member.status === "offline"
-                      ? "bg-muted-foreground/30"
-                      : "bg-destructive"
-                }
-                pingClassName={null}
+                dotClassName={connectionPhaseDotClassName(phase)}
+                pingClassName={connectionPhasePingClassName(phase)}
               />
             }
             title={member.label}

@@ -1,3 +1,4 @@
+import { loadBalancingPreferenceForWeight } from "@t3tools/client-runtime/load-balancing";
 import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import { msg, T, useGT, useMessages } from "gt-react";
 
@@ -27,21 +28,13 @@ const summaryLabels = {
   0: msg("{environment} manual only"),
 } as const;
 
-type LoadPreference = (typeof preferences)[number]["value"];
-
-function loadPreferenceForWeight(weight: number | undefined): LoadPreference {
-  if (weight === undefined || weight === 50) return 50;
-  if (weight === 0) return 0;
-  return weight < 50 ? 25 : 100;
-}
-
 function summarizeLoadPreferences(
   environments: ReadonlyArray<Pick<EnvironmentPresentation, "environmentId" | "label">>,
   weights: Readonly<Record<string, number>>,
   resolve: MessageResolver,
 ): string | null {
   const parts = environments.flatMap((environment) => {
-    const preference = loadPreferenceForWeight(weights[environment.environmentId]);
+    const preference = loadBalancingPreferenceForWeight(weights[environment.environmentId]);
     return preference === 50
       ? []
       : [resolve(summaryLabels[preference], { environment: environment.label })];
@@ -100,7 +93,7 @@ export function LoadBalancingSettings({
         >
           <Select
             items={items}
-            value={loadPreferenceForWeight(
+            value={loadBalancingPreferenceForWeight(
               settings.loadBalancingWeights[environment.environmentId],
             )}
             disabled={!settingsHydrated || !settings.loadBalancingEnabled}

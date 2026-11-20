@@ -12,7 +12,7 @@ import {
 
 const SHA = "ab".repeat(32);
 
-describe("cluster join strings", () => {
+describe("cluster join codes", () => {
   it("round-trips the member's origin, code and certificate fingerprint", () => {
     const joinString = formatClusterJoinString({
       url: "https://box.local:3773/some/path",
@@ -30,7 +30,7 @@ describe("cluster join strings", () => {
     );
   });
 
-  it("round-trips a join string without a fingerprint", () => {
+  it("round-trips a join code without a fingerprint", () => {
     const joinString = formatClusterJoinString({
       url: "https://box.tail1234.ts.net/",
       code: "K7M2Q9RZ3NWD",

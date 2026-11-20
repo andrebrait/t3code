@@ -552,7 +552,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: msg("Cluster"),
     to: "/settings/labs",
     scope: "environment",
-    searchTerms: [msg("beta cluster main host members group machines proxy invite join")],
+    searchTerms: [msg("beta cluster main host members group machines proxy join code")],
   },
   {
     id: "prompt-suggestions-beta",
@@ -1440,7 +1440,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: msg("Cluster"),
     to: "/settings/connections",
     targetId: "cluster",
-    searchTerms: [msg("cluster main host member invite join string fingerprint ssh leave remove")],
+    searchTerms: [msg("cluster main host member join code fingerprint ssh leave remove")],
   },
   {
     id: "remote-environments",

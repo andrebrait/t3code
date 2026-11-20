@@ -630,7 +630,7 @@
   "209197562551a237": "Online",
   "d1dc5d5f8f723d2f": "Verbinde…",
   "6da26c8c02873d20": "Führt eine T3-Code-Version aus, die {host} nicht steuern kann. Aktualisiere beide auf dieselbe Version.",
-  "1f1df7efb4b1c68f": "Akzeptiert {host} nicht mehr. Entferne es hier und lade es erneut ein.",
+  "6ecf50909bab2234": "Akzeptiert {host} nicht mehr. Entferne es hier und füge es dann mit einem neuen Beitrittscode erneut hinzu.",
   "16ebaeabe59a4857": "Diese Umgebung war mit diesem Konto über T3 Connect nicht erreichbar.",
   "7e19512f1ce2b686": "Die Versionen der Geräte-Tools wurden nicht geprüft.",
   "7bdc8e41c92e24b7": "Geräte-Hub",
@@ -7829,7 +7829,7 @@
   "3202e5e7e3ac64f4": "Clustermitglieder konnten nicht geladen werden",
   "20ec2553636ff8b6": "Clustermitglieder werden geladen…",
   "185c47873cbc3a58": "Noch keine Mitglieder",
-  "b67ffe2892c0809f": "Wähle auf dem anderen Rechner „Einem Cluster beitreten…“ und füge seine Beitrittszeichenfolge unter „Mitglied hinzufügen“ ein.",
+  "87be230ed4df86c3": "Wähle auf dem anderen Rechner „Einem Cluster beitreten…“ und füge seinen Beitrittscode unter „Mitglied hinzufügen“ ein.",
   "e83d7e0f8edc2a67": "Nie erreicht",
   "6e5bd943c29069ba": "Zuletzt gesehen {time}",
   "4b8e5df2cc93095e": "{label} aus dem Cluster entfernen? Es wird wieder zu einer eigenständigen Umgebung.",
@@ -7855,8 +7855,8 @@
   "1287f93691c96377": "Ersetzen und fortfahren",
   "cad9c74911412589": "Vertrauen",
   "014616905723cd98": "Einem Cluster beitreten…",
-  "65f66edefb5175c5": "Beitrittszeichenfolge erstellen",
-  "7bc13a4ad376ef6b": "Beitrittszeichenfolge kopieren",
+  "0fd5390a359a5653": "Beitrittscode erstellen",
+  "474319bf8c34993b": "Beitrittscode kopieren",
   "90ae616e9cb53922": "Den Cluster von {host} verlassen? Koppel danach Clients erneut mit diesem Rechner.",
   "cd600c8a4e87d47d": "Cluster konnte nicht verlassen werden",
   "2ed706790c2b5d0a": "Mitglied von {host}",
@@ -7864,8 +7864,8 @@
   "9ff2b973feb1f701": "Verlasse…",
   "102b7b49ef3cdee1": "Cluster verlassen",
   "32b30e32d451d005": "Mitglied hinzufügen",
-  "863b7e82af809507": "Füge die Beitrittszeichenfolge vom anderen Rechner ein oder gib user@host ein, um ihn per SSH hinzuzufügen. Der Haupthost meldet sich einmal an und installiert seinen eigenen Schlüssel, damit er sich selbst wieder verbinden kann.",
-  "7310ad79a8ffca7d": "Beitrittszeichenfolge oder SSH-Ziel",
+  "f873f8a9b703b58a": "Füge den Beitrittscode vom anderen Rechner ein oder gib user@host ein, um ihn per SSH hinzuzufügen. Der Haupthost meldet sich einmal an und installiert seinen eigenen Schlüssel, damit er sich selbst wieder verbinden kann.",
+  "ba762eea3c513adf": "Beitrittscode oder SSH-Ziel",
   "83b275291bf40e25": "Der Haupthost installiert seinen eigenen Schlüssel auf diesem Rechner",
   "5690bd95f5c6e460": [
     "Er meldet sich einmal mit deiner Auswahl an und fügt dann einen Cluster-Schlüssel zu",
@@ -7890,14 +7890,14 @@
   "ddf0e1eb84511ae2": "Einem Cluster beitreten",
   "c3d0edea2211cbbd": "Beim Beitritt werden die anderen Clients dieses Rechners abgemeldet und die verknüpften Umgebungen beendet. Danach ist er über den Haupthost erreichbar.",
   "a7e90c3ca71d8a2b": "Adresse, unter der der Haupthost diesen Rechner erreicht",
-  "886a1cd5518d7bb5": [
+  "a51baf4208ff026b": [
     "Code ",
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
     },
-    ". Füge eine Adresse hinzu, um eine Beitrittszeichenfolge zu erhalten."
+    ". Füge eine Adresse hinzu, um einen Beitrittscode zu erhalten."
   ],
   "c4a1872f647cca8f": [
     "Füge sie beim Haupthost unter „Mitglied hinzufügen“ ein. Zertifikat-SHA-256:",
@@ -11629,7 +11629,7 @@
   "d443390c4d2dcfd4": "barrierefreiheit a11y screenreader nvda jaws voiceover orca sprachausgabe fenstertitel tab-titel alt tab taskleiste thread status reihenfolge arbeitet genehmigung",
   "6826fa9579c22035": "beta teilen gast einladen link teammitglied zuschauen t3 connect tunnel",
   "f10c06cba0cdf7fe": "beta anderen rechner verknüpfen vps peer agenten dort arbeiten delegieren",
-  "7bf0c7a8f778a1c2": "beta cluster haupthost mitglieder gruppe rechner proxy einladung beitreten",
+  "5b14cb47e4bf0612": "beta cluster haupthost mitglieder gruppe rechner proxy beitreten beitrittscode",
   "4a21cf825a2045b0": "beta tab autovervollständigung nächste nachricht vorhersagen claude codex ghost text",
   "fea2dc36585c4a20": "Simlock-Geräte-Hosts (Alpha)",
   "9d834d178130180e": "beta alpha simlock callstack simulator emulator ios android pool lease gateway",
@@ -11766,7 +11766,7 @@
   "8ed7c2a2226f4663": "localhost loopback portweiterleitung auf diesem gerät öffnen browser tabs streamen sicherheit port forwarding",
   "1c3e0ac06c8a1f1e": "verbindungen server backend lokal remote zugriff administrativ berechtigungen bereich kopplungslinks qr-code autorisierte clients sitzungen widerrufen endpunkt",
   "744fd34e8049efeb": "verknüpfen peer anderer rechner vps agenten dort arbeiten übergabe kopplungscode",
-  "c6ef7aebb3a4dc2c": "cluster haupthost mitglied einladung beitritt zeichenfolge fingerabdruck ssh verlassen entfernen",
+  "135477eff2b044e7": "cluster haupthost mitglied beitrittscode fingerabdruck ssh verlassen entfernen",
   "3d00c452287f50bd": "hinzufügen koppeln backend host code ssh konfiguration agent tunnel gespeichert t3 connect",
   "cbf49f84e7f456e5": "Lastverteilung",
   "6f1a769805a28197": "automatisch rechner umgebung ressourcen cpu speicher kapazität präferenz gewichtung gemeinsame projekte",

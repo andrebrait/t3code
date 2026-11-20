@@ -630,7 +630,7 @@
   "209197562551a237": "Online",
   "d1dc5d5f8f723d2f": "Conectando…",
   "6da26c8c02873d20": "Ejecuta una versión de T3 Code que {host} no puede controlar. Actualiza ambos a la misma versión.",
-  "1f1df7efb4b1c68f": "Ya no acepta a {host}. Quítalo aquí y vuelve a invitarlo.",
+  "6ecf50909bab2234": "Ya no acepta a {host}. Quítalo aquí y vuelve a añadirlo con un nuevo código de unión.",
   "16ebaeabe59a4857": "No se pudo llegar a ese entorno a través de T3 Connect con esta cuenta.",
   "7e19512f1ce2b686": "No se han comprobado las versiones de las herramientas del dispositivo.",
   "7bdc8e41c92e24b7": "Device hub",
@@ -7828,7 +7828,7 @@
   "3202e5e7e3ac64f4": "No se pudieron cargar los miembros del clúster",
   "20ec2553636ff8b6": "Cargando los miembros del clúster…",
   "185c47873cbc3a58": "Aún no hay miembros",
-  "b67ffe2892c0809f": "En la otra máquina, elige Unirse a un clúster… y pega su cadena de unión en Añadir miembro.",
+  "87be230ed4df86c3": "En la otra máquina, elige Unirse a un clúster… y pega su código de unión en Añadir miembro.",
   "e83d7e0f8edc2a67": "Nunca alcanzado",
   "6e5bd943c29069ba": "Visto por última vez {time}",
   "4b8e5df2cc93095e": "¿Quitar {label} del clúster? Volverá a ser un entorno independiente.",
@@ -7854,8 +7854,8 @@
   "1287f93691c96377": "Reemplazar y continuar",
   "cad9c74911412589": "Confiar",
   "014616905723cd98": "Unirse a un clúster…",
-  "65f66edefb5175c5": "Crear cadena de unión",
-  "7bc13a4ad376ef6b": "Copiar cadena de unión",
+  "0fd5390a359a5653": "Crear código de unión",
+  "474319bf8c34993b": "Copiar código de unión",
   "90ae616e9cb53922": "¿Salir del clúster de {host}? Después, vuelve a emparejar los clientes con esta máquina.",
   "cd600c8a4e87d47d": "No se pudo salir del clúster",
   "2ed706790c2b5d0a": "Miembro de {host}",
@@ -7863,8 +7863,8 @@
   "9ff2b973feb1f701": "Saliendo…",
   "102b7b49ef3cdee1": "Salir del clúster",
   "32b30e32d451d005": "Añadir un miembro",
-  "863b7e82af809507": "Pega la cadena de unión del otro equipo o escribe user@host para añadirlo por SSH. El host principal inicia sesión una vez e instala su propia clave para poder reconectarse por sí mismo.",
-  "7310ad79a8ffca7d": "Cadena de unión o destino SSH",
+  "f873f8a9b703b58a": "Pega el código de unión del otro equipo o escribe user@host para añadirlo por SSH. El host principal inicia sesión una vez e instala su propia clave para poder reconectarse por sí mismo.",
+  "ba762eea3c513adf": "Código de unión o destino SSH",
   "83b275291bf40e25": "El host principal instalará su propia clave en este equipo",
   "5690bd95f5c6e460": [
     "Inicia sesión una vez con lo que elijas y luego añade una clave del clúster a",
@@ -7889,14 +7889,14 @@
   "ddf0e1eb84511ae2": "Unirse a un clúster",
   "c3d0edea2211cbbd": "Al unirse, se cierra la sesión de los demás clientes de esta máquina y se terminan sus entornos vinculados. Después se accede a ella a través del host principal.",
   "a7e90c3ca71d8a2b": "Dirección con la que el host principal accede a esta máquina",
-  "886a1cd5518d7bb5": [
+  "a51baf4208ff026b": [
     "Código ",
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
     },
-    ". Añade una dirección para obtener una cadena de unión."
+    ". Añade una dirección para obtener un código de unión."
   ],
   "c4a1872f647cca8f": [
     "Pégala en Añadir miembro del host principal. SHA-256 del certificado:",
@@ -11622,7 +11622,7 @@
   "d443390c4d2dcfd4": "accesibilidad a11y lector de pantalla nvda jaws voiceover orca narrador título de ventana título de pestaña alt tab barra de tareas estado del hilo orden en curso aprobación",
   "6826fa9579c22035": "beta compartir invitado invitar enlace compañero ver t3 connect túnel",
   "f10c06cba0cdf7fe": "beta vincular otra máquina vps agentes pares trabajar allí delegar",
-  "7bf0c7a8f778a1c2": "beta clúster host principal miembros grupo máquinas proxy invitación unirse",
+  "5b14cb47e4bf0612": "beta clúster host principal miembros grupo máquinas proxy unirse código de unión",
   "4a21cf825a2045b0": "beta tab autocompletar predecir siguiente mensaje claude codex texto fantasma",
   "fea2dc36585c4a20": "Hosts de dispositivos Simlock (alfa)",
   "9d834d178130180e": "beta alfa simlock callstack simulador emulador ios android grupo préstamo gateway",
@@ -11759,7 +11759,7 @@
   "8ed7c2a2226f4663": "localhost loopback reenvío de puertos abrir en este dispositivo pestañas navegador transmitir seguridad port forwarding",
   "1c3e0ac06c8a1f1e": "conexiones servidor backend local remoto acceso administrativo permisos ámbito enlaces de emparejamiento código qr clientes autorizados sesiones revocar endpoint",
   "744fd34e8049efeb": "vincular par otra máquina vps agentes trabajar allí traspaso código de emparejamiento",
-  "c6ef7aebb3a4dc2c": "clúster host principal miembro invitación cadena de unión huella ssh salir quitar",
+  "135477eff2b044e7": "clúster host principal miembro código de unión huella ssh salir quitar",
   "3d00c452287f50bd": "añadir emparejar backend host código ssh config agente túnel guardado t3 connect",
   "cbf49f84e7f456e5": "Equilibrio de carga",
   "6f1a769805a28197": "automático máquina entorno recursos cpu memoria capacidad preferencia peso proyectos compartidos",

@@ -52,7 +52,7 @@ export const ClusterStatus = Schema.Struct({
 export type ClusterStatus = typeof ClusterStatus.Type;
 
 export const ClusterInviteInput = Schema.Struct({
-  /** Where the main host reaches this environment. Without it no join string is built. */
+  /** Where the main host reaches this environment. Without it no join code is built. */
   url: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type ClusterInviteInput = typeof ClusterInviteInput.Type;
@@ -78,7 +78,7 @@ export const ClusterSshLogin = Schema.Union([
 export type ClusterSshLogin = typeof ClusterSshLogin.Type;
 
 export const ClusterAddMemberInput = Schema.Struct({
-  /** A join string from the member, or an ssh target (`user@host`, `ssh://user@host:port`). */
+  /** A join code from the member, or an ssh target (`user@host`, `ssh://user@host:port`). */
   target: TrimmedNonEmptyString,
   label: Schema.optionalKey(TrimmedNonEmptyString),
   /** For an ssh target; ssh config and agent when absent. */

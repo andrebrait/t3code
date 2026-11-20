@@ -37,7 +37,7 @@ export class ClusterUpstream extends Context.Service<
       target: UpstreamTarget,
       options?: { readonly refresh?: boolean },
     ) => Effect.Effect<Upstream, ClusterError>;
-    /** Starts or reuses T3 on the member over ssh and mints a cluster invite there. */
+    /** Starts or reuses T3 on the member over ssh and mints a cluster join code there. */
     readonly inviteOverSsh: (
       sshTarget: string,
     ) => Effect.Effect<{ readonly origin: string; readonly code: string }, ClusterError>;
@@ -126,7 +126,7 @@ const make = Effect.gen(function* () {
       if (url.protocol !== "https:" || (pin !== null && !/^[0-9a-f]{64}$/.test(pin))) {
         return yield* new ClusterError({
           reason: "invalid_target",
-          message: `${url.origin} is not an https address with a valid certificate pin. Invite the member again.`,
+          message: `${url.origin} is not an https address with a valid certificate pin. Add the member again with a new join code.`,
         });
       }
       // Without a pin the certificate must chain to a trusted CA, as behind a tunnel or Tailscale Serve.
@@ -141,7 +141,7 @@ const make = Effect.gen(function* () {
     if (bootstrap.pairingToken === null) {
       return yield* new ClusterError({
         reason: "ssh",
-        message: `${sshTarget} started T3 Code but did not mint a cluster invite.`,
+        message: `${sshTarget} started T3 Code but did not mint a cluster join code.`,
       });
     }
     return { origin: new URL(bootstrap.httpBaseUrl).origin, code: bootstrap.pairingToken };

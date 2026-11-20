@@ -698,14 +698,14 @@ describe("ssh tunnel scripts", () => {
     }).pipe(Effect.provide(layerProcess));
   });
 
-  it("mints cluster invites with the runner that mints client pairing codes", () => {
+  it("mints cluster join codes with the runner that mints client pairing codes", () => {
     assert.match(
       SshTunnel.buildRemotePairingScript("state", ARCHIVE),
       /"\$RUNNER_FILE" auth pairing create --base-dir "\$PAIRING_BASE_DIR" --json\n$/,
     );
     assert.match(
       SshTunnel.buildRemotePairingScript("state", ARCHIVE, "cluster-member"),
-      /"\$RUNNER_FILE" cluster invite --base-dir "\$PAIRING_BASE_DIR" --json\n$/,
+      /"\$RUNNER_FILE" cluster join --base-dir "\$PAIRING_BASE_DIR" --json\n$/,
     );
   });
 

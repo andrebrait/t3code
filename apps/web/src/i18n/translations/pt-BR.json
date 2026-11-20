@@ -630,7 +630,7 @@
   "209197562551a237": "Online",
   "d1dc5d5f8f723d2f": "Conectando…",
   "6da26c8c02873d20": "Executa uma versão do T3 Code que {host} não consegue controlar. Atualize ambos para a mesma versão.",
-  "1f1df7efb4b1c68f": "Não aceita mais {host}. Remova-o aqui e convide-o novamente.",
+  "6ecf50909bab2234": "Não aceita mais {host}. Remova-o aqui e adicione-o novamente com um novo código de adesão.",
   "16ebaeabe59a4857": "Não foi possível acessar esse ambiente pelo T3 Connect com esta conta.",
   "7e19512f1ce2b686": "As versões das ferramentas de dispositivo não foram verificadas.",
   "7bdc8e41c92e24b7": "Hub de dispositivos",
@@ -7828,7 +7828,7 @@
   "3202e5e7e3ac64f4": "Não foi possível carregar os membros do cluster",
   "20ec2553636ff8b6": "Carregando os membros do cluster…",
   "185c47873cbc3a58": "Ainda não há membros",
-  "b67ffe2892c0809f": "Na outra máquina, escolha Entrar em um cluster… e cole a string de adesão dela em Adicionar membro.",
+  "87be230ed4df86c3": "Na outra máquina, escolha Entrar em um cluster… e cole o código de adesão dela em Adicionar membro.",
   "e83d7e0f8edc2a67": "Nunca alcançado",
   "6e5bd943c29069ba": "Visto pela última vez {time}",
   "4b8e5df2cc93095e": "Remover {label} do cluster? Ele volta a ser um ambiente independente.",
@@ -7854,8 +7854,8 @@
   "1287f93691c96377": "Substituir e continuar",
   "cad9c74911412589": "Confiar",
   "014616905723cd98": "Entrar em um cluster…",
-  "65f66edefb5175c5": "Criar string de adesão",
-  "7bc13a4ad376ef6b": "Copiar string de adesão",
+  "0fd5390a359a5653": "Criar código de adesão",
+  "474319bf8c34993b": "Copiar código de adesão",
   "90ae616e9cb53922": "Sair do cluster de {host}? Depois, pareie os clientes com esta máquina novamente.",
   "cd600c8a4e87d47d": "Não foi possível sair do cluster",
   "2ed706790c2b5d0a": "Membro de {host}",
@@ -7863,8 +7863,8 @@
   "9ff2b973feb1f701": "Saindo…",
   "102b7b49ef3cdee1": "Sair do cluster",
   "32b30e32d451d005": "Adicionar um membro",
-  "863b7e82af809507": "Cole a string de entrada da outra máquina ou digite user@host para adicioná-la por SSH. O host principal entra uma vez e instala a própria chave, para poder se reconectar sozinho.",
-  "7310ad79a8ffca7d": "String de adesão ou destino SSH",
+  "f873f8a9b703b58a": "Cole o código de adesão da outra máquina ou digite user@host para adicioná-la por SSH. O host principal entra uma vez e instala a própria chave, para poder se reconectar sozinho.",
+  "ba762eea3c513adf": "Código de adesão ou destino SSH",
   "83b275291bf40e25": "O host principal vai instalar a própria chave nesta máquina",
   "5690bd95f5c6e460": [
     "Ele entra uma vez com o que você escolher e depois adiciona uma chave do cluster a",
@@ -7889,14 +7889,14 @@
   "ddf0e1eb84511ae2": "Entrar em um cluster",
   "c3d0edea2211cbbd": "Ao aderir, os outros clientes desta máquina são desconectados e seus ambientes vinculados são encerrados. Depois, ela passa a ser acessada pelo host principal.",
   "a7e90c3ca71d8a2b": "Endereço pelo qual o host principal acessa esta máquina",
-  "886a1cd5518d7bb5": [
+  "a51baf4208ff026b": [
     "Código ",
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
     },
-    ". Adicione um endereço para obter uma string de adesão."
+    ". Adicione um endereço para obter um código de adesão."
   ],
   "c4a1872f647cca8f": [
     "Cole em Adicionar membro no host principal. SHA-256 do certificado:",
@@ -11626,7 +11626,7 @@
   "d443390c4d2dcfd4": "acessibilidade a11y leitor de tela nvda jaws voiceover orca narrador título da janela título da aba alt tab barra de tarefas status da thread ordem trabalhando aprovação",
   "6826fa9579c22035": "beta compartilhar convidado convite link colega acompanhar t3 connect túnel",
   "f10c06cba0cdf7fe": "beta vincular outra máquina vps par agentes trabalham lá delegar",
-  "7bf0c7a8f778a1c2": "beta cluster host principal membros grupo máquinas proxy convite aderir",
+  "5b14cb47e4bf0612": "beta cluster host principal membros grupo máquinas proxy aderir código de adesão",
   "4a21cf825a2045b0": "beta tab autocompletar prever próxima mensagem claude codex texto fantasma",
   "fea2dc36585c4a20": "Hosts de dispositivos Simlock (alfa)",
   "9d834d178130180e": "beta alpha simlock callstack simulador emulador ios android pool lease gateway",
@@ -11763,7 +11763,7 @@
   "8ed7c2a2226f4663": "localhost loopback encaminhamento de portas abrir neste dispositivo abas navegador transmitir segurança port forwarding",
   "1c3e0ac06c8a1f1e": "conexões servidor backend local remoto acesso administrativo permissões escopo links de pareamento código qr clientes autorizados sessões revogar endpoint",
   "744fd34e8049efeb": "vincular par outra máquina vps agentes trabalham lá transferir código de pareamento",
-  "c6ef7aebb3a4dc2c": "cluster host principal membro convite string de adesão impressão digital ssh sair remover",
+  "135477eff2b044e7": "cluster host principal membro código de adesão impressão digital ssh sair remover",
   "3d00c452287f50bd": "adicionar parear backend host código ssh config agente túnel salvo t3 connect",
   "cbf49f84e7f456e5": "Balanceamento de carga",
   "6f1a769805a28197": "automático máquina ambiente recursos cpu memória capacidade preferência peso projetos compartilhados",

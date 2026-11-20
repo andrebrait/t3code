@@ -87,7 +87,7 @@ export const clusterActions = (
   join: access.enabled && access.canInvite && role === "standalone",
 });
 
-/** Pasted join strings often wrap or carry stray spaces; none of their characters is a space. */
+/** Pasted join codes often wrap or carry stray spaces; none of their characters is a space. */
 export function clusterAddTarget(raw: string, options: { readonly ssh: boolean }): string | null {
   const target = raw.replace(/\s+/g, "");
   if (parseClusterJoinString(target) !== undefined) return target;
@@ -156,7 +156,7 @@ export function clusterMemberStatusText(
       );
     case "revoked":
       return resolve(
-        msg("No longer accepts {host}. Remove it here, then invite it again.", {
+        msg("No longer accepts {host}. Remove it here, then add it again with a new join code.", {
           host: hostLabel,
         }),
       );

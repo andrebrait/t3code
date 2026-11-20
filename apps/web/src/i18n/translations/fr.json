@@ -630,7 +630,7 @@
   "209197562551a237": "Online",
   "d1dc5d5f8f723d2f": "Connexion…",
   "6da26c8c02873d20": "Exécute une version de T3 Code que {host} ne peut pas piloter. Mettez les deux à jour vers la même version.",
-  "1f1df7efb4b1c68f": "N’accepte plus {host}. Retirez-le ici, puis invitez-le de nouveau.",
+  "6ecf50909bab2234": "N’accepte plus {host}. Retirez-le ici, puis ajoutez-le de nouveau avec un nouveau code d’adhésion.",
   "16ebaeabe59a4857": "Impossible de joindre cet environnement via T3 Connect avec ce compte.",
   "7e19512f1ce2b686": "Les versions des outils d’appareil n’ont pas été vérifiées.",
   "7bdc8e41c92e24b7": "Hub d’appareils",
@@ -7829,7 +7829,7 @@
   "3202e5e7e3ac64f4": "Impossible de charger les membres du cluster",
   "20ec2553636ff8b6": "Chargement des membres du cluster…",
   "185c47873cbc3a58": "Aucun membre pour l’instant",
-  "b67ffe2892c0809f": "Sur l’autre machine, choisissez Rejoindre un cluster… et collez sa chaîne d’adhésion dans Ajouter un membre.",
+  "87be230ed4df86c3": "Sur l’autre machine, choisissez Rejoindre un cluster… et collez son code d’adhésion dans Ajouter un membre.",
   "e83d7e0f8edc2a67": "Jamais joint",
   "6e5bd943c29069ba": "Vu pour la dernière fois {time}",
   "4b8e5df2cc93095e": "Retirer {label} du cluster ? Il redeviendra un environnement autonome.",
@@ -7855,8 +7855,8 @@
   "1287f93691c96377": "Remplacer et continuer",
   "cad9c74911412589": "Faire confiance",
   "014616905723cd98": "Rejoindre un cluster…",
-  "65f66edefb5175c5": "Créer la chaîne d’adhésion",
-  "7bc13a4ad376ef6b": "Copier la chaîne d’adhésion",
+  "0fd5390a359a5653": "Créer le code d’adhésion",
+  "474319bf8c34993b": "Copier le code d’adhésion",
   "90ae616e9cb53922": "Quitter le cluster de {host} ? Réappariez ensuite les clients avec cette machine.",
   "cd600c8a4e87d47d": "Impossible de quitter le cluster",
   "2ed706790c2b5d0a": "Membre de {host}",
@@ -7864,8 +7864,8 @@
   "9ff2b973feb1f701": "Départ…",
   "102b7b49ef3cdee1": "Quitter le cluster",
   "32b30e32d451d005": "Ajouter un membre",
-  "863b7e82af809507": "Colle la chaîne de jonction de l’autre machine, ou saisis user@host pour l’ajouter via SSH. L’hôte principal se connecte une fois et installe sa propre clé pour pouvoir se reconnecter seul.",
-  "7310ad79a8ffca7d": "Chaîne d’adhésion ou cible SSH",
+  "f873f8a9b703b58a": "Colle le code d’adhésion de l’autre machine, ou saisis user@host pour l’ajouter via SSH. L’hôte principal se connecte une fois et installe sa propre clé pour pouvoir se reconnecter seul.",
+  "ba762eea3c513adf": "Code d’adhésion ou cible SSH",
   "83b275291bf40e25": "L’hôte principal va installer sa propre clé sur cette machine",
   "5690bd95f5c6e460": [
     "Il se connecte une fois avec ce que tu choisis, puis ajoute une clé de cluster à",
@@ -7890,14 +7890,14 @@
   "ddf0e1eb84511ae2": "Rejoindre un cluster",
   "c3d0edea2211cbbd": "En rejoignant un cluster, cette machine déconnecte ses autres clients et met fin à ses environnements liés. Elle est ensuite accessible via l’hôte principal.",
   "a7e90c3ca71d8a2b": "Adresse à laquelle l’hôte principal joint cette machine",
-  "886a1cd5518d7bb5": [
+  "a51baf4208ff026b": [
     "Code ",
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
     },
-    ". Ajoutez une adresse pour obtenir une chaîne d’adhésion."
+    ". Ajoutez une adresse pour obtenir un code d’adhésion."
   ],
   "c4a1872f647cca8f": [
     "Collez-la dans Ajouter un membre de l’hôte principal. SHA-256 du certificat :",
@@ -11627,7 +11627,7 @@
   "d443390c4d2dcfd4": "accessibilité a11y lecteur d’écran nvda jaws voiceover orca narrateur titre de fenêtre titre d’onglet alt tab barre des tâches statut du fil ordre en cours approbation",
   "6826fa9579c22035": "bêta partager invité invitation lien coéquipier regarder t3 connect tunnel",
   "f10c06cba0cdf7fe": "bêta associer une autre machine vps pair agents y travaillent déléguer",
-  "7bf0c7a8f778a1c2": "bêta cluster hôte principal membres groupe machines proxy invitation rejoindre",
+  "5b14cb47e4bf0612": "bêta cluster hôte principal membres groupe machines proxy rejoindre code d’adhésion",
   "4a21cf825a2045b0": "bêta tab autocomplétion prédire prochain message claude codex texte fantôme",
   "fea2dc36585c4a20": "Hôtes d’appareils Simlock (alpha)",
   "9d834d178130180e": "bêta alpha simlock callstack simulateur émulateur ios android pool bail passerelle",
@@ -11764,7 +11764,7 @@
   "8ed7c2a2226f4663": "localhost loopback redirection de ports ouvrir sur cet appareil onglets navigateur diffusion sécurité port forwarding",
   "1c3e0ac06c8a1f1e": "connexions serveur backend local accès distant autorisations administratives portée liens d’appairage code qr clients autorisés sessions révoquer point de terminaison",
   "744fd34e8049efeb": "associer pair autre machine vps agents y travaillent transfert code d’appairage",
-  "c6ef7aebb3a4dc2c": "cluster hôte principal membre invitation chaîne d’adhésion empreinte ssh quitter retirer",
+  "135477eff2b044e7": "cluster hôte principal membre code d’adhésion empreinte ssh quitter retirer",
   "3d00c452287f50bd": "ajouter appairer backend hôte code ssh config agent tunnel enregistré t3 connect",
   "cbf49f84e7f456e5": "Répartition de charge",
   "6f1a769805a28197": "automatique machine environnement ressources cpu mémoire capacité préférence poids projets partagés",

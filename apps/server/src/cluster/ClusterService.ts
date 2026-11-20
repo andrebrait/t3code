@@ -111,7 +111,7 @@ interface MembershipRow {
 
 const REQUEST_TIMEOUT = Duration.seconds(10);
 export const CERTIFICATE_CHANGED =
-  "Certificate changed: it presented a certificate other than the pinned one. Invite it again.";
+  "Certificate changed: it presented a certificate other than the pinned one. Add it again with a new join code.";
 
 const MemberRow = Schema.Struct({
   environment_id: EnvironmentId,
@@ -174,7 +174,7 @@ export interface MemberConnection {
   readonly member: ClusterMember;
 }
 
-const REVOKED = "It no longer accepts this host. Invite it again.";
+const REVOKED = "It no longer accepts this host. Add it again with a new join code.";
 const INCOMPATIBLE = "It speaks another T3 Code protocol. Update both environments.";
 const NOT_ANSWERING = "It did not answer.";
 const LINK_DROPPED = "Its control link dropped. Reconnecting.";
@@ -276,7 +276,7 @@ export class ClusterService extends Context.Service<
   ClusterService,
   {
     readonly status: Effect.Effect<ClusterStatus, ClusterError>;
-    /** Mints a one-time `cluster-member` code; with `url`, the join string a main host adds. */
+    /** Mints a one-time `cluster-member` code; with `url`, the join code a main host adds. */
     readonly invite: (input: ClusterInviteInput) => Effect.Effect<ClusterInvite, ClusterError>;
     /** Member side of a join: spends the invite, records the host, keeps only loopback sessions. */
     readonly acceptJoin: (
@@ -402,7 +402,7 @@ const make = Effect.gen(function* () {
           subject: CLUSTER_MEMBER_PAIRING_SUBJECT,
           scopes: AuthStandardClientScopes,
           ttl: INVITE_TTL,
-          label: "Cluster invite",
+          label: "Cluster join code",
         })
         .pipe(Effect.mapError(fromPairingError));
       const fingerprint = tls.fingerprint;
@@ -471,7 +471,7 @@ const make = Effect.gen(function* () {
                     : new ClusterError({
                         reason: "pairing_rejected",
                         message:
-                          "That cluster invite is unknown, expired, or already used. Create a new one on the member.",
+                          "That cluster join code is unknown, expired, or already used. Create a new one on the member.",
                       }),
                 ),
               );
@@ -604,7 +604,7 @@ const make = Effect.gen(function* () {
     if (Option.isNone(stored)) {
       return yield* new ClusterError({
         reason: "unknown_member",
-        message: "This member lost its credential here. Invite it again.",
+        message: "This member lost its credential here. Add it again with a new join code.",
       });
     }
     const token = new TextDecoder().decode(stored.value);
@@ -677,7 +677,7 @@ const make = Effect.gen(function* () {
         return yield* new ClusterError({
           reason: "invalid_target",
           message:
-            "Paste the join string from the member's Settings → Cluster or `t3 cluster invite`, or an ssh target such as me@box.",
+            "Paste the join code from the member's Settings → Cluster or `t3 cluster join`, or an ssh target such as me@box.",
         });
       }
       const newSshTarget = resolved.target.transport === "ssh" ? resolved.target.sshTarget : null;
@@ -876,7 +876,7 @@ const make = Effect.gen(function* () {
     if (descriptor.environmentId !== memberId) {
       return yield* Effect.fail<LinkDown>({
         status: "offline",
-        message: `Its address now answers as ${descriptor.label}. Invite it again.`,
+        message: `Its address now answers as ${descriptor.label}. Add it again with a new join code.`,
       });
     }
     if (!isCompatible(descriptor)) {

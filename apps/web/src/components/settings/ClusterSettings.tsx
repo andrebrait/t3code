@@ -177,7 +177,7 @@ function ClusterMemberList({
       <SettingsRow
         title={gt("No members yet")}
         description={gt(
-          "On the other machine, choose Join a cluster… and paste its join string in Add member.",
+          "On the other machine, choose Join a cluster… and paste its join code in Add member.",
         )}
       />
     );
@@ -524,8 +524,8 @@ function AddMemberAction({
           </DialogTitle>
           <DialogDescription>
             <T>
-              Paste the join string from the other machine, or enter user@host to add it over SSH.
-              The main host signs in once and installs its own key, so it can reconnect on its own.
+              Paste the join code from the other machine, or enter user@host to add it over SSH. The
+              main host signs in once and installs its own key, so it can reconnect on its own.
             </T>
           </DialogDescription>
         </DialogHeader>
@@ -541,7 +541,7 @@ function AddMemberAction({
           >
             <label className="block space-y-1.5">
               <span className="block text-xs font-medium text-foreground">
-                <T>Join string or SSH target</T>
+                <T>Join code or SSH target</T>
               </span>
               <Input
                 value={raw}
@@ -775,7 +775,7 @@ function JoinAction({ environmentId }: { readonly environmentId: EnvironmentId }
   const [created, setCreated] = useState<ClusterInvite | null>(null);
   const [error, setError] = useState<string | null>(null);
   const formId = useId();
-  const invite = useAtomCommand(clusterEnvironment.invite, { label: "create cluster invite" });
+  const invite = useAtomCommand(clusterEnvironment.invite, { label: "create cluster join code" });
   const { copyToClipboard, isCopied } = useCopyToClipboard<void>();
   const submit = async () => {
     if (busy) return;
@@ -794,7 +794,7 @@ function JoinAction({ environmentId }: { readonly environmentId: EnvironmentId }
       onOpenChange={(next) => {
         if (busy) return;
         setOpen(next);
-        // The join string carries the invite secret, so it does not outlive the dialog.
+        // The join code carries a one-time secret, so it does not outlive the dialog.
         setCreated(null);
         setError(null);
         if (next) setUrl(defaultClusterInviteUrl(httpBaseUrl));
@@ -854,7 +854,7 @@ function JoinAction({ environmentId }: { readonly environmentId: EnvironmentId }
               {created.joinString === null ? (
                 <p>
                   <T>
-                    Code <Var>{created.code}</Var>. Add an address to get a join string.
+                    Code <Var>{created.code}</Var>. Add an address to get a join code.
                   </T>
                 </p>
               ) : (
@@ -877,7 +877,7 @@ function JoinAction({ environmentId }: { readonly environmentId: EnvironmentId }
           </DialogClose>
           {created === null ? (
             <Button form={formId} type="submit" disabled={busy}>
-              {busy ? gt("Creating…") : gt("Create join string")}
+              {busy ? gt("Creating…") : gt("Create join code")}
             </Button>
           ) : created.joinString !== null ? (
             <Button
@@ -886,7 +886,7 @@ function JoinAction({ environmentId }: { readonly environmentId: EnvironmentId }
                 if (created.joinString !== null) copyToClipboard(created.joinString, undefined);
               }}
             >
-              {isCopied ? gt("Copied") : gt("Copy join string")}
+              {isCopied ? gt("Copied") : gt("Copy join code")}
             </Button>
           ) : null}
         </DialogFooter>

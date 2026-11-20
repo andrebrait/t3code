@@ -17,7 +17,7 @@ const SHA = "ab".repeat(32);
 const JOIN = `https://box.local:3773#K7M2Q9RZ3NWD.${SHA}`;
 
 describe("clusterAddTarget", () => {
-  it("accepts a join string pasted with spaces and line breaks", () => {
+  it("accepts a join code pasted with spaces and line breaks", () => {
     const wrapped = ` ${JOIN.slice(0, 30)}\n${JOIN.slice(30, 70)}\r\n  ${JOIN.slice(70)}\t`;
     expect(clusterAddTarget(wrapped, { ssh: false })).toBe(JOIN);
   });

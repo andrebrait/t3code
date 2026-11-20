@@ -52,6 +52,8 @@ export class ClusterConnectionTarget extends Schema.TaggedClass<ClusterConnectio
     ...ConnectionTargetBase,
     hostEnvironmentId: EnvironmentId,
     hostLabel: Schema.String,
+    /** The main host's pull request routing key, so changing its address revokes member trust. */
+    hostConnectionKey: Schema.NullOr(Schema.String),
     status: ClusterMemberStatus,
     /** The main host's last error for the member. */
     statusDetail: Schema.NullOr(Schema.String),

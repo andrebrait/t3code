@@ -451,14 +451,31 @@ it.effect(
           closeAllTunnels: Effect.void,
         });
         const authorized: Array<readonly [string, ClusterSshLogin]> = [];
+        let failRevokeOfBox2 = false;
         const revoked: Array<string> = [];
         const sshKey = ClusterSshKey.ClusterSshKey.of({
           identityFile: Effect.succeed("/state/cluster_ed25519"),
-          authorize: (target, login) =>
+          authorize: (target, login, trust) =>
             target === "refused@box"
               ? Effect.fail(new ClusterError({ reason: "ssh", message: "refused" }))
-              : Effect.sync(() => void authorized.push([target, login])),
-          revoke: (target) => Effect.sync(() => revoked.push(target)).pipe(Effect.as(false)),
+              : target === "me@box9" && trust?.fingerprint !== "SHA256:box9"
+                ? Effect.fail(
+                    new ClusterError({
+                      reason: "host_key_unknown",
+                      message: "unknown",
+                      hostKey: {
+                        host: "box9",
+                        keyType: "ED25519",
+                        fingerprint: "SHA256:box9",
+                        knownFingerprints: [],
+                      },
+                    }),
+                  )
+                : Effect.sync(() => void authorized.push([target, login])),
+          revoke: (target) =>
+            target === "me@box2" && failRevokeOfBox2
+              ? Effect.die("the old target's revoke broke")
+              : Effect.sync(() => revoked.push(target)).pipe(Effect.as(false)),
           list: Effect.succeed([]),
         });
         const main = yield* makeEnvironment(studioDescriptor, ssh, sshKey);
@@ -510,12 +527,32 @@ it.effect(
         });
         expect(revoked).toEqual(["nokey@other", "self@studio", "me@box:2222"]);
 
+        // An unknown host key stops the add before any login, until the user approves that key.
+        expect(
+          yield* main.cluster.addMember({ target: "me@box9" }).pipe(Effect.flip),
+        ).toMatchObject({
+          reason: "host_key_unknown",
+          hostKey: { host: "box9", fingerprint: "SHA256:box9" },
+        });
+        expect(revoked).toEqual(["nokey@other", "self@studio", "me@box:2222"]);
+        // A step failing once the member's row points at its new target leaves the key there.
+        failRevokeOfBox2 = true;
+        yield* main.cluster
+          .addMember({
+            target: "me@box9",
+            trustHostKey: { fingerprint: "SHA256:box9", replace: false },
+          })
+          .pipe(Effect.exit);
+        failRevokeOfBox2 = false;
+        expect(authorized.at(-1)).toEqual(["me@box9", { _tag: "config" }]);
+        expect(revoked).toEqual(["nokey@other", "self@studio", "me@box:2222"]);
+
         expect(yield* main.cluster.removeMember(box.environmentId)).toEqual({
           removed: true,
           memberNotified: true,
           keyRevoked: false,
         });
-        expect(revoked).toEqual(["nokey@other", "self@studio", "me@box:2222", "me@box2"]);
+        expect(revoked).toEqual(["nokey@other", "self@studio", "me@box:2222", "me@box9"]);
       }),
     ),
 );

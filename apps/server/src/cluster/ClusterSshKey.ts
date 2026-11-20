@@ -24,6 +24,7 @@ import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as ClusterHostKey from "./ClusterHostKey.ts";
 
 // Remote scripts run as `sh -c` with their one input line on stdin, so nothing is interpolated.
 // One line each: a csh login shell rejects newlines inside a quoted argument.
@@ -38,7 +39,8 @@ const KEY_FILE = "cluster_ed25519";
 const REMOTE_TIMEOUT_MS = 30_000;
 // Revokes run under the cluster's add/remove lock, so an unreachable member must not hold it long.
 const REVOKE_TIMEOUT_MS = 10_000;
-// askpass would answer an unknown host's yes/no prompt with the secret; the user checks it in a terminal.
+// Host keys are checked before signing in (ClusterHostKey); askpass must never answer ssh's yes/no.
+// Runs with an identity file get this from sshIdentityArgs.
 const STRICT_HOST_KEY = ["-o", "StrictHostKeyChecking=yes"];
 
 const clusterKeyTag = (environmentId: string) => `t3code-cluster:${environmentId}`;
@@ -112,7 +114,7 @@ export const makeKeyPair = (seed: Uint8Array, comment: string) => {
 export const loginOptions = (login: ClusterSshLogin): RunSshCommandOptions => {
   switch (login._tag) {
     case "config":
-      return { batchMode: "yes" };
+      return { batchMode: "yes", preHostArgs: STRICT_HOST_KEY };
     case "password":
       return {
         authSecret: Redacted.value(login.password),
@@ -140,7 +142,7 @@ export const loginOptions = (login: ClusterSshLogin): RunSshCommandOptions => {
             authSecret: Redacted.value(login.passphrase),
             batchMode: "no",
             interactiveAuth: true,
-            preHostArgs: [...STRICT_HOST_KEY, "-o", "PreferredAuthentications=publickey"],
+            preHostArgs: ["-o", "PreferredAuthentications=publickey"],
           };
   }
 };
@@ -230,10 +232,14 @@ export class ClusterSshKey extends Context.Service<
   {
     /** The private key file, made the first time it is needed. */
     readonly identityFile: Effect.Effect<string, ClusterError>;
-    /** Signs in once with `login` and adds the cluster key to the member's authorized_keys. */
+    /**
+     * Checks the member's host key (recording it once `trustHostKey` approves it), then signs in
+     * once with `login` and adds the cluster key to the member's authorized_keys.
+     */
     readonly authorize: (
       sshTarget: string,
       login: ClusterSshLogin,
+      trustHostKey?: ClusterHostKey.TrustHostKey,
     ) => Effect.Effect<void, ClusterError>;
     /** Deletes the cluster key there over the cluster key itself; false when it could not. */
     readonly revoke: (sshTarget: string) => Effect.Effect<boolean>;
@@ -287,8 +293,11 @@ const make = Effect.gen(function* () {
   );
 
   const authorize: ClusterSshKey["Service"]["authorize"] = Effect.fn("ClusterSshKey.authorize")(
-    function* (sshTarget, login) {
+    function* (sshTarget, login, trustHostKey) {
       const target = yield* toSshTarget(sshTarget);
+      yield* ClusterHostKey.verifyHostKey(target, trustHostKey).pipe(
+        Effect.provideContext(sshContext),
+      );
       const key = yield* ensure;
       yield* runSshCommand(target, {
         ...loginOptions(login),
@@ -316,7 +325,7 @@ const make = Effect.gen(function* () {
       return true;
     },
     Effect.catch((cause) =>
-      Effect.logWarning("Could not remove the cluster key from a removed member", { cause }).pipe(
+      Effect.logWarning("Could not remove the cluster key from a member target", { cause }).pipe(
         Effect.as(false),
       ),
     ),

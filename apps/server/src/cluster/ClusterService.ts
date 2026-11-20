@@ -633,6 +633,7 @@ const make = Effect.gen(function* () {
       const join = parseClusterJoinString(input.target);
       const sshTarget = join === undefined ? parseClusterSshTarget(input.target) : undefined;
       let keyInstalled = false;
+      let rowWritten = false;
       const resolved =
         join !== undefined
           ? {
@@ -644,7 +645,11 @@ const make = Effect.gen(function* () {
                 target: { transport: "ssh", sshTarget: formatClusterSshTarget(sshTarget) } as const,
                 // Even with the user's own ssh setup, so reconnects never depend on their agent.
                 code: sshKey
-                  .authorize(formatClusterSshTarget(sshTarget), input.login ?? { _tag: "config" })
+                  .authorize(
+                    formatClusterSshTarget(sshTarget),
+                    input.login ?? { _tag: "config" },
+                    input.trustHostKey,
+                  )
                   .pipe(
                     Effect.tap(() => Effect.sync(() => (keyInstalled = true))),
                     Effect.andThen(upstream.inviteOverSsh(formatClusterSshTarget(sshTarget))),
@@ -717,6 +722,7 @@ const make = Effect.gen(function* () {
           Effect.mapError(storageError),
           Effect.onError(() => secrets.remove(secretName).pipe(Effect.ignore)),
         );
+        rowWritten = true;
         if (previous !== undefined) {
           tokens.delete(previous.secret_name);
           yield* forgetSecret(previous.secret_name);
@@ -730,9 +736,10 @@ const make = Effect.gen(function* () {
         yield* reload;
         return toMember(yield* findRow(joined.environmentId));
       }).pipe(
-        // A failed add leaves no row to remove its key by, unless a live member link uses it.
+        // A failed add leaves no row to remove its key by, unless a member's row uses it.
         Effect.onError(() =>
           Effect.gen(function* () {
+            if (rowWritten) return yield* reload.pipe(Effect.ignore);
             if (!keyInstalled || newSshTarget === null) return;
             const rows = yield* SubscriptionRef.get(rowsRef);
             if (rows.some((row) => row.ssh_target === newSshTarget)) return;

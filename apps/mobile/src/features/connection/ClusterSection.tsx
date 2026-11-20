@@ -16,6 +16,7 @@ import { type ReactNode, useState } from "react";
 import { ScrollView, View } from "react-native";
 
 import { AppText as Text, AppTextInput } from "../../components/ui/AppText";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { ListActionRow } from "../../components/ui/ListActionRow";
@@ -133,12 +134,24 @@ export function ClusterSection(props: {
             <Row>
               <Text className="text-xs text-danger-foreground">{members.error}</Text>
             </Row>
-          ) : members.data !== null && members.data.length === 0 ? (
+          ) : members.data === null ? (
+            <Row>
+              <View className="flex-row items-center gap-2" accessibilityRole="progressbar">
+                <AppActivityIndicator />
+                <Text className="text-sm text-foreground-muted">
+                  {gt("Loading cluster members…")}
+                </Text>
+              </View>
+            </Row>
+          ) : members.data.length === 0 ? (
             <Row>
               <Text className="text-sm text-foreground-muted">{gt("No members yet")}</Text>
+              <Text className="text-xs text-foreground-muted">
+                {gt("On the other machine, choose Join a cluster… and paste its join string here.")}
+              </Text>
             </Row>
           ) : (
-            (members.data ?? []).map((member, index) => (
+            members.data.map((member, index) => (
               <View
                 key={member.environmentId}
                 className={cn(

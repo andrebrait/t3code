@@ -94,6 +94,8 @@ export class RemoteEnvironmentAuthorization extends Context.Service<
     readonly authorizeDirectDpop: (input: {
       readonly expectedEnvironmentId: EnvironmentId;
       readonly connectionId: string;
+      /** Where the credential renews when it differs from `httpBaseUrl`, as for a cluster member. */
+      readonly credentialHttpBaseUrl?: string;
       readonly httpBaseUrl: string;
       readonly wsBaseUrl: string;
     }) => Effect.Effect<AuthorizedRemoteEnvironment, ConnectionAttemptError>;
@@ -627,7 +629,10 @@ export const make = Effect.gen(function* () {
         httpBaseUrl: input.httpBaseUrl,
         connectionMethod: "direct",
       });
-      const connection = { connectionId: input.connectionId, httpBaseUrl: input.httpBaseUrl };
+      const connection = {
+        connectionId: input.connectionId,
+        httpBaseUrl: input.credentialHttpBaseUrl ?? input.httpBaseUrl,
+      };
       const openSocket = (credential: DpopConnectionCredential) =>
         resolveRemoteDpopWebSocketConnectionUrl({
           wsBaseUrl: input.wsBaseUrl,

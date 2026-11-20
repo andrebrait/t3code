@@ -167,8 +167,21 @@ const layerEcho = HttpRouter.add(
   }).pipe(Effect.scoped, Effect.ignoreCause, Effect.as(HttpServerResponse.empty())),
 );
 
+/** Reports the headers and body length a forwarded request reached the member with. */
+const layerEchoHttp = HttpRouter.add(
+  "POST",
+  "/echo",
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const body = yield* request.text;
+    return HttpServerResponse.jsonUnsafe({ headers: request.headers, length: body.length });
+  }).pipe(Effect.orDie),
+);
+
 /** Stands in for the member's MCP endpoint, which answers any caller it accepts. */
 const layerMcp = HttpRouter.add("*", "/mcp/*", HttpServerResponse.text("mcp"));
+/** Stands in for the member's agent sign-in approval. */
+const layerMcpOAuth = HttpRouter.add("*", "/oauth/mcp/*", HttpServerResponse.text("oauth"));
 
 const memberRoutes = Layer.mergeAll(
   HttpApiBuilder.layer(MemberTestApi).pipe(
@@ -179,7 +192,9 @@ const memberRoutes = Layer.mergeAll(
   ),
   ClusterHttp.layerEvents,
   layerEcho,
+  layerEchoHttp,
   layerMcp,
+  layerMcpOAuth,
 );
 
 /** `routes` on a real socket in the current scope; returns its `http://` origin. */

@@ -737,7 +737,10 @@ const toSessionVerificationError = (cause: SessionStore.SessionCredentialError) 
   SessionStore.isSessionCredentialInvalidError(cause)
     ? new ServerAuthInvalidCredentialError({ cause })
     : new ServerAuthSessionCredentialValidationError({ cause });
-/** The member side of the proxy's per-socket cap; any other session ignores the header. */
+/**
+ * The member side of the proxy's per-socket cap; any other session ignores the header. A proxied
+ * client never manages the member's access: that stays with the member's own UI and CLI.
+ */
 const capClusterHostScopes = (
   request: HttpServerRequest.HttpServerRequest,
   session: AuthenticatedSession,
@@ -745,6 +748,7 @@ const capClusterHostScopes = (
   const header = request.headers[CLUSTER_SCOPES_HEADER];
   if (session.subject !== CLUSTER_HOST_SUBJECT || header === undefined) return session;
   const allowed = new Set(parseOAuthScope(header) ?? []);
+  allowed.delete(AuthAccessWriteScope);
   return { ...session, scopes: session.scopes.filter((scope) => allowed.has(scope)) };
 };
 

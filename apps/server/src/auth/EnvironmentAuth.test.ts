@@ -2,6 +2,7 @@ import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   authScopeResponse,
+  AuthAccessWriteScope,
   AuthAdministrativeClientScopes,
   AuthStandardClientScopes,
   CLUSTER_SCOPES_HEADER,
@@ -798,6 +799,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
           }),
         );
         expect(capped.scopes).toEqual(["orchestration:read", "terminal:read"]);
+        const standard = yield* serverAuth.authenticateHttpRequest(
+          withHeaders(makeBearerRequest(host.token), {
+            [CLUSTER_SCOPES_HEADER]: AuthStandardClientScopes.join(" "),
+          }),
+        );
+        expect(standard.scopes).not.toContain(AuthAccessWriteScope);
+        expect(standard.scopes).toContain("orchestration:read");
         const garbled = yield* serverAuth.authenticateHttpRequest(
           withHeaders(makeBearerRequest(host.token), { [CLUSTER_SCOPES_HEADER]: "" }),
         );

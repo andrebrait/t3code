@@ -35,8 +35,9 @@ import * as PinnedTransport from "./pinnedTransport.ts";
 const MEMBER_PATH = /^\/cluster\/([^/]+)(\/.*)?$/;
 // The proxy answers socket tickets itself: the client then opens the socket with a main-host ticket.
 const TICKET_PATH = /^\/api\/auth\/websocket-ticket(?:\/(rpc|media))?$/;
-// Join, leave, the control link and MCP belong to the main host; a capped client must not reach them.
-const MAIN_HOST_ONLY_PATH = /^\/(?:api\/cluster|mcp)(?:\/|$)/;
+// Join, leave, the control link and MCP belong to the main host, and agent sign-in approval to the
+// member itself; a capped client must not reach them.
+const MAIN_HOST_ONLY_PATH = /^\/(?:api\/cluster|mcp|oauth\/mcp)(?:\/|$)/;
 
 const encodeTicket = Schema.encodeEffect(AuthWebSocketTicketResult);
 const notFound = () => HttpServerResponse.text("Not Found", { status: 404 });

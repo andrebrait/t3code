@@ -182,8 +182,18 @@ it.effect("forwards HTTP to the member under the client's scopes, never the clie
       ]) {
         expect((yield* get(`${base}${path}`, admin)).status).toBe(404);
       }
-      // MCP is the main host's own route to the member, at full access; a client never reaches it.
-      for (const path of ["/mcp", "/mcp;x", "/MCP", "//mcp/", "/Mcp/tools", "/%6dcp"]) {
+      // MCP is the main host's own route to the member, at full access; a client never reaches it,
+      // nor the member's agent sign-in approval.
+      for (const path of [
+        "/mcp",
+        "/mcp;x",
+        "/MCP",
+        "//mcp/",
+        "/Mcp/tools",
+        "/%6dcp",
+        "/oauth/mcp/register",
+        "/OAuth/mcp/decision",
+      ]) {
         const mcp = yield* HttpClient.execute(
           HttpClientRequest.post(`${base}${path}`).pipe(
             HttpClientRequest.bearerToken(admin),
@@ -234,7 +244,7 @@ it.effect("forwards bodies sent chunked or after 100-continue", () =>
         { expect: "100-continue", "content-length": String(body.length) },
       ]) {
         const response = yield* rawPost(
-          `${base}/api/auth/pairing-links/revoke`,
+          `${base}/echo`,
           {
             authorization: `Bearer ${admin}`,
             "content-type": "application/json",
@@ -244,6 +254,7 @@ it.effect("forwards bodies sent chunked or after 100-continue", () =>
           body,
         );
         expect(response.status, response.body).toBe(200);
+        expect(JSON.parse(response.body).length).toBe(body.length);
       }
     }),
   ).pipe(Effect.provide(FetchHttpClient.layer)),

@@ -9,6 +9,7 @@ import {
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Sse from "effect/encoding/Sse";
@@ -100,9 +101,15 @@ export const layerEvents = HttpRouter.use((router) =>
       "/api/cluster/events",
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
-        const session = yield* auth.authenticateHttpRequest(request).pipe(Effect.option);
-        if (Option.isNone(session)) return HttpServerResponse.empty({ status: 401 });
-        const events = yield* cluster.hostEvents(session.value).pipe(Effect.option);
+        const authenticated = yield* auth.authenticateHttpRequest(request).pipe(Effect.result);
+        // 401 means revoked to the main host; a failed check (a busy database) is only offline.
+        if (Result.isFailure(authenticated)) {
+          return HttpServerResponse.empty({
+            status: EnvironmentAuth.isServerAuthCredentialError(authenticated.failure) ? 401 : 503,
+          });
+        }
+        const session = authenticated.success;
+        const events = yield* cluster.hostEvents(session).pipe(Effect.option);
         if (Option.isNone(events)) return HttpServerResponse.empty({ status: 403 });
         const body = events.value.pipe(
           Stream.map((event) =>
@@ -117,7 +124,7 @@ export const layerEvents = HttpRouter.use((router) =>
             haltStrategy: "left",
           }),
           // Leave or a new join revokes the session; the main host's reconnect then hears 401.
-          Stream.interruptWhen(sessions.awaitInvalidation(session.value.sessionId)),
+          Stream.interruptWhen(sessions.awaitInvalidation(session.sessionId)),
           Stream.encodeText,
         );
         return HttpServerResponse.stream(body, {

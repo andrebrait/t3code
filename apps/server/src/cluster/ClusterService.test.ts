@@ -39,7 +39,9 @@ import {
   FINGERPRINT,
   makeEnvironment,
   serveMember,
+  serveRoutes,
 } from "./ClusterService.testkit.ts";
+import * as ClusterHttp from "./http.ts";
 
 const box = clusterDescriptor("environment-box", "Box");
 const studioDescriptor = clusterDescriptor("environment-studio", "Studio");
@@ -311,6 +313,33 @@ it.effect(
         expect(yield* member.cluster.status).toMatchObject({ role: "standalone" });
       }),
     ).pipe(Effect.provide(FetchHttpClient.layer)),
+);
+
+it.effect("the control link answers 503, not 401, when a member cannot check the credential", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const member = yield* makeEnvironment(box);
+      const events = (auth: EnvironmentAuth.EnvironmentAuth["Service"]) =>
+        serveRoutes(ClusterHttp.layerEvents).pipe(
+          Effect.provideContext(Context.add(member.context, EnvironmentAuth.EnvironmentAuth, auth)),
+          Effect.flatMap((url) => HttpClient.get(`${url}/api/cluster/events`)),
+          Effect.map((response) => response.status),
+        );
+      // 401 tells the main host it was revoked, which cuts every proxied connection.
+      expect(
+        yield* events({
+          ...member.auth,
+          authenticateHttpRequest: () =>
+            Effect.fail(
+              new EnvironmentAuth.ServerAuthSessionCredentialValidationError({
+                cause: "SQLITE_BUSY",
+              }),
+            ),
+        }),
+      ).toBe(503);
+      expect(yield* events(member.auth)).toBe(401);
+    }),
+  ).pipe(Effect.provide(FetchHttpClient.layer)),
 );
 
 const memberCount = (main: { cluster: { members: Stream.Stream<ReadonlyArray<unknown>> } }) =>

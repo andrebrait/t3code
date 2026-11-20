@@ -947,6 +947,12 @@ const make = Effect.gen(function* () {
 
   const start: ClusterService["Service"]["start"] = Effect.fn("ClusterService.start")(
     function* (serve) {
+      // A member that stopped between a join's commit and its revocations finishes them here.
+      // Not when the layer is built: `t3 cluster` commands build it, and would revoke fresh invites.
+      const membership = yield* readMembership.pipe(Effect.orElseSucceed(() => null));
+      if (membership !== null) {
+        yield* keepOnlyHostAndLoopback(AuthSessionId.make(membership.host_session_id));
+      }
       // A status from before this start is stale: only a live link says online.
       yield* sql`UPDATE cluster_members SET status = 'offline' WHERE status = 'online'`.pipe(
         Effect.mapError(storageError),
@@ -1118,12 +1124,6 @@ const make = Effect.gen(function* () {
       );
     },
   );
-
-  // A member that stopped between a join's commit and its revocations finishes them here.
-  const membership = yield* readMembership.pipe(Effect.orElseSucceed(() => null));
-  if (membership !== null) {
-    yield* keepOnlyHostAndLoopback(AuthSessionId.make(membership.host_session_id));
-  }
 
   return ClusterService.of({
     status,

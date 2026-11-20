@@ -1,10 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   clusterActions,
-  clusterAddTarget,
+  clusterJoinTarget,
   clusterKeyPathValid,
   clusterMemberStatusText,
   clusterSshLogin,
+  clusterSshTarget,
   defaultClusterInviteUrl,
 } from "@t3tools/client-runtime/state/cluster";
 import {
@@ -19,7 +20,7 @@ import {
   type ClusterSshKeyFile,
   type ClusterSshLogin,
   type EnvironmentId,
-  parseClusterJoinString,
+  parseClusterJoinUrl,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -65,6 +66,7 @@ import { Input } from "../ui/input";
 import { Radio, RadioGroup } from "../ui/radio-group";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { toastManager } from "../ui/toast";
+import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { ITEM_ROW_CLASSNAME } from "./itemRows";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { useSearchableSetting } from "./settingsSearch";
@@ -177,7 +179,7 @@ function ClusterMemberList({
       <SettingsRow
         title={gt("No members yet")}
         description={gt(
-          "On the other machine, choose Join a cluster… and paste its join code in Add member.",
+          "On the other machine, choose Join a cluster… and enter its join URL in Add member.",
         )}
       />
     );
@@ -425,7 +427,12 @@ function AddMemberAction({
   const gt = useGT();
   const m = useMessages();
   const [open, setOpen] = useState(false);
-  const [raw, setRaw] = useState("");
+  const [mode, setMode] = useState<"join" | "ssh">("join");
+  const [joinUrl, setJoinUrl] = useState("");
+  const [joinCode, setJoinCode] = useState("");
+  // Comes only from a pasted join URL; the main host pins the member's certificate with it.
+  const [fingerprint, setFingerprint] = useState<string | null>(null);
+  const [sshRaw, setSshRaw] = useState("");
   const [label, setLabel] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -439,8 +446,10 @@ function AddMemberAction({
   const [hostKey, setHostKey] = useState<ReturnType<typeof hostKeyFailure>>(null);
   const addMember = useAtomCommand(clusterEnvironment.addMember, { label: "add cluster member" });
   const listKeys = useAtomCommand(clusterEnvironment.sshKeys, { label: "list cluster ssh keys" });
-  const target = clusterAddTarget(raw, { ssh: true });
-  const ssh = target !== null && parseClusterJoinString(target) === undefined;
+  const ssh = mode === "ssh";
+  const target = ssh
+    ? clusterSshTarget(sshRaw)
+    : clusterJoinTarget({ url: joinUrl, code: joinCode, fingerprint });
   const chosenKey = keys?.find((key) => key.path === keyChoice);
   const custom = keyChoice === CUSTOM_KEY;
   const login = ssh
@@ -452,7 +461,11 @@ function AddMemberAction({
       })
     : null;
   const reset = () => {
-    setRaw("");
+    setMode("join");
+    setJoinUrl("");
+    setJoinCode("");
+    setFingerprint(null);
+    setSshRaw("");
     setLabel("");
     setMethod("config");
     setPassword("");
@@ -461,6 +474,16 @@ function AddMemberAction({
     setPassphrase("");
     setKeys(null);
     setHostKey(null);
+  };
+  const changeJoinUrl = (value: string) => {
+    const pasted = parseClusterJoinUrl(value);
+    if (pasted === undefined) {
+      setJoinUrl(value);
+      return;
+    }
+    setJoinUrl(pasted.url);
+    setJoinCode(pasted.code);
+    setFingerprint(pasted.fingerprint);
   };
   const chooseMethod = async (next: ClusterSshLogin["_tag"]) => {
     setMethod(next);
@@ -524,7 +547,7 @@ function AddMemberAction({
           </DialogTitle>
           <DialogDescription>
             <T>
-              Paste the join code from the other machine, or enter user@host to add it over SSH. The
+              Enter the join URL and code from the other machine, or add it over SSH. Over SSH, the
               main host signs in once and installs its own key, so it can reconnect on its own.
             </T>
           </DialogDescription>
@@ -539,22 +562,38 @@ function AddMemberAction({
               void submit();
             }}
           >
-            <label className="block space-y-1.5">
-              <span className="block text-xs font-medium text-foreground">
-                <T>Join code or SSH target</T>
-              </span>
-              <Input
-                value={raw}
-                onChange={(event) => setRaw(event.target.value)}
-                placeholder="https://box.local:3773#… or me@box"
-                disabled={busy}
-                autoFocus
-                nativeInput
-                spellCheck={false}
-              />
-            </label>
+            <ToggleGroup
+              aria-label={gt("Add the member with")}
+              value={[mode]}
+              disabled={busy}
+              onValueChange={(next) => {
+                const value = next[0];
+                if (value !== "join" && value !== "ssh") return;
+                setMode(value);
+                setError(null);
+              }}
+            >
+              <Toggle value="join">
+                <T>Join code</T>
+              </Toggle>
+              <Toggle value="ssh">SSH</Toggle>
+            </ToggleGroup>
             {ssh ? (
               <>
+                <label className="block space-y-1.5">
+                  <span className="block text-xs font-medium text-foreground">
+                    <T>SSH target</T>
+                  </span>
+                  <Input
+                    value={sshRaw}
+                    onChange={(event) => setSshRaw(event.target.value)}
+                    placeholder="me@box"
+                    disabled={busy}
+                    autoFocus
+                    nativeInput
+                    spellCheck={false}
+                  />
+                </label>
                 <Alert variant="warning">
                   <AlertTitle>
                     <T>The main host will install its own key on this machine</T>
@@ -682,7 +721,42 @@ function AddMemberAction({
                   </div>
                 ) : null}
               </>
-            ) : null}
+            ) : (
+              <div className="space-y-1.5">
+                <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_10rem]">
+                  <label className="block space-y-1.5">
+                    <span className="block text-xs font-medium text-foreground">
+                      <T>URL</T>
+                    </span>
+                    <Input
+                      value={joinUrl}
+                      onChange={(event) => changeJoinUrl(event.target.value)}
+                      placeholder="https://box.local:3773"
+                      disabled={busy}
+                      autoFocus
+                      nativeInput
+                      spellCheck={false}
+                    />
+                  </label>
+                  <label className="block space-y-1.5">
+                    <span className="block text-xs font-medium text-foreground">
+                      <T>Join code</T>
+                    </span>
+                    <Input
+                      value={joinCode}
+                      onChange={(event) => setJoinCode(event.target.value)}
+                      placeholder="K7M2Q9RZ3NWD"
+                      disabled={busy}
+                      nativeInput
+                      spellCheck={false}
+                    />
+                  </label>
+                </div>
+                <p className="text-2xs text-muted-foreground">
+                  <T>Paste the full join URL here to fill both fields automatically.</T>
+                </p>
+              </div>
+            )}
             <label className="block space-y-1.5">
               <span className="block text-xs font-medium text-foreground">
                 <T>Name (optional)</T>
@@ -776,7 +850,8 @@ function JoinAction({ environmentId }: { readonly environmentId: EnvironmentId }
   const [error, setError] = useState<string | null>(null);
   const formId = useId();
   const invite = useAtomCommand(clusterEnvironment.invite, { label: "create cluster join code" });
-  const { copyToClipboard, isCopied } = useCopyToClipboard<void>();
+  const [copied, setCopied] = useState<"url" | "code" | null>(null);
+  const { copyToClipboard, isCopied } = useCopyToClipboard<"url" | "code">({ onCopy: setCopied });
   const submit = async () => {
     if (busy) return;
     setBusy(true);
@@ -850,23 +925,30 @@ function JoinAction({ environmentId }: { readonly environmentId: EnvironmentId }
               <FailureText error={error} />
             </form>
           ) : (
-            <div className="space-y-2 text-sm">
-              {created.joinString === null ? (
-                <p>
-                  <T>
-                    Code <Var>{created.code}</Var>. Add an address to get a join code.
-                  </T>
-                </p>
-              ) : (
-                <code className="block break-all rounded-md bg-muted p-2 text-xs">
-                  {created.joinString}
-                </code>
+            <div className="space-y-3 text-sm">
+              {created.joinString === null ? null : (
+                <CopyField
+                  label={gt("Join URL")}
+                  value={created.joinString}
+                  copied={isCopied && copied === "url"}
+                  onCopy={() => copyToClipboard(created.joinString ?? "", "url")}
+                />
               )}
+              <CopyField
+                label={gt("Join code")}
+                value={created.code}
+                copied={isCopied && copied === "code"}
+                onCopy={() => copyToClipboard(created.code, "code")}
+              />
               <p className="text-xs text-muted-foreground">
-                <T>
-                  Paste it in the main host's Add member. Certificate SHA-256:{" "}
-                  <Var>{created.fingerprint}</Var>
-                </T>
+                {created.joinString === null ? (
+                  <T>Add an address to get a join URL.</T>
+                ) : (
+                  <T>
+                    Paste the join URL in the main host's Add member. Certificate SHA-256:{" "}
+                    <Var>{created.fingerprint}</Var>
+                  </T>
+                )}
               </p>
             </div>
           )}
@@ -879,19 +961,30 @@ function JoinAction({ environmentId }: { readonly environmentId: EnvironmentId }
             <Button form={formId} type="submit" disabled={busy}>
               {busy ? gt("Creating…") : gt("Create join code")}
             </Button>
-          ) : created.joinString !== null ? (
-            <Button
-              type="button"
-              onClick={() => {
-                if (created.joinString !== null) copyToClipboard(created.joinString, undefined);
-              }}
-            >
-              {isCopied ? gt("Copied") : gt("Copy join code")}
-            </Button>
           ) : null}
         </DialogFooter>
       </DialogPopup>
     </Dialog>
+  );
+}
+
+function CopyField(props: {
+  readonly label: string;
+  readonly value: string;
+  readonly copied: boolean;
+  readonly onCopy: () => void;
+}) {
+  const gt = useGT();
+  return (
+    <div className="space-y-1.5">
+      <span className="block text-xs font-medium text-foreground">{props.label}</span>
+      <div className="flex items-center gap-2 rounded-lg border border-border/60 bg-muted/30 px-2.5 py-1.5">
+        <code className="min-w-0 flex-1 break-all font-mono text-xs">{props.value}</code>
+        <Button size="xs" variant="ghost" className="shrink-0" onClick={props.onCopy}>
+          {props.copied ? gt("Copied") : gt("Copy")}
+        </Button>
+      </div>
+    </div>
   );
 }
 

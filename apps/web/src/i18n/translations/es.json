@@ -7826,7 +7826,7 @@
   "3202e5e7e3ac64f4": "No se pudieron cargar los miembros del clúster",
   "20ec2553636ff8b6": "Cargando los miembros del clúster…",
   "185c47873cbc3a58": "Aún no hay miembros",
-  "87be230ed4df86c3": "En la otra máquina, elige Unirse a un clúster… y pega su código de unión en Añadir miembro.",
+  "17cfe673d6bca544": "En la otra máquina, elige Unirse a un clúster… e introduce su URL de unión en Añadir miembro.",
   "e83d7e0f8edc2a67": "Nunca alcanzado",
   "6e5bd943c29069ba": "Visto por última vez {time}",
   "4b8e5df2cc93095e": "¿Quitar {label} del clúster? Volverá a ser un entorno independiente.",
@@ -7838,6 +7838,7 @@
   "2c5674665579a329": "Quitar",
   "f924c86d559777c8": "{label} añadido",
   "f81ac6a7cad64430": "Añadir miembro",
+  "2c247e98c101af27": "Añadir el miembro con",
   "7d527a0de1c5b074": "Iniciar sesión con",
   "10676cd2deb563e3": "Clave en el host principal",
   "bd6ae18c37a2f7c9": "Cargando claves…",
@@ -7852,8 +7853,9 @@
   "1287f93691c96377": "Reemplazar y continuar",
   "cad9c74911412589": "Confiar",
   "014616905723cd98": "Unirse a un clúster…",
+  "dbcaf6d670a63563": "URL de unión",
+  "c52e9ac4f629bd56": "Código de unión",
   "0fd5390a359a5653": "Crear código de unión",
-  "474319bf8c34993b": "Copiar código de unión",
   "90ae616e9cb53922": "¿Salir del clúster de {host}? Después, vuelve a emparejar los clientes con esta máquina.",
   "cd600c8a4e87d47d": "No se pudo salir del clúster",
   "2ed706790c2b5d0a": "Miembro de {host}",
@@ -7861,8 +7863,8 @@
   "9ff2b973feb1f701": "Saliendo…",
   "102b7b49ef3cdee1": "Salir del clúster",
   "32b30e32d451d005": "Añadir un miembro",
-  "f873f8a9b703b58a": "Pega el código de unión del otro equipo o escribe user@host para añadirlo por SSH. El host principal inicia sesión una vez e instala su propia clave para poder reconectarse por sí mismo.",
-  "ba762eea3c513adf": "Código de unión o destino SSH",
+  "9403368abb06b527": "Introduce la URL y el código de unión del otro equipo, o añádelo por SSH. Por SSH, el host principal inicia sesión una vez e instala su propia clave para poder reconectarse por sí mismo.",
+  "9b9c711b341a6843": "Código de unión",
   "83b275291bf40e25": "El host principal instalará su propia clave en este equipo",
   "5690bd95f5c6e460": [
     "Inicia sesión una vez con lo que elijas y luego añade una clave del clúster a",
@@ -7882,22 +7884,16 @@
   "93bbd9bbc3bf0fce": "Ruta de clave personalizada…",
   "eb90caeca80020cf": "Escribe una ruta completa o una que empiece por ~.",
   "caeef5373ed7dc22": "Frase de contraseña",
+  "dc634d8a4725cea7": "URL",
+  "547a08e18ae84e4b": "Pega aquí la URL de unión completa para rellenar ambos campos automáticamente.",
   "3953d1cccd71ab7e": "Nombre (opcional)",
   "ccfce317440dbd50": "Permite que un host principal añada esta máquina como miembro.",
   "ddf0e1eb84511ae2": "Unirse a un clúster",
   "c3d0edea2211cbbd": "Al unirse, se cierra la sesión de los demás clientes de esta máquina y se terminan sus entornos vinculados. Después se accede a ella a través del host principal.",
   "a7e90c3ca71d8a2b": "Dirección con la que el host principal accede a esta máquina",
-  "a51baf4208ff026b": [
-    "Código ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    ". Añade una dirección para obtener un código de unión."
-  ],
-  "c4a1872f647cca8f": [
-    "Pégala en Añadir miembro del host principal. SHA-256 del certificado:",
+  "75495e154c01a46a": "Añade una dirección para obtener una URL de unión.",
+  "51f1724b6424e9b8": [
+    "Pega la URL de unión en Añadir miembro del host principal. SHA-256 del certificado:",
     " ",
     {
       "i": 1,

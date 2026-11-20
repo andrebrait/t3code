@@ -518,16 +518,19 @@ To add a machine over HTTPS:
 
 1. On that machine, choose **Join a cluster…**, or run
    `t3 cluster join --url https://<address>`. Enter the address the main host
-   can reach it at. It shows a join code: the address and a one-time code.
-   It also carries the machine's certificate fingerprint.
-2. On the main host, choose **Add member** and paste the join code, or run
-   `t3 cluster add <join-code>`. The main host accepts the member when it
-   presents that certificate or one from a trusted authority, as an address
-   behind T3 Connect or Tailscale Serve does. If the pinned certificate changes
-   later, the member shows **certificate changed**. Add it again with a new join code.
+   can reach it at. It shows a join URL and a one-time join code, like a
+   pairing link. The join URL also carries the machine's certificate
+   fingerprint.
+2. On the main host, choose **Add member**, then enter the URL and join code.
+   Pasting the full join URL fills both. On the command line, run
+   `t3 cluster add <join-url>`, or `t3 cluster add https://<address> --code <code>`.
+   The main host accepts the member when it presents the certificate from the
+   join URL or one from a trusted authority, as an address behind T3 Connect
+   or Tailscale Serve does. If the pinned certificate changes later, the member
+   shows **certificate changed**. Add it again with a new join code.
 
-To add a machine over SSH instead, enter `user@host` in **Add member** on the
-web or desktop app, or run `t3 cluster add ssh://user@host`. Under **Sign in with**,
+To add a machine over SSH instead, choose **SSH** in **Add member** on the web or
+desktop app and enter `user@host`, or run `t3 cluster add ssh://user@host`. Under **Sign in with**,
 choose your SSH config or agent, a password, or a key file on the main host (with
 its passphrase if it has one). On the command line, pass `--password-stdin`, or
 `--key <path>` with `--passphrase-stdin` for an encrypted key. The main host signs
@@ -540,7 +543,7 @@ trusted, it warns you and asks before replacing the old one. Compare the
 fingerprint with the member's own before you accept. On the command line, a
 terminal asks the same; a script passes `--trust-host-key SHA256:…`, plus
 `--replace-host-key` for a changed key. The mobile app adds members by join
-string only.
+code only.
 
 - Joining signs out the member's other remote clients and ends its linked
   environments. From then on it accepts only its main host and apps on its own

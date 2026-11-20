@@ -7832,7 +7832,7 @@
   "3202e5e7e3ac64f4": "Det gick inte att läsa in klustermedlemmar",
   "20ec2553636ff8b6": "Läser in klustermedlemmar…",
   "185c47873cbc3a58": "Inga medlemmar ännu",
-  "87be230ed4df86c3": "Välj Gå med i ett kluster… på den andra maskinen och klistra in dess anslutningskod i Lägg till medlem.",
+  "17cfe673d6bca544": "Välj Gå med i ett kluster… på den andra maskinen och ange dess anslutnings-URL i Lägg till medlem.",
   "e83d7e0f8edc2a67": "Aldrig nådd",
   "6e5bd943c29069ba": "Senast sedd {time}",
   "4b8e5df2cc93095e": "Ta bort {label} från klustret? Den blir en fristående miljö igen.",
@@ -7844,6 +7844,7 @@
   "2c5674665579a329": "Ta bort",
   "f924c86d559777c8": "{label} tillagd",
   "f81ac6a7cad64430": "Lägg till medlem",
+  "2c247e98c101af27": "Lägg till medlemmen med",
   "7d527a0de1c5b074": "Logga in med",
   "10676cd2deb563e3": "Nyckel på huvudvärden",
   "bd6ae18c37a2f7c9": "Läser in nycklar…",
@@ -7858,8 +7859,9 @@
   "1287f93691c96377": "Ersätt och fortsätt",
   "cad9c74911412589": "Lita på",
   "014616905723cd98": "Gå med i ett kluster…",
+  "dbcaf6d670a63563": "Anslutnings-URL",
+  "c52e9ac4f629bd56": "Anslutningskod",
   "0fd5390a359a5653": "Skapa anslutningskod",
-  "474319bf8c34993b": "Kopiera anslutningskod",
   "90ae616e9cb53922": "Lämna klustret för {host}? Parkoppla klienter med den här maskinen igen efteråt.",
   "cd600c8a4e87d47d": "Det gick inte att lämna klustret",
   "2ed706790c2b5d0a": "Medlem i {host}",
@@ -7867,8 +7869,8 @@
   "9ff2b973feb1f701": "Lämnar…",
   "102b7b49ef3cdee1": "Lämna klustret",
   "32b30e32d451d005": "Lägg till en medlem",
-  "f873f8a9b703b58a": "Klistra in anslutningskoden från den andra datorn, eller ange user@host för att lägga till den via SSH. Huvudvärden loggar in en gång och installerar sin egen nyckel så att den kan återansluta själv.",
-  "ba762eea3c513adf": "Anslutningskod eller SSH-mål",
+  "9403368abb06b527": "Ange anslutnings-URL:en och anslutningskoden från den andra datorn, eller lägg till den via SSH. Via SSH loggar huvudvärden in en gång och installerar sin egen nyckel så att den kan återansluta själv.",
+  "9b9c711b341a6843": "Anslutningskod",
   "83b275291bf40e25": "Huvudvärden installerar sin egen nyckel på den här datorn",
   "5690bd95f5c6e460": [
     "Den loggar in en gång med det du väljer och lägger sedan till en klusternyckel i",
@@ -7888,22 +7890,16 @@
   "93bbd9bbc3bf0fce": "Egen nyckelsökväg…",
   "eb90caeca80020cf": "Ange en fullständig sökväg, eller en som börjar med ~.",
   "caeef5373ed7dc22": "Lösenfras",
+  "dc634d8a4725cea7": "URL",
+  "547a08e18ae84e4b": "Klistra in hela anslutnings-URL:en här för att fylla i båda fälten automatiskt.",
   "3953d1cccd71ab7e": "Namn (valfritt)",
   "ccfce317440dbd50": "Låter en huvudvärd lägga till den här maskinen som medlem.",
   "ddf0e1eb84511ae2": "Gå med i ett kluster",
   "c3d0edea2211cbbd": "När den ansluter loggas maskinens andra klienter ut och dess länkade miljöer avslutas. Därefter nås den via huvudvärden.",
   "a7e90c3ca71d8a2b": "Adress som huvudvärden når den här maskinen på",
-  "a51baf4208ff026b": [
-    "Kod ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    ". Lägg till en adress för att få en anslutningskod."
-  ],
-  "c4a1872f647cca8f": [
-    "Klistra in den i huvudvärdens Lägg till medlem. Certifikatets SHA-256:",
+  "75495e154c01a46a": "Lägg till en adress för att få en anslutnings-URL.",
+  "51f1724b6424e9b8": [
+    "Klistra in anslutnings-URL:en i huvudvärdens Lägg till medlem. Certifikatets SHA-256:",
     " ",
     {
       "i": 1,

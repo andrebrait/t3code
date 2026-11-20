@@ -52,7 +52,7 @@ export const ClusterStatus = Schema.Struct({
 export type ClusterStatus = typeof ClusterStatus.Type;
 
 export const ClusterInviteInput = Schema.Struct({
-  /** Where the main host reaches this environment. Without it no join code is built. */
+  /** Where the main host reaches this environment. Without it no join URL is built. */
   url: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type ClusterInviteInput = typeof ClusterInviteInput.Type;
@@ -78,7 +78,7 @@ export const ClusterSshLogin = Schema.Union([
 export type ClusterSshLogin = typeof ClusterSshLogin.Type;
 
 export const ClusterAddMemberInput = Schema.Struct({
-  /** A join code from the member, or an ssh target (`user@host`, `ssh://user@host:port`). */
+  /** The member's join URL, or an ssh target (`user@host`, `ssh://user@host:port`). */
   target: TrimmedNonEmptyString,
   label: Schema.optionalKey(TrimmedNonEmptyString),
   /** For an ssh target; ssh config and agent when absent. */
@@ -178,24 +178,27 @@ const JOIN_CODE = new RegExp(`^[${PAIRING_CODE_ALPHABET}]{${PAIRING_CODE_LENGTH}
 export const normalizeCertificateFingerprint = (value: string) =>
   value.replaceAll(":", "").toLowerCase();
 
-/** `<origin>#<code>`, plus `.<sha256>` when the main host should pin the member's certificate. */
-export const formatClusterJoinString = (input: {
+/** A pairing URL, `<origin>/pair#token=<code>`, plus `&sha256=<hex>` when the main host should pin the member's certificate. */
+export const formatClusterJoinUrl = (input: {
   readonly url: string;
   readonly code: string;
   readonly fingerprint: string | null;
-}) =>
-  `${new URL(input.url).origin}#${input.code}${input.fingerprint === null ? "" : `.${normalizeCertificateFingerprint(input.fingerprint)}`}`;
+}) => {
+  const url = new URL("/pair", new URL(input.url).origin);
+  const params = new URLSearchParams([["token", input.code]]);
+  if (input.fingerprint !== null) {
+    params.set("sha256", normalizeCertificateFingerprint(input.fingerprint));
+  }
+  url.hash = params.toString();
+  return url.toString();
+};
 
-export const parseClusterJoinString = (value: string) => {
-  const trimmed = value.trim();
-  const hash = trimmed.lastIndexOf("#");
-  if (hash < 0) return undefined;
-  const url = URL.parse(trimmed.slice(0, hash));
+export const parseClusterJoinUrl = (value: string) => {
+  const url = URL.parse(value.trim());
   if (url === null || (url.protocol !== "https:" && url.protocol !== "http:")) return undefined;
-  const parts = trimmed.slice(hash + 1).split(".");
-  if (parts.length > 2) return undefined;
-  const code = parts[0]!.toUpperCase();
-  const fingerprint = parts[1]?.toLowerCase() ?? null;
+  const params = new URLSearchParams(url.hash.slice(1));
+  const code = params.get("token")?.toUpperCase() ?? "";
+  const fingerprint = params.get("sha256")?.toLowerCase() ?? null;
   if (!JOIN_CODE.test(code) || (fingerprint !== null && !SHA256_HEX.test(fingerprint))) {
     return undefined;
   }

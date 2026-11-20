@@ -23,10 +23,10 @@ import {
   EnvironmentHttpApi,
   EnvironmentId,
   type ExecutionEnvironmentDescriptor,
-  formatClusterJoinString,
+  formatClusterJoinUrl,
   formatClusterSshTarget,
   ORCHESTRATION_PROTOCOL_VERSION,
-  parseClusterJoinString,
+  parseClusterJoinUrl,
   parseClusterSshTarget,
 } from "@t3tools/contracts";
 import { isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
@@ -276,7 +276,7 @@ export class ClusterService extends Context.Service<
   ClusterService,
   {
     readonly status: Effect.Effect<ClusterStatus, ClusterError>;
-    /** Mints a one-time `cluster-member` code; with `url`, the join code a main host adds. */
+    /** Mints a one-time `cluster-member` code; with `url`, the join URL a main host adds. */
     readonly invite: (input: ClusterInviteInput) => Effect.Effect<ClusterInvite, ClusterError>;
     /** Member side of a join: spends the invite, records the host, keeps only loopback sessions. */
     readonly acceptJoin: (
@@ -412,7 +412,7 @@ const make = Effect.gen(function* () {
         joinString:
           url === undefined
             ? null
-            : formatClusterJoinString({
+            : formatClusterJoinUrl({
                 url: url.href,
                 code: issued.credential,
                 fingerprint,
@@ -643,7 +643,7 @@ const make = Effect.gen(function* () {
       yield* requireEnabled;
       yield* role.refuseIfMember("Adding a cluster member");
       const self = yield* environment.getDescriptor;
-      const join = parseClusterJoinString(input.target);
+      const join = parseClusterJoinUrl(input.target);
       const sshTarget = join === undefined ? parseClusterSshTarget(input.target) : undefined;
       let keyInstalled = false;
       let rowWritten = false;
@@ -677,7 +677,7 @@ const make = Effect.gen(function* () {
         return yield* new ClusterError({
           reason: "invalid_target",
           message:
-            "Paste the join code from the member's Settings → Cluster or `t3 cluster join`, or an ssh target such as me@box.",
+            "Paste the join URL from the member's Settings → Cluster or `t3 cluster join`, or an ssh target such as me@box.",
         });
       }
       const newSshTarget = resolved.target.transport === "ssh" ? resolved.target.sshTarget : null;

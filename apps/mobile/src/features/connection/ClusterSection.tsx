@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   clusterActions,
-  clusterAddTarget,
+  clusterJoinTarget,
   clusterMemberStatusText,
   offersCluster,
 } from "@t3tools/client-runtime/state/cluster";
@@ -9,7 +9,12 @@ import {
   type AtomCommandResult,
   isAtomCommandInterrupted,
 } from "@t3tools/client-runtime/state/runtime";
-import type { ClusterInvite, ClusterMember, EnvironmentId } from "@t3tools/contracts";
+import {
+  type ClusterInvite,
+  type ClusterMember,
+  type EnvironmentId,
+  parseClusterJoinUrl,
+} from "@t3tools/contracts";
 import * as Clipboard from "expo-clipboard";
 import { useGT, useMessages } from "gt-react-native";
 import { type ReactNode, useState } from "react";
@@ -148,7 +153,7 @@ export function ClusterSection(props: {
               <Text className="text-sm text-foreground-muted">{gt("No members yet")}</Text>
               <Text className="text-xs text-foreground-muted">
                 {gt(
-                  "On the other machine, choose Join a cluster… and paste its join code in Add member.",
+                  "On the other machine, choose Join a cluster… and enter its join URL in Add member.",
                 )}
               </Text>
             </Row>
@@ -325,9 +330,22 @@ function AddMemberSheet(props: {
   const gt = useGT();
   const m = useMessages();
   const addMember = useAtomCommand(clusterEnvironment.addMember, { label: "add cluster member" });
-  const [joinInput, setJoinInput] = useState("");
+  const [url, setUrl] = useState("");
+  const [code, setCode] = useState("");
+  // Comes only from a pasted join URL; the main host pins the member's certificate with it.
+  const [fingerprint, setFingerprint] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const target = clusterAddTarget(joinInput, { ssh: false });
+  const target = clusterJoinTarget({ url, code, fingerprint });
+  const changeUrl = (value: string) => {
+    const pasted = parseClusterJoinUrl(value);
+    if (pasted === undefined) {
+      setUrl(value);
+      return;
+    }
+    setUrl(pasted.url);
+    setCode(pasted.code);
+    setFingerprint(pasted.fingerprint);
+  };
   const submit = async () => {
     if (target === null) return;
     setBusy(true);
@@ -340,16 +358,27 @@ function AddMemberSheet(props: {
     <Sheet title={gt("Add a member")} onClose={props.onClose} dismissDisabled={busy}>
       <SheetBody>
         <Text className="text-sm text-foreground-muted">
-          {gt("On the other machine, choose Join a cluster… and paste its join code here.")}
+          {gt(
+            "On the other machine, choose Join a cluster…, then enter its URL and join code here. Pasting the full join URL fills both.",
+          )}
         </Text>
         <AppTextInput
-          value={joinInput}
-          onChangeText={setJoinInput}
-          placeholder={gt("Paste a join code")}
-          accessibilityLabel={gt("Join code")}
+          value={url}
+          onChangeText={changeUrl}
+          placeholder="https://box.local:3773"
+          accessibilityLabel={gt("URL")}
+          keyboardType="url"
           autoCapitalize="none"
           autoCorrect={false}
-          multiline
+          className="rounded-[14px] px-4 py-3.5"
+        />
+        <AppTextInput
+          value={code}
+          onChangeText={setCode}
+          placeholder={gt("Join code")}
+          accessibilityLabel={gt("Join code")}
+          autoCapitalize="characters"
+          autoCorrect={false}
           className="rounded-[14px] px-4 py-3.5"
         />
         <Button
@@ -391,17 +420,18 @@ function JoinSheet(props: { readonly environmentId: EnvironmentId; readonly onCl
         </Text>
         {created?.joinString ? (
           <>
-            <Text selectable className="rounded-xl bg-subtle p-3 font-mono text-xs text-foreground">
-              {created.joinString}
-            </Text>
-            <Button
-              label={gt("Copy join code")}
-              onPress={() =>
-                void Clipboard.setStringAsync(created.joinString ?? "").catch(() => undefined)
-              }
+            <CopyField
+              label={gt("Join URL")}
+              copyLabel={gt("Copy join URL")}
+              value={created.joinString}
+            />
+            <CopyField
+              label={gt("Join code")}
+              copyLabel={gt("Copy join code")}
+              value={created.code}
             />
             <Text className="text-sm text-foreground-muted">
-              {gt("Paste it in the main host's Add member.")}
+              {gt("Paste the join URL in the main host's Add member.")}
             </Text>
             <Text selectable className="text-xs text-foreground-muted">
               {gt("Certificate SHA-256: {fingerprint}", { fingerprint: created.fingerprint })}
@@ -431,5 +461,24 @@ function JoinSheet(props: { readonly environmentId: EnvironmentId; readonly onCl
         )}
       </SheetBody>
     </Sheet>
+  );
+}
+
+function CopyField(props: {
+  readonly label: string;
+  readonly copyLabel: string;
+  readonly value: string;
+}) {
+  return (
+    <View className="gap-2">
+      <Text className="text-xs text-foreground-muted">{props.label}</Text>
+      <Text selectable className="rounded-xl bg-subtle p-3 font-mono text-xs text-foreground">
+        {props.value}
+      </Text>
+      <Button
+        label={props.copyLabel}
+        onPress={() => void Clipboard.setStringAsync(props.value).catch(() => undefined)}
+      />
+    </View>
   );
 }

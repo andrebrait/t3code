@@ -1,5 +1,6 @@
 import {
   AuthAccessWriteScope,
+  CLUSTER_SCOPES_HEADER,
   type ClusterError,
   ClusterLinkEvent,
   EnvironmentAuthenticatedPrincipal,
@@ -50,10 +51,12 @@ export const layer = HttpApiBuilder.group(
         Effect.fn("environment.cluster.leave")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           const principal = yield* EnvironmentAuthenticatedPrincipal;
-          // A client proxied by the cluster host never holds access:write here.
+          const request = yield* HttpServerRequest.HttpServerRequest;
+          // A client the main host proxies authenticates as the cluster host, so refuse it here too.
           if (
-            principal.subject !== EnvironmentAuth.CLUSTER_HOST_SUBJECT &&
-            !principal.scopes.has(AuthAccessWriteScope)
+            request.headers[CLUSTER_SCOPES_HEADER] !== undefined ||
+            (principal.subject !== EnvironmentAuth.CLUSTER_HOST_SUBJECT &&
+              !principal.scopes.has(AuthAccessWriteScope))
           ) {
             return yield* new EnvironmentHttpForbiddenError({
               message:

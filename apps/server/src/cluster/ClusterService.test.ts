@@ -3,6 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import {
   AuthAccessWriteScope,
+  CLUSTER_SCOPES_HEADER,
   ClusterError,
   type ClusterHostRequest,
   type ClusterLinkEvent,
@@ -293,10 +294,11 @@ it.effect(
         const join = Effect.flatMap(member.cluster.createJoinCode({}), (joinCode) =>
           member.cluster.acceptJoin({ code: joinCode.code, host: studio }, bot),
         );
-        const leave = (token: string) =>
+        const leave = (token: string, headers: Record<string, string> = {}) =>
           HttpClient.execute(
             HttpClientRequest.post(`${member.url}/api/cluster/leave`).pipe(
               HttpClientRequest.bearerToken(token),
+              HttpClientRequest.setHeaders(headers),
             ),
           ).pipe(Effect.map((response) => response.status));
 
@@ -311,6 +313,12 @@ it.effect(
         ).toMatchObject({ _tag: "ServerAuthInvalidCredentialError" });
 
         const rejoined = yield* join;
+        // A client the main host proxies carries the scopes header, whatever its scopes.
+        expect(
+          yield* leave(rejoined.token, {
+            [CLUSTER_SCOPES_HEADER]: "orchestration:read access:write",
+          }),
+        ).toBe(403);
         expect(yield* leave(rejoined.token)).toBe(200);
         expect(yield* member.cluster.status).toMatchObject({ role: "standalone" });
       }),

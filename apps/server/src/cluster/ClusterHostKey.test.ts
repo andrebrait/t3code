@@ -86,6 +86,14 @@ describe("classifyHostKeyCheck", () => {
   });
 });
 
+it("pins a probe to every host key type ssh may name", () => {
+  assert.equal(ClusterHostKey.HOST_KEY_ALGORITHMS.DSA, "ssh-dss");
+  assert.equal(
+    ClusterHostKey.HOST_KEY_ALGORITHMS["MLDSA44-ED25519"],
+    "ssh-mldsa44-ed25519@openssh.com",
+  );
+});
+
 it("splits ssh -G's known_hosts list, keeping paths that contain spaces", () => {
   assert.deepEqual(
     ClusterHostKey.parseKnownHostsFiles(
@@ -125,7 +133,7 @@ const fixture = (port = 2222) => {
       "f=",
       'for a in "$@"; do case "$a" in',
       `  -G) printf 'hostname box\\nport ${port}\\nuserknownhostsfile %s %s\\n' ${q(knownHosts)} ${q(`${knownHosts}2`)}; exit 0 ;;`,
-      '  UserKnownHostsFile=*) f="${a#UserKnownHostsFile=}" ;;',
+      '  UserKnownHostsFile=*) f="${a#UserKnownHostsFile=}"; f="${f#\\\"}"; f="${f%\\\"}" ;;',
       "esac; done",
       `[ -n "$f" ] || { cat ${q(file("check"))} >&2; exit 255; }`,
       `cat ${q(file("presented"))} >> "$f"`,
@@ -179,6 +187,8 @@ it.live("refuses an unknown host, then trusts it once approved in private files"
       "PreferredAuthentications=none",
       "StrictHostKeyChecking=yes",
       "ControlPath=none",
+      // A pre-auth banner and the user's LogLevel stay out of the verdict.
+      "LogLevel=ERROR",
     ]) {
       assert.include(strict, option);
     }
@@ -190,8 +200,8 @@ it.live("refuses an unknown host, then trusts it once approved in private files"
     ]) {
       assert.include(probe, option);
     }
-    // The probe's known_hosts lived only for the probe.
-    assert.isFalse(NodeFS.existsSync(/UserKnownHostsFile=(\S+)/.exec(probe!)![1]!));
+    // ssh splits an unquoted value on spaces. The probe's known_hosts lived only for the probe.
+    assert.isFalse(NodeFS.existsSync(/UserKnownHostsFile="([^"]+)"/.exec(probe!)![1]!));
 
     // The host presents another key by the time the user approves: nothing is written.
     f.present(OLD);

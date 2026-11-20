@@ -26,6 +26,7 @@ import {
   ClusterMemberRef,
   ClusterRemoveMemberResult,
   ClusterRenameMemberInput,
+  ClusterSshKeyFile,
   ClusterStatus,
 } from "./cluster.ts";
 import {
@@ -568,6 +569,7 @@ export const WS_METHODS = {
   clusterRemoveMember: "cluster.removeMember",
   clusterRenameMember: "cluster.renameMember",
   clusterLeave: "cluster.leave",
+  clusterSshKeys: "cluster.sshKeys",
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
   serverDiscoverSourceControl: "server.discoverSourceControl",
@@ -962,6 +964,12 @@ const WsClusterRemoveMemberRpc = Rpc.make(WS_METHODS.clusterRemoveMember, {
 const WsClusterRenameMemberRpc = Rpc.make(WS_METHODS.clusterRenameMember, {
   payload: ClusterRenameMemberInput,
   success: ClusterMember,
+  error: ClusterRpcError,
+});
+
+const WsClusterSshKeysRpc = Rpc.make(WS_METHODS.clusterSshKeys, {
+  payload: Schema.Struct({}),
+  success: Schema.Array(ClusterSshKeyFile),
   error: ClusterRpcError,
 });
 
@@ -2376,6 +2384,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsClusterRemoveMemberRpc,
   WsClusterRenameMemberRpc,
   WsClusterLeaveRpc,
+  WsClusterSshKeysRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerCheckSecretSourceRpc,
   WsServerSearchAcpRegistryRpc,

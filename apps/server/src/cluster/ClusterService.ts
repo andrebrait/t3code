@@ -17,6 +17,7 @@ import {
   ClusterMemberStatus,
   type ClusterRemoveMemberResult,
   type ClusterRenameMemberInput,
+  type ClusterSshKeyFile,
   type ClusterStatus,
   ClusterTransport,
   EnvironmentHttpApi,
@@ -65,6 +66,7 @@ import type * as ManagedLimits from "../policy/managedLimits.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ServerTls from "../tls/ServerTls.ts";
 import * as ClusterRole from "./ClusterRole.ts";
+import * as ClusterSshKey from "./ClusterSshKey.ts";
 import * as ClusterUpstream from "./ClusterUpstream.ts";
 import * as PinnedTransport from "./pinnedTransport.ts";
 
@@ -288,6 +290,8 @@ export class ClusterService extends Context.Service<
     readonly renameMember: (
       input: ClusterRenameMemberInput,
     ) => Effect.Effect<ClusterMember, ClusterError>;
+    /** Private key files in this machine's `~/.ssh`, for a one-time ssh login. */
+    readonly sshKeys: Effect.Effect<ReadonlyArray<ClusterSshKeyFile>>;
     /** Where to reach a member and the `cluster-host` token to send it. */
     readonly connect: (memberId: EnvironmentId) => Effect.Effect<MemberConnection, ClusterError>;
     /** Completes once the member is removed or revoked. */
@@ -328,6 +332,7 @@ const make = Effect.gen(function* () {
   const memberLock = yield* Semaphore.make(1);
   const upstream = yield* ClusterUpstream.ClusterUpstream;
   const secrets = yield* ServerSecretStore.ServerSecretStore;
+  const sshKey = yield* ClusterSshKey.ClusterSshKey;
   const random = yield* SecureRandom.SecureRandom;
   // Each join rotates the member's token; racing adds could store one it already revoked.
   const hostLock = yield* Semaphore.make(1);
@@ -636,9 +641,13 @@ const make = Effect.gen(function* () {
           : sshTarget !== undefined
             ? {
                 target: { transport: "ssh", sshTarget: formatClusterSshTarget(sshTarget) } as const,
-                code: upstream
-                  .inviteOverSsh(formatClusterSshTarget(sshTarget))
-                  .pipe(Effect.map((invited) => invited.code)),
+                // Even with the user's own ssh setup, so reconnects never depend on their agent.
+                code: sshKey
+                  .authorize(formatClusterSshTarget(sshTarget), input.login ?? { _tag: "config" })
+                  .pipe(
+                    Effect.andThen(upstream.inviteOverSsh(formatClusterSshTarget(sshTarget))),
+                    Effect.map((invited) => invited.code),
+                  ),
               }
             : undefined;
       if (resolved === undefined) {
@@ -721,7 +730,7 @@ const make = Effect.gen(function* () {
       const row = (yield* SubscriptionRef.get(rowsRef)).find(
         (candidate) => candidate.environment_id === memberId,
       );
-      if (row === undefined) return { removed: false, memberNotified: false };
+      if (row === undefined) return { removed: false, memberNotified: false, keyRevoked: null };
       const memberNotified = yield* connectRow(row).pipe(
         Effect.flatMap(({ upstream: connection, token }) =>
           clientFor(connection).pipe(
@@ -734,6 +743,7 @@ const make = Effect.gen(function* () {
         Effect.as(true),
         Effect.orElseSucceed(() => false),
       );
+      const keyRevoked = row.ssh_target === null ? null : yield* sshKey.revoke(row.ssh_target);
       yield* Effect.gen(function* () {
         yield* sql`DELETE FROM cluster_members WHERE environment_id = ${memberId}`.pipe(
           Effect.mapError(storageError),
@@ -742,7 +752,7 @@ const make = Effect.gen(function* () {
         yield* forgetSecret(row.secret_name);
         if (row.ssh_target !== null) yield* upstream.closeSsh(row.ssh_target);
       }).pipe(Effect.ensuring(reload.pipe(Effect.ignore)));
-      return { removed: true, memberNotified };
+      return { removed: true, memberNotified, keyRevoked };
     },
     (effect) => hostLock.withPermits(1)(effect),
   );
@@ -1096,6 +1106,7 @@ const make = Effect.gen(function* () {
     addMember,
     removeMember,
     renameMember,
+    sshKeys: sshKey.list,
     connect,
     awaitGone,
     start,

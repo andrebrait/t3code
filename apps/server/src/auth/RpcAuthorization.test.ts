@@ -92,6 +92,7 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.clusterRemoveMember,
       WS_METHODS.clusterRenameMember,
       WS_METHODS.clusterLeave,
+      WS_METHODS.clusterSshKeys,
     ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthAccessWriteScope);
     }

@@ -52,6 +52,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import { pumpFrames } from "../device/DeviceHubProxy.ts";
 import * as ServerTls from "../tls/ServerTls.ts";
 import * as ClusterService from "./ClusterService.ts";
+import * as ClusterSshKey from "./ClusterSshKey.ts";
 import * as ClusterUpstream from "./ClusterUpstream.ts";
 import * as ClusterHttp from "./http.ts";
 
@@ -68,13 +69,22 @@ const unusedSsh = SshTunnel.SshEnvironmentManager.of({
   closeAllTunnels: Effect.void,
 });
 
+const unusedSshKey = ClusterSshKey.ClusterSshKey.of({
+  identityFile: Effect.die("this test reaches members over http"),
+  authorize: () => Effect.die("this test reaches members over http"),
+  revoke: () => Effect.die("this test reaches members over http"),
+  list: Effect.succeed([]),
+});
+
 /** One environment with its own database, as a member or a main host. */
 const layerClusterEnvironment = (
   descriptor: ExecutionEnvironmentDescriptor,
   ssh: SshTunnel.SshEnvironmentManager["Service"],
+  sshKey: ClusterSshKey.ClusterSshKey["Service"],
 ) =>
   ClusterService.layer.pipe(
     Layer.provideMerge(ClusterUpstream.layer),
+    Layer.provideMerge(Layer.succeed(ClusterSshKey.ClusterSshKey, sshKey)),
     Layer.provide(Layer.succeed(SshTunnel.SshEnvironmentManager, ssh)),
     Layer.provide(SshAuth.SshPasswordPrompt.disabledLayer),
     Layer.provide(NetService.layer),
@@ -97,7 +107,7 @@ const layerClusterEnvironment = (
       }),
     ),
     Layer.provide(ServerEnvironment.layerIdentity),
-    Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-cluster-" })),
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-cluster-" })),
     Layer.provideMerge(FetchHttpClient.layer),
     Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     Layer.fresh,
@@ -106,8 +116,9 @@ const layerClusterEnvironment = (
 export const makeEnvironment = (
   descriptor: ExecutionEnvironmentDescriptor,
   ssh: SshTunnel.SshEnvironmentManager["Service"] = unusedSsh,
+  sshKey: ClusterSshKey.ClusterSshKey["Service"] = unusedSshKey,
 ) =>
-  layerClusterEnvironment(descriptor, ssh).pipe(
+  layerClusterEnvironment(descriptor, ssh, sshKey).pipe(
     Layer.build,
     Effect.map((context) => ({
       context,
@@ -115,6 +126,7 @@ export const makeEnvironment = (
       auth: Context.get(context, EnvironmentAuth.EnvironmentAuth),
       settings: Context.get(context, ServerSettings.ServerSettingsService),
       sql: Context.get(context, SqlClient.SqlClient),
+      secretsDir: Context.get(context, ServerConfig.ServerConfig).secretsDir,
     })),
   );
 

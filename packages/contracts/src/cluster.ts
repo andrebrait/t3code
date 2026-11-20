@@ -65,10 +65,24 @@ export const ClusterInvite = Schema.Struct({
 });
 export type ClusterInvite = typeof ClusterInvite.Type;
 
+/** How the main host signs in to an ssh member once, to install its cluster key. Never stored. */
+export const ClusterSshLogin = Schema.Union([
+  Schema.TaggedStruct("config", {}),
+  Schema.TaggedStruct("password", { password: Schema.RedactedFromValue(Schema.String) }),
+  Schema.TaggedStruct("keyFile", {
+    /** A private key on the main host. */
+    path: TrimmedNonEmptyString,
+    passphrase: Schema.optionalKey(Schema.RedactedFromValue(Schema.String)),
+  }),
+]);
+export type ClusterSshLogin = typeof ClusterSshLogin.Type;
+
 export const ClusterAddMemberInput = Schema.Struct({
   /** A join string from the member, or an ssh target (`user@host`, `ssh://user@host:port`). */
   target: TrimmedNonEmptyString,
   label: Schema.optionalKey(TrimmedNonEmptyString),
+  /** For an ssh target; ssh config and agent when absent. */
+  login: Schema.optionalKey(ClusterSshLogin),
 });
 export type ClusterAddMemberInput = typeof ClusterAddMemberInput.Type;
 
@@ -85,8 +99,18 @@ export const ClusterRemoveMemberResult = Schema.Struct({
   removed: Schema.Boolean,
   /** False when the member could not be told; `t3 cluster leave` there finishes it. */
   memberNotified: Schema.Boolean,
+  /** Whether this host's cluster key left an ssh member; null when none was installed. */
+  keyRevoked: Schema.NullOr(Schema.Boolean),
 });
 export type ClusterRemoveMemberResult = typeof ClusterRemoveMemberResult.Type;
+
+/** A private key in the main host's `~/.ssh`; its contents never leave the machine. */
+export const ClusterSshKeyFile = Schema.Struct({
+  path: Schema.String,
+  name: Schema.String,
+  encrypted: Schema.Boolean,
+});
+export type ClusterSshKeyFile = typeof ClusterSshKeyFile.Type;
 
 export const ClusterLeaveResult = Schema.Struct({ left: Schema.Boolean });
 export type ClusterLeaveResult = typeof ClusterLeaveResult.Type;

@@ -11,6 +11,8 @@ import type { ReactNode } from "react";
 
 import { type LinkedThreadSurface, linkedThreadTitle } from "../../linkedThreadSurface";
 import { useEnvironment } from "../../state/environments";
+import { useOpenSurfaceInMainView } from "../../hooks/useOpenSurfaceInMainView";
+import { cn } from "../../lib/utils";
 import { useConnectLinkedEnvironment, useLinkedThreadSession } from "../../state/linkedThreadView";
 import ChatMarkdown from "../ChatMarkdown";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
@@ -22,8 +24,12 @@ import {
   ReadOnlyComposerLead,
   ReadOnlyComposerStatus,
 } from "./ReadOnlyComposerBar";
+import { SideThreadPaneHeader } from "./SideThreadPane";
 import { Spinner } from "../ui/spinner";
 import { toastManager } from "../ui/toast";
+
+/** The main screen keeps the transcript and the bar to the chat's reading width. */
+const PAGE_COLUMN_CLASS = "mx-auto w-full max-w-(--chat-content-max-width)";
 
 function TruncatedNote() {
   return (
@@ -81,11 +87,12 @@ function LinkedThreadComposer(props: {
   readonly working: boolean;
   readonly action?: ReactNode;
   readonly notice?: ComposerBannerStackItem | null;
+  readonly page: boolean;
 }) {
   const { label, via } = props;
   const gt = useGT();
   return (
-    <div className="flex shrink-0 flex-col gap-1 px-3 pb-3">
+    <div className={cn("flex shrink-0 flex-col gap-1 px-3 pb-3", props.page && PAGE_COLUMN_CLASS)}>
       {props.notice ? <ComposerBannerStack items={[props.notice]} detached /> : null}
       <ComposerSurface.Shell>
         <ComposerSurface.Host>
@@ -111,15 +118,19 @@ function LinkedThreadComposer(props: {
 }
 
 /**
- * A linked environment's thread, read through the environment this client is connected to. The
- * client never connects to the linked one, so the view only reads. Key it by its surface id.
+ * A linked environment's thread, read through the environment this client is connected to: its
+ * transcript over the read-only bar. The client never connects to the linked one, so the view only
+ * reads, and shows less than a thread of a connected environment: text, and each step's summary
+ * and output, without diffs, approvals, attachments or anything to act on.
  */
-export function LinkedThreadPane(props: {
-  /** The thread whose panel shows the tab. */
-  readonly panelRef: ScopedThreadRef;
+export function LinkedThread(props: {
+  /** The thread whose panel shows it as a tab, or null on the main screen. */
+  readonly panelRef: ScopedThreadRef | null;
   readonly surface: LinkedThreadSurface;
-  /** Whether the tab is showing; reads wait while it is not. */
+  /** Whether it is showing; reads wait while it is not. */
   readonly visible: boolean;
+  /** What sits above the transcript, given the title once a read or the surface names it. */
+  readonly renderHeader: (title: string) => ReactNode;
 }) {
   const { surface, panelRef } = props;
   const gt = useGT();
@@ -185,17 +196,18 @@ export function LinkedThreadPane(props: {
       </Button>
     </AlertAction>
   ) : null;
+  const page = panelRef === null;
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <h2 className="shrink-0 truncate border-b border-border px-3 py-2 text-sm font-medium">
-        {linkedThreadTitle(
+      {props.renderHeader(
+        linkedThreadTitle(
           { title: transcript?.thread.title || surface.title },
           gt("Thread on {label}", { label }),
-        )}
-      </h2>
+        ),
+      )}
       {/* Reversed, so the view opens at the newest item and stays there as items arrive. */}
       <div className="flex min-h-0 flex-1 flex-col-reverse overflow-y-auto p-3">
-        <div className="flex flex-col gap-3">
+        <div className={cn("flex flex-col gap-3", page && PAGE_COLUMN_CLASS)}>
           {transcript === null ? (
             failure === null ? (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -253,6 +265,7 @@ export function LinkedThreadPane(props: {
         via={via}
         working={transcript !== null && isLinkedThreadWorking(transcript)}
         notice={connectNotice}
+        page={page}
         action={
           <Button size="sm" variant="outline" disabled={connecting} onClick={() => void connect()}>
             <PlugIcon aria-hidden />
@@ -263,5 +276,32 @@ export function LinkedThreadPane(props: {
         }
       />
     </div>
+  );
+}
+
+/** A linked environment's thread as a right panel tab. Key it by its surface id. */
+export function LinkedThreadPane(props: {
+  /** The thread whose panel shows the tab. */
+  readonly panelRef: ScopedThreadRef;
+  readonly surface: LinkedThreadSurface;
+  readonly visible: boolean;
+  readonly onClose: () => void;
+}) {
+  const { panelRef, surface } = props;
+  const openInMainView = useOpenSurfaceInMainView(panelRef);
+  return (
+    <LinkedThread
+      panelRef={panelRef}
+      surface={surface}
+      visible={props.visible}
+      renderHeader={(title) => (
+        <SideThreadPaneHeader
+          title={title}
+          kind="linked"
+          onOpenInMainView={() => openInMainView(surface)}
+          onClose={props.onClose}
+        />
+      )}
+    />
   );
 }

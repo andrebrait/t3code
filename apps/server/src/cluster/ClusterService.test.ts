@@ -392,7 +392,15 @@ it.effect(
         const before = yield* main.cluster.connect(box.environmentId);
 
         const moved = yield* member.serveAgain;
-        expect(yield* addAt(moved)).toMatchObject({ address: moved });
+        expect(
+          yield* member.cluster
+            .invite({ url: moved })
+            .pipe(
+              Effect.flatMap((invite) =>
+                main.cluster.addMember({ target: invite.joinString ?? "", label: "Moved box" }),
+              ),
+            ),
+        ).toMatchObject({ address: moved, label: "Moved box" });
         const after = yield* main.cluster.connect(box.environmentId);
         expect(after.upstream.origin).toBe(moved);
         expect(after.token).not.toBe(before.token);
@@ -462,9 +470,11 @@ it.effect(
                   })),
                 );
           },
-          disconnectEnvironment: () => Effect.void,
+          disconnectEnvironment: (target) =>
+            Effect.sync(() => void disconnected.push(`${target.username}@${target.hostname}`)),
           closeAllTunnels: Effect.void,
         });
+        const disconnected: Array<string> = [];
         const authorized: Array<readonly [string, ClusterSshLogin]> = [];
         let failRevokeOfBox2 = false;
         const revoked: Array<string> = [];
@@ -541,6 +551,7 @@ it.effect(
           address: "me@box2",
         });
         expect(revoked).toEqual(["nokey@other", "self@studio", "me@box:2222"]);
+        expect(disconnected).toEqual(["me@box"]);
 
         // An unknown host key stops the add before any login, until the user approves that key.
         expect(

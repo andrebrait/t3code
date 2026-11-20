@@ -721,6 +721,7 @@ const make = Effect.gen(function* () {
               ${secretName}, 'offline', ${now}, ${now}, NULL
             )
             ON CONFLICT (environment_id) DO UPDATE SET
+              label = COALESCE(${input.label ?? null}, cluster_members.label),
               transport = excluded.transport, url = excluded.url, ssh_target = excluded.ssh_target,
               cert_sha256 = excluded.cert_sha256, secret_name = excluded.secret_name,
               status = 'offline', last_reached_at = excluded.last_reached_at, last_error = NULL
@@ -737,6 +738,7 @@ const make = Effect.gen(function* () {
         // The member moved, so its old address no longer needs to accept this host.
         if (previous?.ssh_target != null && previous.ssh_target !== newSshTarget) {
           yield* sshKey.revoke(previous.ssh_target);
+          yield* upstream.closeSsh(previous.ssh_target);
         }
         // A main host reaches other environments through its members, not its own peer links.
         if (wasStandalone) yield* peerLinks.unlinkAll.pipe(Effect.mapError(storageError));

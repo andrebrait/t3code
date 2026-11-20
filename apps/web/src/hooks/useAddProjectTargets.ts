@@ -24,7 +24,7 @@ export function useAddProjectTargets(
   if (!project?.repositoryIdentity?.locator.remoteUrl) return [];
   const hasProject = new Set([
     project.environmentId,
-    // A cluster machine that clones on pick keeps the dialog, which chooses the folder and files.
+    // A machine the picker offers to clone onto stays here: this dialog chooses the folder and files.
     ...(projectEnvironments ?? []).flatMap((env) => (env.projectId ? [env.environmentId] : [])),
   ]);
   return environments

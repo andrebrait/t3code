@@ -2,6 +2,7 @@ import {
   ClusterError,
   normalizeCertificateFingerprint,
   parseClusterSshTarget,
+  SHA256_HEX,
 } from "@t3tools/contracts";
 import { isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
 import type * as NetService from "@t3tools/shared/Net";
@@ -38,9 +39,7 @@ export class ClusterUpstream extends Context.Service<
       options?: { readonly refresh?: boolean },
     ) => Effect.Effect<Upstream, ClusterError>;
     /** Starts or reuses T3 on the member over ssh and mints a cluster join code there. */
-    readonly createJoinCodeOverSsh: (
-      sshTarget: string,
-    ) => Effect.Effect<{ readonly origin: string; readonly code: string }, ClusterError>;
+    readonly createJoinCodeOverSsh: (sshTarget: string) => Effect.Effect<string, ClusterError>;
     /** Closes the ssh tunnel to a removed member; its server keeps running. */
     readonly closeSsh: (sshTarget: string) => Effect.Effect<void>;
   }
@@ -123,7 +122,7 @@ const make = Effect.gen(function* () {
       }
       const pin =
         target.certSha256 === null ? null : normalizeCertificateFingerprint(target.certSha256);
-      if (url.protocol !== "https:" || (pin !== null && !/^[0-9a-f]{64}$/.test(pin))) {
+      if (url.protocol !== "https:" || (pin !== null && !SHA256_HEX.test(pin))) {
         return yield* new ClusterError({
           reason: "invalid_target",
           message: `${url.origin} is not an https address with a valid certificate pin. Add the member again with a new join code.`,
@@ -144,7 +143,9 @@ const make = Effect.gen(function* () {
         message: `${sshTarget} started T3 Code but did not mint a cluster join code.`,
       });
     }
-    return { origin: new URL(bootstrap.httpBaseUrl).origin, code: bootstrap.pairingToken };
+    // The following connect reuses this start instead of running ssh again.
+    sshOrigins.set(sshTarget, new URL(bootstrap.httpBaseUrl).origin);
+    return bootstrap.pairingToken;
   });
 
   const closeSsh: ClusterUpstream["Service"]["closeSsh"] = (sshTarget) => {

@@ -16,6 +16,7 @@ const hostKey = {
 it("tells a script which flags trust the host key it was shown", () => {
   const unknown = hostKeyHint(
     new ClusterError({ reason: "host_key_unknown", message: "Unknown.", hostKey }),
+    hostKey,
   );
   assert.equal(unknown.reason, "host_key_unknown");
   assert.include(unknown.message, "Unknown.");
@@ -23,6 +24,7 @@ it("tells a script which flags trust the host key it was shown", () => {
   assert.notInclude(unknown.message, "--replace-host-key");
   const changed = hostKeyHint(
     new ClusterError({ reason: "host_key_changed", message: "Changed.", hostKey }),
+    hostKey,
   );
   assert.include(changed.message, "--trust-host-key SHA256:abc --replace-host-key");
 });

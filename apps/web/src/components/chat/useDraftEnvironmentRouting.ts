@@ -164,13 +164,12 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       }) ?? Promise.resolve(window.confirm(question));
     if (!(await confirmed)) return null;
     try {
-      const projectId = await cloneProjectToClusterMachine({
+      return await cloneProjectToClusterMachine({
         project: source,
         target: { environmentId: target.environmentId, label: target.label },
         remoteUrl: target.cloneRemoteUrl,
         destinationPath,
       });
-      return scopeProjectRef(target.environmentId, projectId);
     } catch (cause) {
       toastManager.add(
         stackedThreadToast({
@@ -422,7 +421,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       const project =
         knownProject ??
         (cloneRemoteUrl
-          ? (await startClusterClone(originalDraft, { ...target, cloneRemoteUrl }))?.projectId
+          ? await startClusterClone(originalDraft, { ...target, cloneRemoteUrl })
           : await openScratchProject(target.environmentId, m(msg("Could not switch machine"))));
       if (project) retarget(project, triagePrompt);
     };

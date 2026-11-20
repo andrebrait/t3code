@@ -1,6 +1,7 @@
 import {
   AuthAccessWriteScope,
   ClusterError,
+  type ClusterHostKey,
   type ClusterMember,
   type ClusterSshLogin,
   formatClusterJoinUrl,
@@ -250,22 +251,27 @@ const sshLogin = (flags: {
     : Effect.succeed({ _tag: "keyFile", path });
 };
 
-const isHostKeyError = (error: ClusterError) =>
+const isHostKeyError = (
+  error: ClusterError,
+): error is ClusterError & { readonly hostKey: ClusterHostKey } =>
   error.hostKey !== undefined &&
   (error.reason === "host_key_unknown" || error.reason === "host_key_changed");
 
 /** The host key error a script sees, naming the flags that trust exactly that key. */
-export const hostKeyHint = (error: ClusterError) =>
+export const hostKeyHint = (error: ClusterError, hostKey: ClusterHostKey) =>
   new ClusterError({
     reason: error.reason,
-    message: `${error.message}\nIf that fingerprint is right, run the command again with --trust-host-key ${error.hostKey?.fingerprint ?? ""}${
+    message: `${error.message}\nIf that fingerprint is right, run the command again with --trust-host-key ${hostKey.fingerprint}${
       error.reason === "host_key_changed" ? " --replace-host-key" : ""
     }.`,
-    ...(error.hostKey === undefined ? {} : { hostKey: error.hostKey }),
+    hostKey,
   });
 
 /** Asks in the terminal, as ssh does; a changed key needs `replace` typed out. */
-const askHostKey = Effect.fn("cluster.askHostKey")(function* (error: ClusterError) {
+const askHostKey = Effect.fn("cluster.askHostKey")(function* (
+  error: ClusterError,
+  hostKey: ClusterHostKey,
+) {
   const replace = error.reason === "host_key_changed";
   yield* Console.log(error.message);
   const approved = replace
@@ -279,7 +285,7 @@ const askHostKey = Effect.fn("cluster.askHostKey")(function* (error: ClusterErro
         Effect.orElseSucceed(() => false),
       );
   if (!approved) return yield* error;
-  return { fingerprint: error.hostKey?.fingerprint ?? "", replace };
+  return { fingerprint: hostKey.fingerprint, replace };
 });
 
 const addCommand = Command.make("add", {
@@ -352,12 +358,12 @@ const addCommand = Command.make("add", {
                 .pipe(
                   Effect.catchIf(isHostKeyError, (error) =>
                     interactive
-                      ? askHostKey(error).pipe(
+                      ? askHostKey(error, error.hostKey).pipe(
                           Effect.flatMap((trustHostKey) =>
                             cluster.addMember({ ...input, trustHostKey }),
                           ),
                         )
-                      : Effect.fail(hostKeyHint(error)),
+                      : Effect.fail(hostKeyHint(error, error.hostKey)),
                   ),
                 );
           return added.pipe(

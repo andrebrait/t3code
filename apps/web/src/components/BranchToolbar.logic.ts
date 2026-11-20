@@ -21,7 +21,7 @@ export interface EnvironmentOption {
   label: string;
   isPrimary: boolean;
   machine: EnvironmentMachineKind;
-  /** A cluster machine without the project, which clones it from this remote when picked. */
+  /** A cluster machine without the project, which offers to clone it from this remote when picked. */
   cloneRemoteUrl?: string;
 }
 

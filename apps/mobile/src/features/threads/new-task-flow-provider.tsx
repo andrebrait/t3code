@@ -200,7 +200,7 @@ type NewTaskFlowContextValue = {
   readonly environments: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
     readonly environmentLabel: string;
-    /** A cluster machine without the project, which clones it from this remote when picked. */
+    /** A cluster machine without the project, which offers to clone it from this remote when picked. */
     readonly cloneRemoteUrl?: string;
   }>;
   readonly selectedProject: EnvironmentProject | null;

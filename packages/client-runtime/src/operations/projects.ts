@@ -309,10 +309,10 @@ export function projectCloneRemoteUrl(
 /**
  * Cluster machines that can clone a project living on `projectEnvironmentId`: the online
  * members of that machine's cluster, plus its main host when the project lives on a member.
- * Machines in `hasProject` are left out, and a project without a remote gets none.
+ * Machines in `hasProject` are left out. Callers check the project has a remote to clone.
  */
 export function clusterCloneEnvironmentIds(input: {
-  readonly project: Pick<EnvironmentProject, "environmentId" | "repositoryIdentity">;
+  readonly project: Pick<EnvironmentProject, "environmentId">;
   readonly environments: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
     readonly entry: Pick<ConnectionCatalogEntry, "enabled" | "target">;
@@ -320,7 +320,6 @@ export function clusterCloneEnvironmentIds(input: {
   }>;
   readonly hasProject: ReadonlySet<EnvironmentId>;
 }): EnvironmentId[] {
-  if (projectCloneRemoteUrl(input.project) === null) return [];
   const projectTarget = input.environments.find(
     (environment) => environment.environmentId === input.project.environmentId,
   )?.entry.target;

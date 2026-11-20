@@ -172,7 +172,7 @@ export class ClusterError extends Schema.TaggedError<ClusterError>()(
   { httpApiStatus: 409 },
 ) {}
 
-const SHA256_HEX = /^[0-9a-f]{64}$/;
+export const SHA256_HEX = /^[0-9a-f]{64}$/;
 const JOIN_CODE = new RegExp(`^[${PAIRING_CODE_ALPHABET}]{${PAIRING_CODE_LENGTH}}$`);
 
 export const normalizeCertificateFingerprint = (value: string) =>

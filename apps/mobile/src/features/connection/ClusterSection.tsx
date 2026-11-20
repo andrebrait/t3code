@@ -431,7 +431,7 @@ function JoinSheet(props: { readonly environmentId: EnvironmentId; readonly onCl
     setBusy(true);
     const result = await createJoinCode({
       environmentId: props.environmentId,
-      input: url.trim() ? { url: url.trim() } : {},
+      input: { url: url.trim() },
     });
     setBusy(false);
     alertFailure(gt("Could not create the join code"), result, m);
@@ -445,13 +445,15 @@ function JoinSheet(props: { readonly environmentId: EnvironmentId; readonly onCl
             "Joining signs out this machine's other clients and ends its linked environments. Afterwards it is reached through the main host.",
           )}
         </Text>
-        {created?.joinUrl ? (
+        {created ? (
           <>
-            <CopyField
-              label={gt("Join URL")}
-              copyLabel={gt("Copy join URL")}
-              value={created.joinUrl}
-            />
+            {created.joinUrl === null ? null : (
+              <CopyField
+                label={gt("Join URL")}
+                copyLabel={gt("Copy join URL")}
+                value={created.joinUrl}
+              />
+            )}
             <CopyField
               label={gt("Join code")}
               copyLabel={gt("Copy join code")}

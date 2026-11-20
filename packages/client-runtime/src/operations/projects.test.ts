@@ -295,9 +295,9 @@ describe("cluster clone targets", () => {
     member("has-project"),
     member("other-cluster", { hostEnvironmentId: EnvironmentId.make("other-host") }),
   ];
-  const targets = (projectEnvironmentId: EnvironmentId, repositoryIdentity = identity) =>
+  const targets = (projectEnvironmentId: EnvironmentId) =>
     clusterCloneEnvironmentIds({
-      project: { environmentId: projectEnvironmentId, repositoryIdentity },
+      project: { environmentId: projectEnvironmentId },
       environments,
       hasProject: new Set([EnvironmentId.make("has-project")]),
     });
@@ -311,17 +311,13 @@ describe("cluster clone targets", () => {
     expect(targets(EnvironmentId.make("has-project"))).toEqual(["host", "box"]);
   });
 
-  it("offers nothing for a project without a remote it can group by", () => {
+  it("has no clone remote for a project without a remote it can group by", () => {
+    expect(projectCloneRemoteUrl({ repositoryIdentity: null })).toBeNull();
     expect(
-      clusterCloneEnvironmentIds({
-        project: { environmentId: HOST, repositoryIdentity: null },
-        environments,
-        hasProject: new Set(),
+      projectCloneRemoteUrl({
+        repositoryIdentity: { ...identity, origin: { canonicalKey: "github.com/julius/t3code" } },
       }),
-    ).toEqual([]);
-    expect(
-      targets(HOST, { ...identity, origin: { canonicalKey: "github.com/julius/t3code" } }),
-    ).toEqual([]);
+    ).toBeNull();
   });
 
   it("clones from the origin remote that the project groups by", () => {

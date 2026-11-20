@@ -646,7 +646,8 @@ const make = Effect.gen(function* () {
       yield* role.refuseIfMember("Adding a cluster member");
       const self = yield* environment.getDescriptor;
       const join = parseClusterJoinUrl(input.target);
-      const sshTarget = join === undefined ? parseClusterSshTarget(input.target) : undefined;
+      const parsedSsh = join === undefined ? parseClusterSshTarget(input.target) : undefined;
+      const sshTarget = parsedSsh === undefined ? undefined : formatClusterSshTarget(parsedSsh);
       let keyInstalled = false;
       let rowWritten = false;
       // Set once the member's join answer arrives; a lost answer leaves no token to undo it with.
@@ -660,20 +661,13 @@ const make = Effect.gen(function* () {
             }
           : sshTarget !== undefined
             ? {
-                target: { transport: "ssh", sshTarget: formatClusterSshTarget(sshTarget) } as const,
+                target: { transport: "ssh", sshTarget } as const,
                 // Even with the user's own ssh setup, so reconnects never depend on their agent.
                 code: sshKey
-                  .authorize(
-                    formatClusterSshTarget(sshTarget),
-                    input.login ?? { _tag: "config" },
-                    input.trustHostKey,
-                  )
+                  .authorize(sshTarget, input.login ?? { _tag: "config" }, input.trustHostKey)
                   .pipe(
                     Effect.tap(() => Effect.sync(() => (keyInstalled = true))),
-                    Effect.andThen(
-                      upstream.createJoinCodeOverSsh(formatClusterSshTarget(sshTarget)),
-                    ),
-                    Effect.map((invited) => invited.code),
+                    Effect.andThen(upstream.createJoinCodeOverSsh(sshTarget)),
                   ),
               }
             : undefined;

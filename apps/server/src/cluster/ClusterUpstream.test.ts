@@ -73,13 +73,13 @@ it.effect(
     Effect.gen(function* () {
       const ensured = yield* Ref.make(0);
       const ssh = SshTunnel.SshEnvironmentManager.of({
-        ensureEnvironment: (target) =>
+        ensureEnvironment: (target, options) =>
           Ref.updateAndGet(ensured, (count) => count + 1).pipe(
             Effect.map((count) => ({
               target,
               httpBaseUrl: `http://127.0.0.1:${4000 + count}/`,
               wsBaseUrl: `ws://127.0.0.1:${4000 + count}/`,
-              pairingToken: null,
+              pairingToken: options?.issuePairingToken === true ? "K7M2Q9RZ3NWD" : null,
             })),
           ),
         disconnectEnvironment: () => Effect.void,
@@ -94,6 +94,7 @@ it.effect(
         ),
       );
       const target = { transport: "ssh", sshTarget: "me@box" } as const;
+      assert.equal(yield* upstream.createJoinCodeOverSsh("me@box"), "K7M2Q9RZ3NWD");
       for (let request = 0; request < 3; request++) {
         assert.equal((yield* upstream.connect(target)).origin, "http://127.0.0.1:4001");
       }

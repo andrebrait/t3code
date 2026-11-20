@@ -138,17 +138,14 @@ export const watchClusterMembers = Effect.fn("connection.watchClusterMembers")(f
                 Stream.changesWith(
                   (previous, next) => Option.getOrNull(previous) === Option.getOrNull(next),
                 ),
-                Stream.tap((prepared) =>
-                  publishHost(hostEnvironmentId, ClusterHosts.clusterHostConnection(prepared)),
-                ),
+                Stream.map((prepared) => ({
+                  prepared,
+                  host: ClusterHosts.clusterHostConnection(prepared),
+                })),
+                Stream.tap(({ host }) => publishHost(hostEnvironmentId, host)),
                 // A disconnected host keeps its subscription; it resumes with the next session.
-                Stream.filter(Option.isSome),
-                Stream.map((prepared) =>
-                  Option.map(
-                    ClusterHosts.clusterHostConnection(prepared),
-                    (host) => host.target.label,
-                  ),
-                ),
+                Stream.filter(({ prepared }) => Option.isSome(prepared)),
+                Stream.map(({ host }) => Option.map(host, (connection) => connection.target.label)),
                 Stream.changesWith(
                   (previous, next) => Option.getOrNull(previous) === Option.getOrNull(next),
                 ),

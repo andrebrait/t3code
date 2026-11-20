@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
+  clusterActions,
   clusterAddTarget,
   clusterMemberStatusText,
   defaultClusterInviteUrl,
@@ -10,9 +11,9 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { ClusterInvite, ClusterMember, EnvironmentId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import { PlusIcon } from "lucide-react";
+import { ChevronRightIcon, LinkIcon, PlusIcon } from "lucide-react";
 import { T, useGT, useMessages, Var } from "gt-react";
-import { useId, useState } from "react";
+import { type ComponentProps, type ReactNode, useId, useState } from "react";
 
 import { requestConfirmDialog } from "~/confirmDialog";
 import { cn } from "~/lib/utils";
@@ -39,7 +40,7 @@ import {
 } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { toastManager } from "../ui/toast";
-import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "./itemRows";
+import { ITEM_ROW_CLASSNAME } from "./itemRows";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { useSearchableSetting } from "./settingsSearch";
 
@@ -75,18 +76,17 @@ export function ClusterSettings({
     clusterEnvironment.status({ environmentId, input: {} }),
     useMessages(),
   );
-  const canAdd = useAtomValue(clusterEnvironment.addMember.permissionAtom(environmentId));
   const role = status.data?.role ?? null;
+  const actions = clusterActions(role ?? "standalone", {
+    enabled,
+    canAdd: useAtomValue(clusterEnvironment.addMember.permissionAtom(environmentId)),
+    canInvite: useAtomValue(clusterEnvironment.invite.permissionAtom(environmentId)),
+  });
   if (!enabled && role !== "main" && role !== "member") return null;
   return (
     <SettingsSection
       {...(isSearchTarget ? { id: search.id } : {})}
       title={showLabel ? `${search.title} · ${label}` : search.title}
-      headerAction={
-        enabled && canAdd && (role === "standalone" || role === "main") ? (
-          <AddMemberAction environmentId={environmentId} />
-        ) : null
-      }
     >
       {status.error ? (
         <SettingsRow title={gt("Could not load the cluster")} description={status.error} />
@@ -96,11 +96,19 @@ export function ClusterSettings({
         <MemberOfRow environmentId={environmentId} hostLabel={status.data.host?.label ?? ""} />
       ) : (
         <>
-          {enabled ? (
-            <InviteRow environmentId={environmentId} fingerprint={status.data.fingerprint} />
-          ) : null}
           {status.data.role === "main" ? (
             <ClusterMemberList environmentId={environmentId} hostLabel={label} />
+          ) : null}
+          {actions.join ? <JoinAction environmentId={environmentId} /> : null}
+          {actions.add ? (
+            <AddMemberAction
+              environmentId={environmentId}
+              description={
+                status.data.role === "standalone"
+                  ? gt("Makes this machine the main host of a new cluster.")
+                  : null
+              }
+            />
           ) : null}
         </>
       )}
@@ -131,7 +139,7 @@ function ClusterMemberList({
       <SettingsRow
         title={gt("No members yet")}
         description={gt(
-          "Invite a machine from its own Settings → Environments → Cluster, then add its join string here.",
+          "On the other machine, choose Join a cluster… in Settings → Environments → Cluster, then add its join string here.",
         )}
       />
     );
@@ -144,6 +152,40 @@ function ClusterMemberList({
       member={member}
     />
   ));
+}
+
+/** A settings row that opens a dialog, so adding or joining never reads as editing a member. */
+function DialogRowTrigger({
+  icon,
+  title,
+  description,
+  dimmed = false,
+  ...props
+}: Omit<ComponentProps<"button">, "title"> & {
+  readonly icon: ReactNode;
+  readonly title: ReactNode;
+  readonly description?: ReactNode;
+  readonly dimmed?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      {...props}
+      className={cn(
+        ITEM_ROW_CLASSNAME,
+        "flex w-full min-w-0 cursor-pointer items-center gap-3 text-left outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+      )}
+    >
+      <div className={cn("min-w-0 flex-1 space-y-1", dimmed && "opacity-60")}>
+        <div className="flex min-h-5 items-center gap-1.5">
+          {icon}
+          <h3 className="text-sm font-medium text-foreground">{title}</h3>
+        </div>
+        {description}
+      </div>
+      <ChevronRightIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+    </button>
+  );
 }
 
 function ClusterMemberRow({
@@ -162,7 +204,14 @@ function ClusterMemberRow({
   const removeMember = useAtomCommand(clusterEnvironment.removeMember, {
     label: "remove cluster member",
   });
+  const rename = useAtomCommand(clusterEnvironment.renameMember, {
+    label: "rename cluster member",
+  });
+  const [open, setOpen] = useState(false);
+  const [label, setLabel] = useState(member.label);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const formId = useId();
   const statusText = clusterMemberStatusText(member, hostLabel, m);
   const lastSeen =
     member.lastReachedAt === null
@@ -170,6 +219,19 @@ function ClusterMemberRow({
       : gt("Last seen {time}", {
           time: formatRelativeTimeLabel(DateTime.formatIso(member.lastReachedAt), nowMs, m),
         });
+  const summary = `${member.transport === "ssh" ? "SSH" : "HTTPS"} · ${member.address} · ${lastSeen}`;
+  const renamed = label.trim();
+  const submit = async () => {
+    if (busy || renamed.length === 0 || renamed === member.label) return;
+    setBusy(true);
+    const result = await rename({
+      environmentId,
+      input: { memberId: member.environmentId, label: renamed },
+    });
+    setBusy(false);
+    setError(commandFailure(result, m));
+    if (result._tag === "Success") setOpen(false);
+  };
   const remove = async () => {
     const confirmed = await (requestConfirmDialog(
       gt("Remove {label} from the cluster? It becomes a standalone environment again.", {
@@ -184,91 +246,20 @@ function ClusterMemberRow({
       input: { memberId: member.environmentId },
     });
     setBusy(false);
-    const error = commandFailure(result, m);
-    if (error !== null) {
-      toastManager.add({
-        type: "error",
-        title: gt("Could not remove {label}", { label: member.label }),
-        description: error,
-      });
-    } else if (result._tag === "Success" && !result.value.memberNotified) {
+    const failure = commandFailure(result, m);
+    if (failure !== null) {
+      setError(failure);
+      return;
+    }
+    if (result._tag !== "Success") return;
+    setOpen(false);
+    if (!result.value.memberNotified) {
       toastManager.add({
         type: "warning",
         title: gt("Removed {label} here", { label: member.label }),
         description: gt("It did not answer. Run t3 cluster leave on it to finish."),
       });
     }
-  };
-  return (
-    <div className={ITEM_ROW_CLASSNAME}>
-      <div className={ITEM_ROW_INNER_CLASSNAME}>
-        <div className={cn("min-w-0 flex-1 space-y-1", member.status !== "online" && "opacity-60")}>
-          <div className="flex min-h-5 items-center gap-1.5">
-            <ConnectionStatusDot
-              tooltipText={statusText}
-              dotClassName={
-                member.status === "online"
-                  ? "bg-success"
-                  : member.status === "offline"
-                    ? "bg-muted-foreground/30"
-                    : "bg-destructive"
-              }
-              pingClassName={null}
-            />
-            <h3 className="text-sm font-medium text-foreground">{member.label}</h3>
-          </div>
-          <p className="truncate text-xs text-muted-foreground">
-            {member.transport === "ssh" ? "SSH" : "HTTPS"} · {member.address} · {lastSeen}
-          </p>
-          {member.status === "online" ? null : (
-            <p className="text-xs text-muted-foreground">{statusText}</p>
-          )}
-        </div>
-        {canWrite ? (
-          <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
-            <RenameMemberAction environmentId={environmentId} member={member} />
-            <Button
-              size="xs"
-              variant="destructive-outline"
-              disabled={busy}
-              onClick={() => void remove()}
-            >
-              {busy ? gt("Removing…") : gt("Remove")}
-            </Button>
-          </div>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-function RenameMemberAction({
-  environmentId,
-  member,
-}: {
-  readonly environmentId: EnvironmentId;
-  readonly member: ClusterMember;
-}) {
-  const gt = useGT();
-  const m = useMessages();
-  const [open, setOpen] = useState(false);
-  const [label, setLabel] = useState(member.label);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const formId = useId();
-  const rename = useAtomCommand(clusterEnvironment.renameMember, {
-    label: "rename cluster member",
-  });
-  const submit = async () => {
-    if (busy || label.trim().length === 0) return;
-    setBusy(true);
-    const result = await rename({
-      environmentId,
-      input: { memberId: member.environmentId, label: label.trim() },
-    });
-    setBusy(false);
-    setError(commandFailure(result, m));
-    if (result._tag === "Success") setOpen(false);
   };
   return (
     <Dialog
@@ -280,45 +271,108 @@ function RenameMemberAction({
         if (next) setLabel(member.label);
       }}
     >
-      <DialogTrigger render={<Button size="xs" variant="outline" />}>{gt("Rename")}</DialogTrigger>
-      <DialogPopup className="max-w-sm">
+      <DialogTrigger
+        render={
+          <DialogRowTrigger
+            dimmed={member.status !== "online"}
+            icon={
+              <ConnectionStatusDot
+                tooltipText={null}
+                dotClassName={
+                  member.status === "online"
+                    ? "bg-success"
+                    : member.status === "offline"
+                      ? "bg-muted-foreground/30"
+                      : "bg-destructive"
+                }
+                pingClassName={null}
+              />
+            }
+            title={member.label}
+            description={
+              <>
+                <p className="truncate text-xs text-muted-foreground">{summary}</p>
+                {member.status === "online" ? null : (
+                  <p className="text-xs text-muted-foreground">{statusText}</p>
+                )}
+              </>
+            }
+          />
+        }
+      />
+      <DialogPopup className="max-w-md">
         <DialogHeader>
-          <DialogTitle>
-            <T>Rename member</T>
-          </DialogTitle>
+          <DialogTitle>{member.label}</DialogTitle>
+          <DialogDescription>
+            {summary}
+            {member.status === "online" ? null : (
+              <>
+                <br />
+                {statusText}
+              </>
+            )}
+          </DialogDescription>
         </DialogHeader>
         <DialogPanel>
-          <form
-            id={formId}
-            onSubmit={(event) => {
-              event.preventDefault();
-              void submit();
-            }}
-          >
-            <Input
-              value={label}
-              onChange={(event) => setLabel(event.target.value)}
-              disabled={busy}
-              aria-label={gt("Member name")}
-              nativeInput
-            />
-            <FailureText error={error} />
-          </form>
+          {canWrite ? (
+            <form
+              id={formId}
+              onSubmit={(event) => {
+                event.preventDefault();
+                void submit();
+              }}
+            >
+              <label className="block space-y-1.5">
+                <span className="block text-xs font-medium text-foreground">
+                  {gt("Member name")}
+                </span>
+                <Input
+                  value={label}
+                  onChange={(event) => setLabel(event.target.value)}
+                  disabled={busy}
+                  nativeInput
+                />
+              </label>
+            </form>
+          ) : null}
+          <FailureText error={error} />
         </DialogPanel>
         <DialogFooter variant="bare">
+          {canWrite ? (
+            <Button
+              type="button"
+              variant="destructive-outline"
+              disabled={busy}
+              onClick={() => void remove()}
+            >
+              {gt("Remove")}
+            </Button>
+          ) : null}
           <DialogClose disabled={busy} render={<Button variant="outline" type="button" />}>
-            <T>Cancel</T>
+            <T>Close</T>
           </DialogClose>
-          <Button form={formId} type="submit" disabled={busy || label.trim().length === 0}>
-            {busy ? gt("Saving…") : gt("Save")}
-          </Button>
+          {canWrite ? (
+            <Button
+              form={formId}
+              type="submit"
+              disabled={busy || renamed.length === 0 || renamed === member.label}
+            >
+              {busy ? gt("Saving…") : gt("Save")}
+            </Button>
+          ) : null}
         </DialogFooter>
       </DialogPopup>
     </Dialog>
   );
 }
 
-function AddMemberAction({ environmentId }: { readonly environmentId: EnvironmentId }) {
+function AddMemberAction({
+  environmentId,
+  description,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly description: string | null;
+}) {
   const gt = useGT();
   const m = useMessages();
   const [open, setOpen] = useState(false);
@@ -359,10 +413,15 @@ function AddMemberAction({ environmentId }: { readonly environmentId: Environmen
     >
       <DialogTrigger
         render={
-          <Button size="xs" variant="default">
-            <PlusIcon className="size-3" />
-            {gt("Add member")}
-          </Button>
+          <DialogRowTrigger
+            icon={<PlusIcon aria-hidden className="size-3.5 text-muted-foreground" />}
+            title={gt("Add member")}
+            description={
+              description === null ? null : (
+                <p className="text-xs text-muted-foreground">{description}</p>
+              )
+            }
+          />
         }
       />
       <DialogPopup className="max-w-md">
@@ -372,8 +431,8 @@ function AddMemberAction({ environmentId }: { readonly environmentId: Environmen
           </DialogTitle>
           <DialogDescription>
             <T>
-              Paste the join string from the machine's Invite to cluster, or enter user@host to add
-              it over SSH. SSH needs a key or a running ssh-agent on this machine.
+              Paste the join string from the other machine's Join a cluster…, or enter user@host to
+              add it over SSH. SSH needs a key or a running ssh-agent on this machine.
             </T>
           </DialogDescription>
         </DialogHeader>
@@ -428,32 +487,7 @@ function AddMemberAction({ environmentId }: { readonly environmentId: Environmen
   );
 }
 
-function InviteRow({
-  environmentId,
-  fingerprint,
-}: {
-  readonly environmentId: EnvironmentId;
-  readonly fingerprint: string;
-}) {
-  const gt = useGT();
-  const canInvite = useAtomValue(clusterEnvironment.invite.permissionAtom(environmentId));
-  return (
-    <SettingsRow
-      title={gt("Invite to cluster")}
-      description={
-        <T>
-          Lets another machine add this one as a member. Certificate SHA-256:{" "}
-          <code className="break-all">
-            <Var>{fingerprint}</Var>
-          </code>
-        </T>
-      }
-      control={canInvite ? <InviteAction environmentId={environmentId} /> : null}
-    />
-  );
-}
-
-function InviteAction({ environmentId }: { readonly environmentId: EnvironmentId }) {
+function JoinAction({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const gt = useGT();
   const m = useMessages();
   const httpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
@@ -488,13 +522,23 @@ function InviteAction({ environmentId }: { readonly environmentId: EnvironmentId
         if (next) setUrl(defaultClusterInviteUrl(httpBaseUrl));
       }}
     >
-      <DialogTrigger render={<Button size="xs" variant="outline" />}>
-        {gt("Invite to cluster")}
-      </DialogTrigger>
+      <DialogTrigger
+        render={
+          <DialogRowTrigger
+            icon={<LinkIcon aria-hidden className="size-3.5 text-muted-foreground" />}
+            title={gt("Join a cluster…")}
+            description={
+              <p className="text-xs text-muted-foreground">
+                <T>Lets a main host add this machine as a member.</T>
+              </p>
+            }
+          />
+        }
+      />
       <DialogPopup className="max-w-md">
         <DialogHeader>
           <DialogTitle>
-            <T>Invite to cluster</T>
+            <T>Join a cluster</T>
           </DialogTitle>
           <DialogDescription>
             <T>
@@ -555,7 +599,7 @@ function InviteAction({ environmentId }: { readonly environmentId: EnvironmentId
           </DialogClose>
           {created === null ? (
             <Button form={formId} type="submit" disabled={busy}>
-              {busy ? gt("Creating…") : gt("Create invite")}
+              {busy ? gt("Creating…") : gt("Create join string")}
             </Button>
           ) : created.joinString !== null ? (
             <Button

@@ -503,13 +503,13 @@ members through the main host.
 
 Cluster is a beta. Turn on **Cluster** in **Settings → Labs** on the main host;
 with it off there, members cannot be added or reached. A machine you add needs
-it on only to show **Invite to cluster**: `t3 cluster invite` and joining work
+it on only to show **Join a cluster…**: `t3 cluster invite` and joining work
 with it off. **Remove** and **Leave cluster** always work. Manage a cluster in
 **Settings → Environments → Cluster** on web, desktop and mobile.
 
 To add a machine over HTTPS:
 
-1. On that machine, choose **Invite to cluster**, or run
+1. On that machine, choose **Join a cluster…**, or run
    `t3 cluster invite --url https://<address>`. Enter the address the main host
    can reach it at. It shows a join string: the address and a one-time code.
    It also carries the machine's certificate fingerprint.
@@ -531,7 +531,7 @@ key or a running ssh-agent; password prompts are not supported. The mobile app a
 - While the main host is offline, its apps cannot reach the members; work
   already running on a member continues.
 
-To take a machine out, choose **Remove** next to it on the main host, or run
+To take a machine out, select it on the main host and choose **Remove**, or run
 `t3 cluster remove <id>`. On the member, choose **Leave cluster** or run
 `t3 cluster leave`. It becomes a standalone environment again, and you pair
 apps with it as usual.

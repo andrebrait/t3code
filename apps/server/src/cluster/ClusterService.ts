@@ -92,6 +92,12 @@ const fromPairingError = (
       ? new ClusterError({ reason: "disabled", message: cause.message })
       : storageError(cause);
 
+const isMainHost = () =>
+  new ClusterError({
+    reason: "is_main_host",
+    message: "This environment is the main host of a cluster, so it cannot join another.",
+  });
+
 /** Client IPs this machine owns; a session without one was issued here (CLI, desktop). */
 const isLoopbackClient = (ipAddress: string | undefined) =>
   ipAddress === undefined || isLocalLoopbackHost(ipAddress.replace(/^::ffff:/, ""));
@@ -376,10 +382,7 @@ const make = Effect.gen(function* () {
   const invite: ClusterService["Service"]["invite"] = Effect.fn("ClusterService.invite")(
     function* (input) {
       if ((yield* role.current).role === "main") {
-        return yield* new ClusterError({
-          reason: "is_main_host",
-          message: "This environment is the main host of a cluster, so it cannot join another.",
-        });
+        return yield* isMainHost();
       }
       const url = input.url === undefined ? undefined : URL.parse(input.url);
       // Plain http only to this machine, as ClusterUpstream allows.
@@ -480,11 +483,7 @@ const make = Effect.gen(function* () {
             }
             const state = yield* role.current;
             if (state.role === "main") {
-              return yield* new ClusterError({
-                reason: "is_main_host",
-                message:
-                  "This environment is the main host of a cluster, so it cannot join another.",
-              });
+              return yield* isMainHost();
             }
             if (state.role === "member" && state.hostEnvironmentId !== input.host.environmentId) {
               return yield* new ClusterError({
@@ -1080,6 +1079,7 @@ const make = Effect.gen(function* () {
   });
 
   /** The pending call `requestId` names on the open link, for the host's session only. */
+  // Untraced: only hostRequest and hostReply call it, and their spans already cover it.
   const pendingCall = Effect.fnUntraced(function* (
     session: { readonly sessionId: string },
     requestId: string,

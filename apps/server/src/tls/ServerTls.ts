@@ -4,6 +4,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeOS from "node:os";
 import * as NodeTls from "node:tls";
 
+import { normalizeCertificateFingerprint } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -53,7 +54,7 @@ const usableCertificate = (
     if (!certificate.checkPrivateKey(NodeCrypto.createPrivateKey(key))) return Option.none();
     return Option.some({
       secureContext: NodeTls.createSecureContext({ key, cert }),
-      fingerprint: certificate.fingerprint256.replaceAll(":", "").toLowerCase(),
+      fingerprint: normalizeCertificateFingerprint(certificate.fingerprint256),
     });
   } catch {
     return Option.none();

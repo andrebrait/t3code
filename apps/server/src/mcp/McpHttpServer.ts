@@ -357,7 +357,8 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     const linkedEnvironments = yield* linksEnabled;
     if (limited.client?.linked === true && !linkedEnvironments) return linkedEnvironmentsOff;
     // Cluster-host sessions are not peer links (`linked` is false), so they pass.
-    if (limited.client?.linked === true && (yield* clustered)) return clusteredLinksOff;
+    const isClustered = yield* clustered;
+    if (limited.client?.linked === true && isClustered) return clusteredLinksOff;
     const origin = Option.getOrUndefined(Option.map(requestUrl(request), (url) => url.origin));
     const forge =
       limited.thread === undefined
@@ -366,7 +367,7 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     return {
       ...limited,
       linkedEnvironments,
-      clustered: yield* clustered,
+      clustered: isClustered,
       origin,
       ...(forge === undefined ? {} : { forge }),
     };

@@ -400,7 +400,7 @@ const listCommand = Command.make("list", { ...authLocationFlags, json: jsonFlag 
       (cluster) =>
         Effect.gen(function* () {
           const status = yield* cluster.status;
-          const members = Option.getOrElse(yield* Stream.runHead(cluster.members), () => []);
+          const members = yield* cluster.storedMembers;
           yield* Console.log(
             flags.json ? encodeList({ status, members }) : formatList(status, members),
           );

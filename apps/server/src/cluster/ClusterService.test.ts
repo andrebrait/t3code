@@ -316,6 +316,8 @@ it.effect("adds a member with its join string, and neither side nests", () =>
 
       yield* main.settings.updateSettings({ clusterEnabled: false });
       expect(yield* main.cluster.members.pipe(Stream.runHead)).toEqual(Option.some([]));
+      // `t3 cluster list` still shows the ids `t3 cluster remove` takes.
+      expect(yield* main.cluster.storedMembers).toEqual([renamed]);
       expect(yield* main.cluster.addMember({ target: joinString }).pipe(Effect.flip)).toMatchObject(
         { reason: "disabled" },
       );

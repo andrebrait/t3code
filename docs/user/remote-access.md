@@ -112,6 +112,13 @@ If a server is already running, generate a fresh link without restarting it:
 t3 pair
 ```
 
+When devices reach the server at another address, such as a reverse proxy's
+HTTPS name, put that address in the link and QR code:
+
+```bash
+t3 pair --url https://t3.example.com
+```
+
 Scan the QR code on your phone or paste the pairing URL into **Add environment**
 in the receiving app. Connection settings are under **Settings → Environments**
 on web and desktop and **Settings → Environments** on mobile. A loopback address

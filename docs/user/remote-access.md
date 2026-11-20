@@ -525,10 +525,15 @@ choose your SSH config or agent, a password, or a key file on the main host (wit
 its passphrase if it has one). On the command line, pass `--password-stdin`, or
 `--key <path>` with `--passphrase-stdin` for an encrypted key. The main host signs
 in once that way, then adds its own cluster key to `~/.ssh/authorized_keys` on
-the member and reconnects with that key. Nothing you type is saved. The main
-host must already trust the member's host key; if it does not, run
-`ssh user@host` once in a terminal on the main host and check the fingerprint. The
-mobile app adds members by join string only.
+the member and reconnects with that key. Nothing you type is saved. Before
+signing in, the main host checks the member's host key against its
+`~/.ssh/known_hosts`, as ssh does. For a host it has never seen, it shows the key's
+fingerprint and asks whether to trust it; if the key changed since it was
+trusted, it warns you and asks before replacing the old one. Compare the
+fingerprint with the member's own before you accept. On the command line, a
+terminal asks the same; a script passes `--trust-host-key SHA256:…`, plus
+`--replace-host-key` for a changed key. The mobile app adds members by join
+string only.
 
 - Joining signs out the member's other remote clients and ends its linked
   environments. From then on it accepts only its main host and apps on its own

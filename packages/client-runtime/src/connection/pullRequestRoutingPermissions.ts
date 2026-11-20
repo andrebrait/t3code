@@ -81,11 +81,20 @@ function routeConnectionKey(
   }
 }
 
+/** A cluster is one trust domain, so its members follow the main host's permission. */
+export const pullRequestRoutingOwnerId = (entry: ConnectionCatalogEntry) =>
+  entry.target._tag === "ClusterConnectionTarget"
+    ? entry.target.hostEnvironmentId
+    : entry.target.environmentId;
+
 export function pullRequestRoutingPermissionFor(
   entry: ConnectionCatalogEntry,
   permissions: ReadonlyArray<StoredPullRequestRoutingPermission>,
 ): PullRequestRoutingPermission {
-  const key = pullRequestRoutingConnectionKey(entry);
+  const key =
+    entry.target._tag === "ClusterConnectionTarget"
+      ? entry.target.hostConnectionKey
+      : pullRequestRoutingConnectionKey(entry);
   return key === null
     ? "off"
     : (permissions.find((permission) => permission.connectionKey === key)?.permission ?? "off");

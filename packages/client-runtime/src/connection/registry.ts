@@ -907,19 +907,14 @@ export const make = Effect.gen(function* () {
       next.delete(environmentId);
       return next;
     });
-    yield* Effect.all(
-      [
-        cache.clear(environmentId).pipe(
-          Effect.catch((error) =>
-            Effect.logWarning("Could not clear cached data of a former cluster member.", {
-              environmentId,
-              error,
-            }),
-          ),
-        ),
-        ownedDataCleanup.clear(environmentId),
-      ],
-      { concurrency: "unbounded", discard: true },
+    // De-listing can be transient (Labs flag, host offline), so drafts and outboxes stay.
+    yield* cache.clear(environmentId).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Could not clear cached data of a former cluster member.", {
+          environmentId,
+          error,
+        }),
+      ),
     );
   });
 

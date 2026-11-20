@@ -2116,7 +2116,7 @@ describe("EnvironmentRegistry cluster members", () => {
           yield* reconcile([]);
           expect((yield* SubscriptionRef.get(registry.entries)).has(MEMBER_ID)).toBe(false);
           expect(yield* Ref.get(harness.cacheClears)).toContain(MEMBER_ID);
-          expect(yield* Ref.get(harness.ownedDataClears)).toContain(MEMBER_ID);
+          expect(yield* Ref.get(harness.ownedDataClears)).not.toContain(MEMBER_ID);
         }).pipe(Effect.provide(harness.layer), Effect.scoped);
       }),
   );
@@ -2570,6 +2570,8 @@ describe("EnvironmentRegistry cluster members", () => {
         yield* registry.remove(TARGET.environmentId);
         yield* awaitMember(registry, false);
         expect(Option.isNone(yield* hosts.get(TARGET.environmentId))).toBe(true);
+        // Drafts and queued messages written for the member survive until the user removes it.
+        expect(yield* Ref.get(harness.ownedDataClears)).not.toContain(MEMBER_ID);
       }).pipe(Effect.provide(Layer.merge(harness.layer, ClusterHosts.layer)), Effect.scoped);
     }),
   );

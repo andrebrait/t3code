@@ -121,6 +121,8 @@ it("signs in once with only what the user chose", () => {
       interactiveAuth: true,
       preHostArgs: [
         "-o",
+        "StrictHostKeyChecking=yes",
+        "-o",
         "PubkeyAuthentication=no",
         "-o",
         "PreferredAuthentications=keyboard-interactive,password",
@@ -145,7 +147,8 @@ it("signs in once with only what the user chose", () => {
       authSecret: "secret",
       batchMode: "no",
       interactiveAuth: true,
-      preHostArgs: ["-o", "PreferredAuthentications=publickey"],
+      // askpass would answer an unknown host's yes/no prompt with the secret.
+      preHostArgs: ["-o", "StrictHostKeyChecking=yes", "-o", "PreferredAuthentications=publickey"],
     },
   );
 });

@@ -632,6 +632,7 @@ const make = Effect.gen(function* () {
       const self = yield* environment.getDescriptor;
       const join = parseClusterJoinString(input.target);
       const sshTarget = join === undefined ? parseClusterSshTarget(input.target) : undefined;
+      let keyInstalled = false;
       const resolved =
         join !== undefined
           ? {
@@ -645,6 +646,7 @@ const make = Effect.gen(function* () {
                 code: sshKey
                   .authorize(formatClusterSshTarget(sshTarget), input.login ?? { _tag: "config" })
                   .pipe(
+                    Effect.tap(() => Effect.sync(() => (keyInstalled = true))),
                     Effect.andThen(upstream.inviteOverSsh(formatClusterSshTarget(sshTarget))),
                     Effect.map((invited) => invited.code),
                   ),
@@ -657,68 +659,87 @@ const make = Effect.gen(function* () {
             "Paste the join string from the member's Settings → Cluster or `t3 cluster invite`, or an ssh target such as me@box.",
         });
       }
-      const code = yield* resolved.code;
-      const connection = yield* upstream.connect(resolved.target);
-      const client = yield* clientFor(connection);
-      const descriptor = yield* client.metadata
-        .descriptor()
-        .pipe(Effect.timeout(REQUEST_TIMEOUT), Effect.mapError(reachError(connection.origin)));
-      if (descriptor.environmentId === self.environmentId) {
-        return yield* new ClusterError({
-          reason: "self",
-          message: "That address is this environment.",
-        });
-      }
-      if (!isCompatible(descriptor)) {
-        return yield* new ClusterError({
-          reason: "incompatible",
-          message: `${descriptor.label} runs a T3 Code version without clusters or speaks another protocol. Update both environments.`,
-        });
-      }
-      const joined = yield* client.cluster
-        .join({ payload: { code, host: { environmentId: self.environmentId, label: self.label } } })
-        .pipe(Effect.timeout(REQUEST_TIMEOUT), Effect.mapError(reachError(connection.origin)));
-      if (joined.environmentId !== descriptor.environmentId) {
-        return yield* new ClusterError({
-          reason: "unreachable",
-          message: `${connection.origin} answered as another environment while joining.`,
-        });
-      }
-      const wasStandalone = (yield* role.current).role === "standalone";
-      const previous = (yield* SubscriptionRef.get(rowsRef)).find(
-        (row) => row.environment_id === joined.environmentId,
-      );
-      const secretName = `cluster-member-${Hex.encode(yield* random.randomBytes(16))}`;
-      const target = resolved.target;
-      yield* Effect.gen(function* () {
-        yield* secrets.set(secretName, new TextEncoder().encode(joined.token));
-        const now = DateTime.formatIso(yield* DateTime.now);
-        yield* sql`
-          INSERT INTO cluster_members (environment_id, label, transport, url, ssh_target, cert_sha256, secret_name, status, joined_at, last_reached_at, last_error)
-          VALUES (
-            ${joined.environmentId}, ${input.label ?? joined.label}, ${target.transport},
-            ${target.transport === "https" ? target.url : null},
-            ${target.transport === "ssh" ? target.sshTarget : null},
-            ${target.transport === "https" && target.url.startsWith("https:") ? target.certSha256 : null},
-            ${secretName}, 'offline', ${now}, ${now}, NULL
-          )
-          ON CONFLICT (environment_id) DO UPDATE SET
-            transport = excluded.transport, url = excluded.url, ssh_target = excluded.ssh_target,
-            cert_sha256 = excluded.cert_sha256, secret_name = excluded.secret_name,
-            status = 'offline', last_reached_at = excluded.last_reached_at, last_error = NULL
-        `;
+      const newSshTarget = resolved.target.transport === "ssh" ? resolved.target.sshTarget : null;
+      return yield* Effect.gen(function* () {
+        const code = yield* resolved.code;
+        const connection = yield* upstream.connect(resolved.target);
+        const client = yield* clientFor(connection);
+        const descriptor = yield* client.metadata
+          .descriptor()
+          .pipe(Effect.timeout(REQUEST_TIMEOUT), Effect.mapError(reachError(connection.origin)));
+        if (descriptor.environmentId === self.environmentId) {
+          return yield* new ClusterError({
+            reason: "self",
+            message: "That address is this environment.",
+          });
+        }
+        if (!isCompatible(descriptor)) {
+          return yield* new ClusterError({
+            reason: "incompatible",
+            message: `${descriptor.label} runs a T3 Code version without clusters or speaks another protocol. Update both environments.`,
+          });
+        }
+        const joined = yield* client.cluster
+          .join({
+            payload: { code, host: { environmentId: self.environmentId, label: self.label } },
+          })
+          .pipe(Effect.timeout(REQUEST_TIMEOUT), Effect.mapError(reachError(connection.origin)));
+        if (joined.environmentId !== descriptor.environmentId) {
+          return yield* new ClusterError({
+            reason: "unreachable",
+            message: `${connection.origin} answered as another environment while joining.`,
+          });
+        }
+        const wasStandalone = (yield* role.current).role === "standalone";
+        const previous = (yield* SubscriptionRef.get(rowsRef)).find(
+          (row) => row.environment_id === joined.environmentId,
+        );
+        const secretName = `cluster-member-${Hex.encode(yield* random.randomBytes(16))}`;
+        const target = resolved.target;
+        yield* Effect.gen(function* () {
+          yield* secrets.set(secretName, new TextEncoder().encode(joined.token));
+          const now = DateTime.formatIso(yield* DateTime.now);
+          yield* sql`
+            INSERT INTO cluster_members (environment_id, label, transport, url, ssh_target, cert_sha256, secret_name, status, joined_at, last_reached_at, last_error)
+            VALUES (
+              ${joined.environmentId}, ${input.label ?? joined.label}, ${target.transport},
+              ${target.transport === "https" ? target.url : null},
+              ${target.transport === "ssh" ? target.sshTarget : null},
+              ${target.transport === "https" && target.url.startsWith("https:") ? target.certSha256 : null},
+              ${secretName}, 'offline', ${now}, ${now}, NULL
+            )
+            ON CONFLICT (environment_id) DO UPDATE SET
+              transport = excluded.transport, url = excluded.url, ssh_target = excluded.ssh_target,
+              cert_sha256 = excluded.cert_sha256, secret_name = excluded.secret_name,
+              status = 'offline', last_reached_at = excluded.last_reached_at, last_error = NULL
+          `;
+        }).pipe(
+          Effect.mapError(storageError),
+          Effect.onError(() => secrets.remove(secretName).pipe(Effect.ignore)),
+        );
+        if (previous !== undefined) {
+          tokens.delete(previous.secret_name);
+          yield* forgetSecret(previous.secret_name);
+        }
+        // The member moved, so its old address no longer needs to accept this host.
+        if (previous?.ssh_target != null && previous.ssh_target !== newSshTarget) {
+          yield* sshKey.revoke(previous.ssh_target);
+        }
+        // A main host reaches other environments through its members, not its own peer links.
+        if (wasStandalone) yield* peerLinks.unlinkAll.pipe(Effect.mapError(storageError));
+        yield* reload;
+        return toMember(yield* findRow(joined.environmentId));
       }).pipe(
-        Effect.mapError(storageError),
-        Effect.onError(() => secrets.remove(secretName).pipe(Effect.ignore)),
+        // A failed add leaves no row to remove its key by, unless a live member link uses it.
+        Effect.onError(() =>
+          Effect.gen(function* () {
+            if (!keyInstalled || newSshTarget === null) return;
+            const rows = yield* SubscriptionRef.get(rowsRef);
+            if (rows.some((row) => row.ssh_target === newSshTarget)) return;
+            yield* sshKey.revoke(newSshTarget);
+          }),
+        ),
       );
-      if (previous !== undefined) {
-        tokens.delete(previous.secret_name);
-        yield* forgetSecret(previous.secret_name);
-      }
-      // A main host reaches other environments through its members, not its own peer links.
-      if (wasStandalone) yield* peerLinks.unlinkAll.pipe(Effect.mapError(storageError));
-      yield* reload;
-      return toMember(yield* findRow(joined.environmentId));
     },
     (effect) => hostLock.withPermits(1)(effect),
   );

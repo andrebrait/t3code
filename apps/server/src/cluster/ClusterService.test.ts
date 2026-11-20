@@ -423,9 +423,12 @@ it.effect(
     Effect.scoped(
       Effect.gen(function* () {
         const member = yield* serveMember(box);
+        // Answers as the main host itself, as an ssh target naming its own machine would.
+        const itself = yield* serveMember(studioDescriptor);
         const ssh = SshTunnel.SshEnvironmentManager.of({
-          ensureEnvironment: (target, options) =>
-            target.username === "nokey"
+          ensureEnvironment: (target, options) => {
+            const served = target.username === "self" ? itself : member;
+            return target.username === "nokey"
               ? Effect.fail(
                   new SshCommandError({
                     message: "Permission denied (publickey,password).",
@@ -434,15 +437,16 @@ it.effect(
                     stderr: "",
                   }),
                 )
-              : member.cluster.invite({}).pipe(
+              : served.cluster.invite({}).pipe(
                   Effect.orDie,
                   Effect.map((invite) => ({
                     target,
-                    httpBaseUrl: member.url,
-                    wsBaseUrl: member.url.replace(/^http/, "ws"),
+                    httpBaseUrl: served.url,
+                    wsBaseUrl: served.url.replace(/^http/, "ws"),
                     pairingToken: options?.pairingPurpose === "cluster-member" ? invite.code : null,
                   })),
-                ),
+                );
+          },
           disconnectEnvironment: () => Effect.void,
           closeAllTunnels: Effect.void,
         });
@@ -494,13 +498,24 @@ it.effect(
           message:
             "SSH to nokey@other refused this host's cluster key. Add the member again to reinstall it.",
         });
+        expect(
+          yield* main.cluster.addMember({ target: "self@studio" }).pipe(Effect.flip),
+        ).toMatchObject({ reason: "self" });
+        // A failed add takes back the key it installed; re-adding the same target never does.
+        expect(revoked).toEqual(["nokey@other", "self@studio"]);
+
+        // Moving the member to another ssh target takes the key off the old one.
+        expect(yield* main.cluster.addMember({ target: "me@box2" })).toMatchObject({
+          address: "me@box2",
+        });
+        expect(revoked).toEqual(["nokey@other", "self@studio", "me@box:2222"]);
 
         expect(yield* main.cluster.removeMember(box.environmentId)).toEqual({
           removed: true,
           memberNotified: true,
           keyRevoked: false,
         });
-        expect(revoked).toEqual(["me@box:2222"]);
+        expect(revoked).toEqual(["nokey@other", "self@studio", "me@box:2222", "me@box2"]);
       }),
     ),
 );

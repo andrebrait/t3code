@@ -36,6 +36,10 @@ export const REVOKE_KEY_SCRIPT = `umask 077; IFS= read -r tag; [ -n "$tag" ] || 
 const KEY_SECRET = "cluster-ssh-key";
 const KEY_FILE = "cluster_ed25519";
 const REMOTE_TIMEOUT_MS = 30_000;
+// Revokes run under the cluster's add/remove lock, so an unreachable member must not hold it long.
+const REVOKE_TIMEOUT_MS = 10_000;
+// askpass would answer an unknown host's yes/no prompt with the secret; the user checks it in a terminal.
+const STRICT_HOST_KEY = ["-o", "StrictHostKeyChecking=yes"];
 
 const clusterKeyTag = (environmentId: string) => `t3code-cluster:${environmentId}`;
 
@@ -115,6 +119,7 @@ export const loginOptions = (login: ClusterSshLogin): RunSshCommandOptions => {
         batchMode: "no",
         interactiveAuth: true,
         preHostArgs: [
+          ...STRICT_HOST_KEY,
           "-o",
           "PubkeyAuthentication=no",
           "-o",
@@ -124,17 +129,19 @@ export const loginOptions = (login: ClusterSshLogin): RunSshCommandOptions => {
         ],
       };
     case "keyFile":
-      return {
-        identityFile: login.path,
-        ...(login.passphrase === undefined
-          ? { batchMode: "yes" }
-          : {
-              authSecret: Redacted.value(login.passphrase),
-              batchMode: "no",
-              interactiveAuth: true,
-            }),
-        preHostArgs: ["-o", "PreferredAuthentications=publickey"],
-      };
+      return login.passphrase === undefined
+        ? {
+            identityFile: login.path,
+            batchMode: "yes",
+            preHostArgs: ["-o", "PreferredAuthentications=publickey"],
+          }
+        : {
+            identityFile: login.path,
+            authSecret: Redacted.value(login.passphrase),
+            batchMode: "no",
+            interactiveAuth: true,
+            preHostArgs: [...STRICT_HOST_KEY, "-o", "PreferredAuthentications=publickey"],
+          };
   }
 };
 
@@ -254,9 +261,11 @@ const make = Effect.gen(function* () {
     const file = path.join(config.secretsDir, KEY_FILE);
     // Renamed into place, so a CLI and the server writing it at once never leave half a key.
     const temp = `${file}.${NodeCrypto.randomUUID()}.tmp`;
-    yield* fs.writeFileString(temp, pair.privateKey, { mode: 0o600 });
-    yield* fs.chmod(temp, 0o600);
-    yield* fs.rename(temp, file);
+    yield* Effect.gen(function* () {
+      yield* fs.writeFileString(temp, pair.privateKey, { mode: 0o600 });
+      yield* fs.chmod(temp, 0o600);
+      yield* fs.rename(temp, file);
+    }).pipe(Effect.onError(() => fs.remove(temp).pipe(Effect.ignore)));
     return { file, line: `${pair.publicKey} ${tag}`, tag };
   }).pipe(
     Effect.mapError(
@@ -302,7 +311,7 @@ const make = Effect.gen(function* () {
         batchMode: "yes",
         remoteCommandArgs: ["sh", "-c", shellSingleQuote(REVOKE_KEY_SCRIPT)],
         stdin: `${key.tag}\n`,
-        timeoutMs: REMOTE_TIMEOUT_MS,
+        timeoutMs: REVOKE_TIMEOUT_MS,
       }).pipe(Effect.provideContext(sshContext));
       return true;
     },

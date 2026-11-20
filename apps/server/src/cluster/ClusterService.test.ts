@@ -364,9 +364,14 @@ it.effect("removal tells a reachable member, and forgets one that already left",
       expect(yield* member.cluster.status).toMatchObject({ role: "standalone", host: null });
 
       // An add that fails after the member joined tells it to leave, so remote pairing works there.
+      // A failed re-add drops the stored member too: its old token died when it joined again.
       yield* main.settings.updateSettings({ clusterEnabled: true });
+      yield* add;
       yield* main.sql`CREATE TRIGGER refuse_members BEFORE INSERT ON cluster_members
         BEGIN SELECT RAISE(ABORT, 'refused'); END`;
+      expect(yield* add.pipe(Effect.flip)).toMatchObject({ reason: "storage" });
+      expect(yield* member.cluster.status).toMatchObject({ role: "standalone", host: null });
+      expect(yield* memberCount(main)).toEqual(Option.some(0));
       expect(yield* add.pipe(Effect.flip)).toMatchObject({ reason: "storage" });
       expect(yield* member.cluster.status).toMatchObject({ role: "standalone", host: null });
     }),

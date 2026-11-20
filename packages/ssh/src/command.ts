@@ -41,6 +41,8 @@ export interface RunSshCommandOptions extends SshAuthOptions {
   readonly timeoutMs?: number;
   /** Keep the end of long failed-command stdout, where the final cause usually is. */
   readonly keepErrorOutputTail?: boolean;
+  /** A probe whose non-zero exit is normal flow: log the failure at Debug, not Warn. */
+  readonly expectFailure?: boolean;
 }
 
 /** `ssh -G` output as option name to value; the first line for a name wins, as in ssh. */
@@ -347,7 +349,8 @@ const runSshCommandInScope = Effect.fn("ssh/command.runSshCommand.inScope")(func
   const { stdout, stderr } = output;
   if (exitCode !== 0) {
     const diagnosticStdout = redactSshErrorOutput(stdout, input.keepErrorOutputTail);
-    yield* Effect.logWarning("ssh.command.failed", {
+    const logFailure = input.expectFailure ? Effect.logDebug : Effect.logWarning;
+    yield* logFailure("ssh.command.failed", {
       ...sshTargetLogFields(target),
       command: ["ssh", ...args],
       exitCode,

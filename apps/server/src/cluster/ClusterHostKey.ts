@@ -108,6 +108,7 @@ export const verifyHostKey = Effect.fn("ClusterHostKey.verifyHostKey")(function*
     preHostArgs: [...noAuth, "-o", "StrictHostKeyChecking=yes", "-o", "LogLevel=ERROR"],
     remoteCommandArgs: ["true"],
     timeoutMs: PROBE_TIMEOUT_MS,
+    expectFailure: true,
   }).pipe(
     Effect.as({ verdict: classifyHostKeyCheck(0, ""), message: "" }),
     Effect.catch((cause) =>
@@ -161,6 +162,7 @@ export const verifyHostKey = Effect.fn("ClusterHostKey.verifyHostKey")(function*
         ],
         remoteCommandArgs: ["true"],
         timeoutMs: PROBE_TIMEOUT_MS,
+        expectFailure: true,
       }).pipe(
         Effect.as(undefined),
         Effect.catch((cause) => Effect.succeed(cause)),

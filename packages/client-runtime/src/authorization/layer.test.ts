@@ -29,6 +29,7 @@ import {
 import * as ConnectionCredentialStore from "../connection/credentialStore.ts";
 import { BearerConnectionTarget } from "../connection/model.ts";
 import * as ConnectionProfileStore from "../connection/profileStore.ts";
+import * as ClusterHosts from "../connection/clusterHosts.ts";
 import * as ConnectionResolver from "../connection/resolver.ts";
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
@@ -280,6 +281,7 @@ const prepareDirectBearer = Effect.fn("TestRemoteAuthorization.prepareDirectBear
     Layer.provide(
       Layer.mergeAll(
         harness.layer,
+        ClusterHosts.layer,
         Layer.succeed(ConnectionProfileStore.ConnectionProfileStore, {
           get: unused,
           put: unused,

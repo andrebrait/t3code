@@ -286,16 +286,14 @@ const makeSshBroker = Effect.fn("clientRuntime.connection.broker.makeSsh")(funct
 });
 
 const makeClusterBroker = Effect.fn("clientRuntime.connection.broker.makeCluster")(function* () {
-  const hosts = yield* Effect.serviceOption(ClusterHosts.ClusterHosts);
+  const hosts = yield* ClusterHosts.ClusterHosts;
   const presentation = yield* ClientCapabilities.ClientPresentation;
   const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
 
   return Effect.fn("clientRuntime.connection.broker.cluster")(function* (
     target: ClusterConnectionTarget,
   ) {
-    const host = Option.isNone(hosts)
-      ? Option.none<PreparedConnection>()
-      : yield* hosts.value.get(target.hostEnvironmentId);
+    const host = yield* hosts.get(target.hostEnvironmentId);
     if (Option.isNone(host)) {
       return yield* new ConnectionTransientError({
         reason: "remote-unavailable",

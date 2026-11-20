@@ -10,6 +10,7 @@ import {
 import { expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import { HttpServerRequest } from "effect/http";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as TestClock from "effect/testing/TestClock";
@@ -1235,6 +1236,26 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
           key.sign({ method: "GET", url: socketUrl, token: Redacted.value(rpc.ticket), iat }),
         );
         expect(signed.sessionId).toBe(session.sessionId);
+
+        // Traefik forwards TLS WebSocket upgrades as X-Forwarded-Proto: wss.
+        const proxied = Redacted.value(
+          (yield* serverAuth.issueWebSocketTicket(session, { use: "rpc" })).ticket,
+        );
+        const proof = key.sign({
+          method: "GET",
+          url: "https://t3.example.com/ws",
+          token: proxied,
+          iat,
+        });
+        const behindProxy = yield* serverAuth.authenticateWebSocketUpgrade(
+          HttpServerRequest.fromWeb(
+            new Request(`http://127.0.0.1/ws?wsTicket=${proxied}&dpop=${proof}`, {
+              headers: { host: "t3.example.com", "x-forwarded-proto": "wss" },
+            }),
+          ),
+          "rpc",
+        );
+        expect(behindProxy.sessionId).toBe(session.sessionId);
 
         const wrongKey = yield* Effect.flip(
           upgrade(

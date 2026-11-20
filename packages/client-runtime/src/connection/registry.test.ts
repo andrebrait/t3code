@@ -2561,11 +2561,12 @@ describe("EnvironmentRegistry cluster members", () => {
 
         yield* registry.setEnabled(TARGET.environmentId, true);
         yield* awaitMember(registry, true);
+        // De-listing and disabling the host are reversible, so the member's drafts and outbox stay.
+        expect(yield* Ref.get(harness.ownedDataClears)).not.toContain(MEMBER_ID);
         yield* registry.remove(TARGET.environmentId);
         yield* awaitMember(registry, false);
         expect(Option.isNone(yield* hosts.get(TARGET.environmentId))).toBe(true);
-        // Drafts and queued messages written for the member survive until the user removes it.
-        expect(yield* Ref.get(harness.ownedDataClears)).not.toContain(MEMBER_ID);
+        expect(yield* Ref.get(harness.ownedDataClears)).toContain(MEMBER_ID);
       }).pipe(Effect.provide(Layer.merge(harness.layer, ClusterHosts.layer)), Effect.scoped);
     }),
   );

@@ -907,7 +907,7 @@ export const make = Effect.gen(function* () {
       next.delete(environmentId);
       return next;
     });
-    // De-listing can be transient (Labs flag, host offline), so drafts and outboxes stay.
+    // De-listing can be reversed (Labs flag, host disabled), so drafts and outboxes stay.
     yield* cache.clear(environmentId).pipe(
       Effect.catch((error) =>
         Effect.logWarning("Could not clear cached data of a former cluster member.", {
@@ -1006,6 +1006,10 @@ export const make = Effect.gen(function* () {
       });
     }
     const entry = yield* getEntry(environmentId);
+    // Removing a main host is final for its members too; de-listing alone keeps their data.
+    const members = [...(yield* Ref.get(clusterMembers))].flatMap(([memberId, hostId]) =>
+      hostId === environmentId ? [memberId] : [],
+    );
 
     yield* pullRequestRoutingPermissions.forget(environmentId);
     yield* registrations.remove(environmentId);
@@ -1031,6 +1035,7 @@ export const make = Effect.gen(function* () {
           ),
         ),
         ownedDataCleanup.clear(environmentId),
+        ...members.map((memberId) => ownedDataCleanup.clear(memberId)),
       ],
       { concurrency: "unbounded", discard: true },
     );

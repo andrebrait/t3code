@@ -1,4 +1,6 @@
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import {
+  connectLinkedEnvironment,
   createLinkedThreadSession,
   type LinkedThreadTarget,
 } from "@t3tools/client-runtime/linked-thread";
@@ -7,6 +9,9 @@ import type { EnvironmentId, OrchestrationV2Subagent } from "@t3tools/contracts"
 import { useState, useSyncExternalStore } from "react";
 import { AppState } from "react-native";
 
+import { connectPairingUrl, reachesEnvironment } from "../connection/onboarding";
+import { linkedEnvironmentPrefillAtom } from "../features/connection/linkedEnvironmentPrefill";
+import { buildPairingUrl } from "../features/connection/pairing";
 import { useEnvironments } from "./environments";
 import { peerLinkEnvironment, useLinkedEnvironments } from "./peerLinks";
 import { useAtomCommand } from "./use-atom-command";
@@ -35,6 +40,63 @@ export function useLinkedThreadReach(
       : null,
   );
   return { ownConnection, isLinked: (id: EnvironmentId) => links.has(id) };
+}
+
+export type LinkedEnvironmentConnectState =
+  | { readonly phase: "idle" | "connecting" }
+  | { readonly phase: "unreachable"; readonly label: string };
+
+/**
+ * Connects this app to the environment `target` lives in. One step when the linking environment
+ * can get a pairing for this app; otherwise the caller opens the add-environment screen, which
+ * reads what was learned about the machine.
+ */
+export function useConnectLinkedEnvironment(target: LinkedThreadTarget) {
+  const setPrefill = useAtomSet(linkedEnvironmentPrefillAtom);
+  const mayPair = useAtomValue(
+    peerLinkEnvironment.pairClient.permissionAtom(target.viaEnvironmentId),
+  );
+  const quiet = { reportFailure: false, reportDefect: false } as const;
+  const requestPairing = useAtomCommand(peerLinkEnvironment.pairClient, quiet);
+  const reaches = useAtomCommand(reachesEnvironment, quiet);
+  const pair = useAtomCommand(connectPairingUrl, quiet);
+  const [state, setState] = useState<LinkedEnvironmentConnectState>({ phase: "idle" });
+  const connect = async () => {
+    setState({ phase: "connecting" });
+    const outcome = await connectLinkedEnvironment({
+      label: target.label,
+      requestPairing: async () => {
+        // Without it the linking environment refuses; the user can still pair by hand.
+        if (!mayPair) return null;
+        const result = await requestPairing({
+          environmentId: target.viaEnvironmentId,
+          input: { environmentId: target.environmentId },
+        });
+        return result._tag === "Success" ? result.value : null;
+      },
+      reaches: async (host) => {
+        const result = await reaches({ host, environmentId: target.environmentId });
+        return result._tag === "Success" && result.value;
+      },
+      pair: async ({ host, pairingCode }) => {
+        const result = await pair({
+          pairingUrl: buildPairingUrl(host, pairingCode),
+          expectedEnvironmentId: target.environmentId,
+        });
+        return result._tag === "Success";
+      },
+    });
+    setState(
+      outcome.type === "unreachable"
+        ? { phase: "unreachable", label: outcome.label }
+        : { phase: "idle" },
+    );
+    if (outcome.type === "manual") {
+      setPrefill({ environmentId: target.environmentId, label: outcome.label, host: outcome.host });
+    }
+    return outcome;
+  };
+  return { state, connect };
 }
 
 /**

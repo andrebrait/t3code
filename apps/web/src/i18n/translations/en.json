@@ -7854,7 +7854,7 @@
   "9ff2b973feb1f701": "Leaving…",
   "102b7b49ef3cdee1": "Leave cluster",
   "32b30e32d451d005": "Add a member",
-  "db3aa4a62b85e301": "Paste the join string from the other machine's Join a cluster…, or enter user@host to add it over SSH. SSH needs a key or a running ssh-agent on this machine.",
+  "c54285d78ba3d478": "Paste the join string from the other machine, or enter user@host to add it over SSH. SSH needs a key or a running ssh-agent on this machine.",
   "7310ad79a8ffca7d": "Join string or SSH target",
   "3953d1cccd71ab7e": "Name (optional)",
   "ccfce317440dbd50": "Lets a main host add this machine as a member.",

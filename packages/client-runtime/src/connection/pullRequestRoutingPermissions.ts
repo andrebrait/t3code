@@ -164,11 +164,10 @@ export const makePullRequestRoutingPermissions = Effect.fn("makePullRequestRouti
               ),
             }),
           );
+        const environmentId = pullRequestRoutingOwnerId(entry);
         return update((current) => [
-          ...current.filter((value) => value.environmentId !== entry.target.environmentId),
-          ...(permission === "off"
-            ? []
-            : [{ environmentId: entry.target.environmentId, connectionKey, permission }]),
+          ...current.filter((value) => value.environmentId !== environmentId),
+          ...(permission === "off" ? [] : [{ environmentId, connectionKey, permission }]),
         ]);
       }),
       forget: Effect.fn("PullRequestRoutingPermissions.forget")(function (environmentId) {

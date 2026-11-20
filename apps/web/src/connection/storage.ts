@@ -708,15 +708,10 @@ export function makeBrowserPullRequestRoutingPermissions(
           reason: "configuration",
           detail: m(msg("This environment does not have a saved connection endpoint.")),
         });
+      const environmentId = pullRequestRoutingOwnerId(entry);
       return yield* write(
-        entry.target.environmentId,
-        permission === "off"
-          ? null
-          : {
-              environmentId: entry.target.environmentId,
-              connectionKey,
-              permission,
-            },
+        environmentId,
+        permission === "off" ? null : { environmentId, connectionKey, permission },
       );
     }),
     forget: Effect.fn("PullRequestRoutingPermissions.forget")(function (environmentId) {

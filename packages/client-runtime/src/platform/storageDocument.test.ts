@@ -15,6 +15,7 @@ import {
 } from "../connection/catalog.ts";
 import {
   BearerConnectionTarget,
+  ClusterConnectionTarget,
   ConnectionTransientError,
   PrimaryConnectionTarget,
   RelayConnectionTarget,
@@ -23,6 +24,7 @@ import {
 import {
   PullRequestRoutingPermissions,
   makePullRequestRoutingPermissions,
+  pullRequestRoutingConnectionKey,
 } from "../connection/pullRequestRoutingPermissions.ts";
 import {
   ConnectionCatalogDocument,
@@ -119,6 +121,25 @@ describe("ConnectionCatalogDocument", () => {
       ).toBe("off");
       yield* restarted.set(entry, "read-write");
       expect(yield* restarted.get(entry)).toBe("read-write");
+      // A cluster member follows its main host, so setting it sets the host's own permission.
+      const member = {
+        target: new ClusterConnectionTarget({
+          environmentId: EnvironmentId.make("environment-member"),
+          label: "Member",
+          hostEnvironmentId: ENVIRONMENT_ID,
+          hostLabel: "Host",
+          hostConnectionKey: pullRequestRoutingConnectionKey(entry),
+          status: "online",
+          statusDetail: null,
+        }),
+        profile: Option.none(),
+        enabled: true,
+      };
+      yield* restarted.set(member, "read");
+      expect(yield* restarted.get(entry)).toBe("read");
+      yield* restarted.set(entry, "off");
+      expect(yield* restarted.get(member)).toBe("off");
+      yield* restarted.set(entry, "read-write");
       yield* restarted.forget(ENVIRONMENT_ID);
       expect(yield* restarted.get(entry)).toBe("off");
       const afterRemoval = yield* makePullRequestRoutingPermissions(storage);

@@ -1753,7 +1753,7 @@ export const make = Effect.gen(function* () {
       .pipe(Effect.mapError(toBootstrapExchangeError));
     if (grant.subject !== CLUSTER_MEMBER_PAIRING_SUBJECT) {
       return yield* new ServerAuthInvalidCredentialError({
-        diagnostic: "Only a cluster invite can add this environment to a cluster.",
+        diagnostic: "Only a cluster join code can add this environment to a cluster.",
       });
     }
     const issued = yield* sessions

@@ -628,7 +628,7 @@
   "209197562551a237": "Online",
   "d1dc5d5f8f723d2f": "Ansluter…",
   "6da26c8c02873d20": "Kör en T3 Code-version som {host} inte kan styra. Uppdatera båda till samma version.",
-  "1f1df7efb4b1c68f": "Accepterar inte längre {host}. Ta bort den här och bjud in den igen.",
+  "6ecf50909bab2234": "Accepterar inte längre {host}. Ta bort den här och lägg sedan till den igen med en ny anslutningskod.",
   "16ebaeabe59a4857": "Kunde inte nå den miljön via T3 Connect med det här kontot.",
   "7e19512f1ce2b686": "Versionerna av enhetsverktygen har inte kontrollerats.",
   "7bdc8e41c92e24b7": "Enhetshubb",
@@ -7832,7 +7832,7 @@
   "3202e5e7e3ac64f4": "Det gick inte att läsa in klustermedlemmar",
   "20ec2553636ff8b6": "Läser in klustermedlemmar…",
   "185c47873cbc3a58": "Inga medlemmar ännu",
-  "b67ffe2892c0809f": "Välj Gå med i ett kluster… på den andra maskinen och klistra in dess anslutningssträng i Lägg till medlem.",
+  "87be230ed4df86c3": "Välj Gå med i ett kluster… på den andra maskinen och klistra in dess anslutningskod i Lägg till medlem.",
   "e83d7e0f8edc2a67": "Aldrig nådd",
   "6e5bd943c29069ba": "Senast sedd {time}",
   "4b8e5df2cc93095e": "Ta bort {label} från klustret? Den blir en fristående miljö igen.",
@@ -7858,8 +7858,8 @@
   "1287f93691c96377": "Ersätt och fortsätt",
   "cad9c74911412589": "Lita på",
   "014616905723cd98": "Gå med i ett kluster…",
-  "65f66edefb5175c5": "Skapa anslutningssträng",
-  "7bc13a4ad376ef6b": "Kopiera anslutningssträng",
+  "0fd5390a359a5653": "Skapa anslutningskod",
+  "474319bf8c34993b": "Kopiera anslutningskod",
   "90ae616e9cb53922": "Lämna klustret för {host}? Parkoppla klienter med den här maskinen igen efteråt.",
   "cd600c8a4e87d47d": "Det gick inte att lämna klustret",
   "2ed706790c2b5d0a": "Medlem i {host}",
@@ -7867,8 +7867,8 @@
   "9ff2b973feb1f701": "Lämnar…",
   "102b7b49ef3cdee1": "Lämna klustret",
   "32b30e32d451d005": "Lägg till en medlem",
-  "863b7e82af809507": "Klistra in anslutningssträngen från den andra datorn, eller ange user@host för att lägga till den via SSH. Huvudvärden loggar in en gång och installerar sin egen nyckel så att den kan återansluta själv.",
-  "7310ad79a8ffca7d": "Anslutningssträng eller SSH-mål",
+  "f873f8a9b703b58a": "Klistra in anslutningskoden från den andra datorn, eller ange user@host för att lägga till den via SSH. Huvudvärden loggar in en gång och installerar sin egen nyckel så att den kan återansluta själv.",
+  "ba762eea3c513adf": "Anslutningskod eller SSH-mål",
   "83b275291bf40e25": "Huvudvärden installerar sin egen nyckel på den här datorn",
   "5690bd95f5c6e460": [
     "Den loggar in en gång med det du väljer och lägger sedan till en klusternyckel i",
@@ -7893,14 +7893,14 @@
   "ddf0e1eb84511ae2": "Gå med i ett kluster",
   "c3d0edea2211cbbd": "När den ansluter loggas maskinens andra klienter ut och dess länkade miljöer avslutas. Därefter nås den via huvudvärden.",
   "a7e90c3ca71d8a2b": "Adress som huvudvärden når den här maskinen på",
-  "886a1cd5518d7bb5": [
+  "a51baf4208ff026b": [
     "Kod ",
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
     },
-    ". Lägg till en adress för att få en anslutningssträng."
+    ". Lägg till en adress för att få en anslutningskod."
   ],
   "c4a1872f647cca8f": [
     "Klistra in den i huvudvärdens Lägg till medlem. Certifikatets SHA-256:",
@@ -11633,7 +11633,7 @@
   "d443390c4d2dcfd4": "tillgänglighet a11y skärmläsare nvda jaws voiceover orca skärmläsaren fönstertitel fliktitel alt tab aktivitetsfält trådstatus ordning arbetar godkännande",
   "6826fa9579c22035": "beta dela gäst bjud in länk kollega titta t3 connect tunnel",
   "f10c06cba0cdf7fe": "beta länka en annan dator vps peer agenter arbetar där delegera",
-  "7bf0c7a8f778a1c2": "beta kluster huvudvärd medlemmar grupp maskiner proxy inbjudan anslut",
+  "5b14cb47e4bf0612": "beta kluster huvudvärd medlemmar grupp maskiner proxy anslut anslutningskod",
   "4a21cf825a2045b0": "beta tabb autokomplettering förutsäg nästa meddelande claude codex spöktext",
   "fea2dc36585c4a20": "Simlock-enhetsvärdar (alfa)",
   "9d834d178130180e": "beta alpha simlock callstack simulator emulator ios android pool lån gateway",
@@ -11770,7 +11770,7 @@
   "8ed7c2a2226f4663": "localhost loopback portvidarebefordran öppna på den här enheten webbläsarflikar strömma säkerhet port forwarding",
   "1c3e0ac06c8a1f1e": "anslutningar server backend lokal fjärråtkomst administrativa behörigheter omfång parkopplingslänkar qr-kod auktoriserade klienter sessioner återkalla slutpunkt",
   "744fd34e8049efeb": "länka peer annan dator vps agenter arbetar där överlämning parkopplingskod",
-  "c6ef7aebb3a4dc2c": "kluster huvudvärd medlem inbjudan anslutningssträng fingeravtryck ssh lämna ta bort",
+  "135477eff2b044e7": "kluster huvudvärd medlem anslutningskod fingeravtryck ssh lämna ta bort",
   "3d00c452287f50bd": "lägg till parkoppla backend värd kod ssh-konfiguration agent tunnel sparad t3 connect",
   "cbf49f84e7f456e5": "Lastbalansering",
   "6f1a769805a28197": "automatisk dator miljö resurser cpu minne kapacitet preferens vikt delade projekt",

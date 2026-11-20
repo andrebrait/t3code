@@ -279,7 +279,7 @@ it.effect("a member leaves without its main host and is standalone again", () =>
 const memberCount = (main: { cluster: { members: Stream.Stream<ReadonlyArray<unknown>> } }) =>
   main.cluster.members.pipe(Stream.runHead, Effect.map(Option.map((members) => members.length)));
 
-it.effect("adds a member with its join string, and neither side nests", () =>
+it.effect("adds a member with its join code, and neither side nests", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const member = yield* serveMember(box);
@@ -838,7 +838,7 @@ it.effect("a member that leaves shows revoked over its link, and only its host o
       yield* TestClock.adjust("5 seconds");
       yield* member.cluster.leave;
       expect(yield* awaitStatus(main, box.environmentId, "revoked")).toMatchObject({
-        lastError: "It no longer accepts this host. Invite it again.",
+        lastError: "It no longer accepts this host. Add it again with a new join code.",
       });
       yield* main.cluster.removeMember(box.environmentId);
       expect(yield* memberCount(main)).toEqual(Option.some(0));

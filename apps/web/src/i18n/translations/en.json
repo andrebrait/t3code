@@ -628,7 +628,7 @@
   "209197562551a237": "Online",
   "d1dc5d5f8f723d2f": "Connecting…",
   "6da26c8c02873d20": "Runs a T3 Code version {host} cannot drive. Update both to the same version.",
-  "1f1df7efb4b1c68f": "No longer accepts {host}. Remove it here, then invite it again.",
+  "6ecf50909bab2234": "No longer accepts {host}. Remove it here, then add it again with a new join code.",
   "16ebaeabe59a4857": "Could not reach that environment through T3 Connect with this account.",
   "7e19512f1ce2b686": "Device tool versions have not been checked.",
   "7bdc8e41c92e24b7": "Device hub",
@@ -7834,7 +7834,7 @@
   "3202e5e7e3ac64f4": "Could not load cluster members",
   "20ec2553636ff8b6": "Loading cluster members…",
   "185c47873cbc3a58": "No members yet",
-  "b67ffe2892c0809f": "On the other machine, choose Join a cluster… and paste its join string in Add member.",
+  "87be230ed4df86c3": "On the other machine, choose Join a cluster… and paste its join code in Add member.",
   "e83d7e0f8edc2a67": "Never reached",
   "6e5bd943c29069ba": "Last seen {time}",
   "4b8e5df2cc93095e": "Remove {label} from the cluster? It becomes a standalone environment again.",
@@ -7860,8 +7860,8 @@
   "1287f93691c96377": "Replace and continue",
   "cad9c74911412589": "Trust",
   "014616905723cd98": "Join a cluster…",
-  "65f66edefb5175c5": "Create join string",
-  "7bc13a4ad376ef6b": "Copy join string",
+  "0fd5390a359a5653": "Create join code",
+  "474319bf8c34993b": "Copy join code",
   "90ae616e9cb53922": "Leave the cluster of {host}? Pair clients with this machine again afterwards.",
   "cd600c8a4e87d47d": "Could not leave the cluster",
   "2ed706790c2b5d0a": "Member of {host}",
@@ -7869,8 +7869,8 @@
   "9ff2b973feb1f701": "Leaving…",
   "102b7b49ef3cdee1": "Leave cluster",
   "32b30e32d451d005": "Add a member",
-  "863b7e82af809507": "Paste the join string from the other machine, or enter user@host to add it over SSH. The main host signs in once and installs its own key, so it can reconnect on its own.",
-  "7310ad79a8ffca7d": "Join string or SSH target",
+  "f873f8a9b703b58a": "Paste the join code from the other machine, or enter user@host to add it over SSH. The main host signs in once and installs its own key, so it can reconnect on its own.",
+  "ba762eea3c513adf": "Join code or SSH target",
   "83b275291bf40e25": "The main host will install its own key on this machine",
   "5690bd95f5c6e460": [
     "It signs in once with what you choose, then adds a cluster key to",
@@ -7895,14 +7895,14 @@
   "ddf0e1eb84511ae2": "Join a cluster",
   "c3d0edea2211cbbd": "Joining signs out this machine's other clients and ends its linked environments. Afterwards it is reached through the main host.",
   "a7e90c3ca71d8a2b": "Address the main host reaches this machine at",
-  "886a1cd5518d7bb5": [
+  "a51baf4208ff026b": [
     "Code ",
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
     },
-    ". Add an address to get a join string."
+    ". Add an address to get a join code."
   ],
   "c4a1872f647cca8f": [
     "Paste it in the main host's Add member. Certificate SHA-256:",
@@ -11635,7 +11635,7 @@
   "d443390c4d2dcfd4": "accessibility a11y screen reader nvda jaws voiceover orca narrator window title tab title alt tab taskbar thread status order working approval",
   "6826fa9579c22035": "beta share guest invite link teammate watch t3 connect tunnel",
   "f10c06cba0cdf7fe": "beta link another machine vps peer agents work there delegate",
-  "7bf0c7a8f778a1c2": "beta cluster main host members group machines proxy invite join",
+  "5b14cb47e4bf0612": "beta cluster main host members group machines proxy join code",
   "4a21cf825a2045b0": "beta tab autocomplete predict next message claude codex ghost text",
   "fea2dc36585c4a20": "Simlock device hosts (alpha)",
   "9d834d178130180e": "beta alpha simlock callstack simulator emulator ios android pool lease gateway",
@@ -11772,7 +11772,7 @@
   "8ed7c2a2226f4663": "localhost loopback port forwarding open on this device browser tabs stream security",
   "1c3e0ac06c8a1f1e": "connections server backend local remote access administrative permissions scope pairing links qr code authorized clients sessions revoke endpoint",
   "744fd34e8049efeb": "link peer another machine vps agents work there handoff pairing code",
-  "c6ef7aebb3a4dc2c": "cluster main host member invite join string fingerprint ssh leave remove",
+  "135477eff2b044e7": "cluster main host member join code fingerprint ssh leave remove",
   "3d00c452287f50bd": "add pair backend host code ssh config agent tunnel saved t3 connect",
   "cbf49f84e7f456e5": "Load balancing",
   "6f1a769805a28197": "automatic machine environment resources cpu memory capacity preference weight shared projects",

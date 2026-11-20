@@ -61,7 +61,7 @@ const pinnedConnector =
       callback(
         Object.assign(
           new Error(
-            `The member's certificate changed: it presented ${presented ?? "none"}, not the pinned one. Invite the member again.`,
+            `The member's certificate changed: it presented ${presented ?? "none"}, not the pinned one. Add the member again with a new join code.`,
           ),
           { code: PIN_MISMATCH },
         ),

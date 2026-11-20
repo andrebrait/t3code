@@ -1069,7 +1069,7 @@ PAIRING_BASE_DIR="$DEFAULT_SERVER_HOME"
 export type SshPairingPurpose = "client" | "cluster-member";
 const PAIRING_COMMANDS = {
   client: "auth pairing create",
-  "cluster-member": "cluster invite",
+  "cluster-member": "cluster join",
 } as const satisfies Record<SshPairingPurpose, string>;
 
 const REMOTE_STOP_SCRIPT = `set -eu

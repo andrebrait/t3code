@@ -148,7 +148,7 @@ export function ClusterSection(props: {
               <Text className="text-sm text-foreground-muted">{gt("No members yet")}</Text>
               <Text className="text-xs text-foreground-muted">
                 {gt(
-                  "On the other machine, choose Join a cluster… and paste its join string in Add member.",
+                  "On the other machine, choose Join a cluster… and paste its join code in Add member.",
                 )}
               </Text>
             </Row>
@@ -340,13 +340,13 @@ function AddMemberSheet(props: {
     <Sheet title={gt("Add a member")} onClose={props.onClose} dismissDisabled={busy}>
       <SheetBody>
         <Text className="text-sm text-foreground-muted">
-          {gt("On the other machine, choose Join a cluster… and paste its join string here.")}
+          {gt("On the other machine, choose Join a cluster… and paste its join code here.")}
         </Text>
         <AppTextInput
           value={joinInput}
           onChangeText={setJoinInput}
-          placeholder={gt("Paste a join string")}
-          accessibilityLabel={gt("Join string")}
+          placeholder={gt("Paste a join code")}
+          accessibilityLabel={gt("Join code")}
           autoCapitalize="none"
           autoCorrect={false}
           multiline
@@ -366,10 +366,10 @@ function AddMemberSheet(props: {
 function JoinSheet(props: { readonly environmentId: EnvironmentId; readonly onClose: () => void }) {
   const gt = useGT();
   const m = useMessages();
-  const invite = useAtomCommand(clusterEnvironment.invite, { label: "create cluster invite" });
+  const invite = useAtomCommand(clusterEnvironment.invite, { label: "create cluster join code" });
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
-  // Lives only in this sheet: the join string carries the invite secret.
+  // Lives only in this sheet: the join code carries a one-time secret.
   const [created, setCreated] = useState<ClusterInvite | null>(null);
   const submit = async () => {
     setBusy(true);
@@ -378,7 +378,7 @@ function JoinSheet(props: { readonly environmentId: EnvironmentId; readonly onCl
       input: url.trim() ? { url: url.trim() } : {},
     });
     setBusy(false);
-    alertFailure(gt("Could not create the invite"), result, m);
+    alertFailure(gt("Could not create the join code"), result, m);
     if (result._tag === "Success") setCreated(result.value);
   };
   return (
@@ -395,7 +395,7 @@ function JoinSheet(props: { readonly environmentId: EnvironmentId; readonly onCl
               {created.joinString}
             </Text>
             <Button
-              label={gt("Copy join string")}
+              label={gt("Copy join code")}
               onPress={() =>
                 void Clipboard.setStringAsync(created.joinString ?? "").catch(() => undefined)
               }
@@ -422,7 +422,7 @@ function JoinSheet(props: { readonly environmentId: EnvironmentId; readonly onCl
               className="rounded-[14px] px-4 py-3.5"
             />
             <Button
-              label={gt("Create join string")}
+              label={gt("Create join code")}
               disabled={url.trim().length === 0}
               loading={busy}
               onPress={() => void submit()}

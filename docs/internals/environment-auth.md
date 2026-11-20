@@ -132,16 +132,16 @@ do not follow this replacement rule.
 ### A cluster member trusts only its main host
 
 A member's one remote client is its main host's `cluster-host` session, minted
-by spending a cluster invite ([ClusterService](../../apps/server/src/cluster/ClusterService.ts)).
-Invites use the purpose-bound `mcp-approval:` subject prefix, so ordinary token
-exchange, Connections and older servers never spend or list them. Join checks the code before any role check, so a caller without a valid invite
+by spending a cluster join code ([ClusterService](../../apps/server/src/cluster/ClusterService.ts)).
+Join codes use the purpose-bound `mcp-approval:` subject prefix, so ordinary token
+exchange, Connections and older servers never spend or list them. Join checks the code before any role check, so a caller without a valid join code
 learns nothing about this environment's role. One transaction holds the spend,
 the session and the membership; a role refusal rolls the spend back. Revoking
 every remote session, ordinary code and peer link runs after the commit, and
 again on member start, because revocation events must publish only once the
 revocation is committed: the code that reacts to them re-reads committed state.
 Afterwards the member mints only
-invites and its startup link, so exclusivity needs no per-request address check.
+join codes and its startup link, so exclusivity needs no per-request address check.
 
 The main host forwards each client request with its own `cluster-host` token and
 `x-t3-cluster-scopes` naming the client's scopes. The member intersects its

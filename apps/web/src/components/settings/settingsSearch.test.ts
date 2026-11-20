@@ -190,7 +190,7 @@ describe("searchSettings", () => {
     };
     const results = (hasClusterHost: boolean) =>
       searchSettings(
-        "cluster join string",
+        "cluster join code",
         filterAvailableSettingsSearchItems({ ...availability, hasClusterHost }),
       );
     expect(results(false).map((item) => item.id)).not.toContain("cluster");

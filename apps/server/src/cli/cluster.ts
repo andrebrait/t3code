@@ -114,18 +114,18 @@ const formatList = (status: ClusterStatus, members: ReadonlyArray<ClusterMember>
           )
           .join("\n")}`;
 
-const inviteCommand = Command.make("invite", {
+const joinCommand = Command.make("join", {
   ...authLocationFlags,
   url: Flag.String("url").pipe(
     Flag.withDescription(
-      "Where the main host reaches this environment, such as https://box.local:3773. Prints a join string.",
+      "Where the main host reaches this environment, such as https://box.local:3773. Prints a join code.",
     ),
     Flag.optional,
   ),
   json: jsonFlag,
 }).pipe(
   Command.withDescription(
-    "Mint a one-time code that lets a main host add this environment to its cluster.",
+    "Create a one-time join code that lets a main host add this environment to its cluster.",
   ),
   Command.withHandler((flags) =>
     runWithCluster(
@@ -139,8 +139,8 @@ const inviteCommand = Command.make("invite", {
                 flags.json
                   ? encodeInviteJson({ ...invite, credential: invite.code })
                   : invite.joinString !== null
-                    ? `Join string (expires ${DateTime.formatIso(invite.expiresAt)}):\n${invite.joinString}`
-                    : `Code: ${invite.code}\nCertificate SHA-256: ${invite.fingerprint}\nPass --url to print a join string.`,
+                    ? `Join code (expires ${DateTime.formatIso(invite.expiresAt)}):\n${invite.joinString}`
+                    : `Code: ${invite.code}\nCertificate SHA-256: ${invite.fingerprint}\nPass --url to print a join code.`,
               ),
             ),
           ),
@@ -251,7 +251,7 @@ const askHostKey = Effect.fn("cluster.askHostKey")(function* (error: ClusterErro
 const addCommand = Command.make("add", {
   ...authLocationFlags,
   target: Argument.String("target").pipe(
-    Argument.withDescription("The member's join string, or an ssh target such as ssh://me@box."),
+    Argument.withDescription("The member's join code, or an ssh target such as ssh://me@box."),
   ),
   label: Flag.String("label").pipe(Flag.withDescription("What to call the member."), Flag.optional),
   passwordStdin: Flag.Boolean("password-stdin").pipe(
@@ -412,5 +412,5 @@ const listCommand = Command.make("list", { ...authLocationFlags, json: jsonFlag 
 
 export const clusterCommand = Command.make("cluster").pipe(
   Command.withDescription("Group environments under one main host."),
-  Command.withSubcommands([inviteCommand, addCommand, leaveCommand, removeCommand, listCommand]),
+  Command.withSubcommands([joinCommand, addCommand, leaveCommand, removeCommand, listCommand]),
 );

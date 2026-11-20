@@ -510,21 +510,21 @@ members through the main host.
 
 Cluster is a beta. Turn on **Cluster** in **Settings → Labs** on the main host;
 with it off there, members cannot be added or reached. A machine you add needs
-it on only to show **Join a cluster…**: `t3 cluster invite` and joining work
+it on only to show **Join a cluster…**: `t3 cluster join` and joining work
 with it off. **Remove** and **Leave cluster** always work. Manage a cluster in
 **Settings → Environments → Cluster** on web, desktop and mobile.
 
 To add a machine over HTTPS:
 
 1. On that machine, choose **Join a cluster…**, or run
-   `t3 cluster invite --url https://<address>`. Enter the address the main host
-   can reach it at. It shows a join string: the address and a one-time code.
+   `t3 cluster join --url https://<address>`. Enter the address the main host
+   can reach it at. It shows a join code: the address and a one-time code.
    It also carries the machine's certificate fingerprint.
-2. On the main host, choose **Add member** and paste the join string, or run
-   `t3 cluster add <join-string>`. The main host accepts the member when it
+2. On the main host, choose **Add member** and paste the join code, or run
+   `t3 cluster add <join-code>`. The main host accepts the member when it
    presents that certificate or one from a trusted authority, as an address
    behind T3 Connect or Tailscale Serve does. If the pinned certificate changes
-   later, the member shows **certificate changed**. Invite the machine again.
+   later, the member shows **certificate changed**. Add it again with a new join code.
 
 To add a machine over SSH instead, enter `user@host` in **Add member** on the
 web or desktop app, or run `t3 cluster add ssh://user@host`. Under **Sign in with**,

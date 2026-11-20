@@ -1015,13 +1015,15 @@ describe("ssh tunnel scripts", () => {
     }),
   );
 
-  it.effect("a manager that keeps remote servers never runs the stop script", () =>
+  it.effect("a cluster manager keeps remote servers and signs in with only its own key", () =>
     Effect.gen(function* () {
       const scripts: Array<string> = [];
+      const authenticated: Array<ReadonlyArray<string>> = [];
       const spawner = ChildProcessSpawner.make((command) =>
         Effect.gen(function* () {
           const args = commandArgs(command);
           if (args.includes("-G")) return makeSuccessfulProcess("");
+          authenticated.push(args);
           if (args.includes("-N")) return makeRunningProcess(() => undefined);
           const stdin = command._tag === "StandardCommand" ? command.options.stdin : undefined;
           const input = typeof stdin === "object" && "stream" in stdin ? stdin.stream : undefined;
@@ -1041,6 +1043,7 @@ describe("ssh tunnel scripts", () => {
         SshTunnel.SshEnvironmentManager.layer({
           resolveCliRunner: Effect.succeed(ARCHIVE),
           keepRemoteServer: true,
+          identityFile: Effect.succeed("/state/cluster_ed25519"),
         }),
       );
       yield* Effect.gen(function* () {
@@ -1053,6 +1056,16 @@ describe("ssh tunnel scripts", () => {
       // The second tunnel closes with the manager's scope.
       assert.isTrue(scripts.some((script) => script.includes('KEEP_SERVER="1"')));
       assert.isFalse(scripts.some((script) => script.includes('{"stopped":')));
+      assert.isTrue(authenticated.some((args) => args.includes("-N")));
+      for (const args of authenticated) {
+        const at = args.indexOf("-i");
+        assert.deepEqual(args.slice(at, at + 4), [
+          "-i",
+          "/state/cluster_ed25519",
+          "-o",
+          "IdentitiesOnly=yes",
+        ]);
+      }
     }),
   );
 

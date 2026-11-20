@@ -192,6 +192,7 @@ describe("loadBalancingCandidateIds", () => {
   };
   const member = EnvironmentId.make("member");
   const offline = EnvironmentId.make("offline");
+  const other = EnvironmentId.make("other");
   const connected = { connection: { phase: "connected" }, serverConfig: null };
   const candidateIds = (weights: Record<string, number> = {}) =>
     loadBalancingCandidateIds({
@@ -199,17 +200,20 @@ describe("loadBalancingCandidateIds", () => {
         { environmentId: local, projectId: ProjectId.make("project") },
         // A cluster machine that would clone the project.
         { environmentId: member, projectId: null },
-        { environmentId: offline, projectId: null },
+        { environmentId: offline, projectId: ProjectId.make("project") },
+        { environmentId: other, projectId: ProjectId.make("project") },
       ],
       environmentById: new Map([
         [local, connected],
         [member, connected],
         [offline, { connection: { phase: "offline" }, serverConfig: null }],
+        [other, connected],
       ]),
       providersByEnvironment: new Map([
         [local, [provider]],
         [member, [provider]],
         [offline, [provider]],
+        [other, [provider]],
       ]),
       weights,
       referencedThreadContexts: [],
@@ -217,11 +221,11 @@ describe("loadBalancingCandidateIds", () => {
       selectedProvider: codex,
     });
 
-  it("counts a connected machine that would clone like one that has the project", () => {
-    expect(candidateIds()).toEqual([local, member]);
+  it("picks only machines that already have the project", () => {
+    expect(candidateIds()).toEqual([local, other]);
   });
 
   it("leaves out a machine set to Manual only", () => {
-    expect(candidateIds({ [member]: 0 })).toEqual([local]);
+    expect(candidateIds({ [other]: 0 })).toEqual([local]);
   });
 });

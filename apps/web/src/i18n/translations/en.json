@@ -1644,6 +1644,8 @@
   "b77a2b4d9abda043": "Workspace",
   "656e5640ed1b3e70": "Add to another machine",
   "d55b312aac0fe009": "clones the project",
+  "ff5963f46707f5f1": "Clone",
+  "deb6e4967359adb8": "Clone {repository} onto {machine}?\nIt will be cloned into {path} before the thread starts.",
   "3b4ca180fef92e21": "Insight",
   "cc8cdd1ece34cd75": "Note",
   "19842b180a7e5a5f": "Tip",

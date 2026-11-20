@@ -150,6 +150,25 @@ export function branchBadgeLabel(
   return null;
 }
 
+// Outside the component: the React compiler's purity check flags this read inside it.
+const nowIso = () => new Date().toISOString();
+
+function confirmClone(names: {
+  readonly repository: string;
+  readonly machine: string;
+  readonly path: string;
+}): Promise<boolean> {
+  return new Promise((resolve) =>
+    Dialog.confirm({
+      title: m(msg("Clone {repository} onto {machine}?", names)),
+      message: m(msg("It will be cloned into {path} before the thread starts.", names)),
+      confirmText: m(msg("Clone", { $context: "clone a repository" })),
+      onConfirm: () => resolve(true),
+      onCancel: () => resolve(false),
+    }),
+  );
+}
+
 type NewTaskFlowContextValue = {
   readonly activeNewTask: { readonly pendingKey: string | null } | null;
   readonly projectScopes: ReadonlyArray<HomeProjectScope>;
@@ -685,12 +704,24 @@ export function NewTaskFlowProvider(
   const startProjectClone = useAtomCommand(sourceControlEnvironment.startProjectClone, {
     reportFailure: false,
   });
-  // The draft moves to the clone right away; its composer shows progress and holds the start.
+  // Asks first. The draft then moves to the clone; its composer shows progress and holds the start.
   const cloneToEnvironment = async (
     environmentId: EnvironmentId,
     remoteUrl: string,
   ): Promise<boolean> => {
     if (!selectedProject) return false;
+    const destinationPath = getDefaultCloneDestinationPath(
+      remoteUrl,
+      serverConfigs.get(environmentId)?.settings,
+    );
+    const confirmed = await confirmClone({
+      repository: selectedProject.repositoryIdentity?.displayName ?? selectedProject.title,
+      machine:
+        environments.find((environment) => environment.environmentId === environmentId)
+          ?.environmentLabel ?? environmentId,
+      path: destinationPath,
+    });
+    if (!confirmed) return false;
     const request = {};
     latestSwitchRef.current = request;
     setSwitchingToEnvironmentId(environmentId);
@@ -700,12 +731,9 @@ export function NewTaskFlowProvider(
       input: {
         projectId: ProjectId.make(uuidv4()),
         title: selectedProject.title,
-        createdAt: new Date().toISOString(),
+        createdAt: nowIso(),
         remoteUrl,
-        destinationPath: getDefaultCloneDestinationPath(
-          remoteUrl,
-          serverConfigs.get(environmentId)?.settings,
-        ),
+        destinationPath,
       },
     });
     const project =

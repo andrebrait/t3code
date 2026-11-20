@@ -40,7 +40,9 @@ import { loadBalancingCandidateIds, loadBalancingSendWarning } from "./composerS
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { seedDraftModelSelection } from "../../lib/seedDraftModelSelection";
 import { draftFanoutSelectionsAtom } from "./chatViewSend";
-import { cloneFinished, cloneProjectToClusterMachine } from "../../lib/addProjectToMachine";
+import { cloneProjectToClusterMachine } from "../../lib/addProjectToMachine";
+import { getDefaultCloneDestinationPath } from "@t3tools/client-runtime/operations/projects";
+import { requestConfirmDialog } from "../../confirmDialog";
 import type { EnvironmentOption } from "../BranchToolbar.logic";
 
 interface DraftEnvironmentRoutingInput {
@@ -131,7 +133,8 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     loadBalancingSettings.loadBalancingWeights,
   );
   const readRouting = useStableCallback(() => ({ input, loadBalancingCandidates }));
-  // Starts cloning the draft's project onto a cluster machine that lacks it; null after a toast.
+  // Asks, then starts cloning the draft's project onto a cluster machine that lacks it.
+  // Null when declined, or after a toast.
   const startClusterClone = async (
     draft: Pick<DraftSessionState, "environmentId" | "projectId">,
     target: EnvironmentOption & { readonly cloneRemoteUrl: string },
@@ -140,12 +143,32 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       (project) => project.environmentId === draft.environmentId && project.id === draft.projectId,
     );
     if (!source) return null;
+    const destinationPath = getDefaultCloneDestinationPath(
+      target.cloneRemoteUrl,
+      environmentById.get(target.environmentId)?.serverConfig?.settings,
+    );
+    const question = m(
+      msg(
+        "Clone {repository} onto {machine}?\nIt will be cloned into {path} before the thread starts.",
+        {
+          repository: source.repositoryIdentity?.displayName ?? source.title,
+          machine: target.label,
+          path: destinationPath,
+        },
+      ),
+    );
+    const confirmed =
+      requestConfirmDialog(question, {
+        initialFocus: "confirm",
+        confirmLabel: m(msg("Clone", { $context: "clone a repository" })),
+      }) ?? Promise.resolve(window.confirm(question));
+    if (!(await confirmed)) return null;
     try {
       const projectId = await cloneProjectToClusterMachine({
         project: source,
         target: { environmentId: target.environmentId, label: target.label },
-        targetSettings: environmentById.get(target.environmentId)?.serverConfig?.settings,
         remoteUrl: target.cloneRemoteUrl,
+        destinationPath,
       });
       return scopeProjectRef(target.environmentId, projectId);
     } catch (cause) {
@@ -189,9 +212,6 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       const target = current.input.logicalProjectEnvironments.find(
         (candidate) => candidate.environmentId === environmentId,
       );
-      if (target && !target.projectId && target.cloneRemoteUrl && originalDraft) {
-        return cloneBeforeSend(originalDraft, { ...target, cloneRemoteUrl: target.cloneRemoteUrl });
-      }
       if (!target?.projectId) {
         toastManager.add({
           type: "warning",
@@ -217,57 +237,12 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       return true;
     });
   };
-  // The send waits on the clone; its composer banner shows progress, and a failed or
-  // cancelled clone keeps the draft there unsent with the banner's retry.
-  const cloneBeforeSend = async (
-    originalDraft: DraftSessionState,
-    target: EnvironmentOption & { readonly cloneRemoteUrl: string },
-  ) => {
-    if (!draftId) return false;
-    const projectRef = await startClusterClone(originalDraft, target);
-    const draft = getDraftSession(draftId);
-    if (
-      !projectRef ||
-      readRouting().input.draftId !== draftId ||
-      !draft ||
-      draft.promotedTo ||
-      draft.environmentId !== originalDraft.environmentId ||
-      draft.projectId !== originalDraft.projectId
-    )
-      return false;
-    carryFanoutSelections(draft, target.environmentId);
-    flushSync(() =>
-      setDraftThreadContext(draftId, {
-        projectRef,
-        environmentSelection: "auto",
-        loadBalancedEnvironmentId: target.environmentId,
-        branch: originalDraft.branch ?? null,
-      }),
-    );
-    if (!(await cloneFinished(projectRef.environmentId, projectRef.projectId))) return false;
-    const settled = getDraftSession(draftId);
-    return (
-      readRouting().input.draftId === draftId &&
-      settled !== null &&
-      !settled.promotedTo &&
-      settled.environmentId === projectRef.environmentId &&
-      settled.projectId === projectRef.projectId
-    );
-  };
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- writes the resolved load-balanced environment into the draft store once the async pick settles
   useEffect(() => {
     if (!needsLoadBalancing || loadBalancing.pending || !draftId || sendInFlightRef.current) return;
     const target = logicalProjectEnvironments.find(
       (environment) => environment.environmentId === loadBalancing.environmentId,
     );
-    // A machine that would clone keeps the draft here until the send clones it.
-    if (target && !target.projectId && target.cloneRemoteUrl) {
-      setDraftThreadContext(draftId, {
-        environmentSelection: "auto",
-        loadBalancedEnvironmentId: target.environmentId,
-      });
-      return;
-    }
     if (!target?.projectId) return;
     const draft = getDraftSession(draftId);
     if (draft) carryFanoutSelections(draft, target.environmentId);

@@ -5,7 +5,6 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { scopedProjectKey } from "@t3tools/client-runtime/environment";
-import { getDefaultCloneDestinationPath } from "@t3tools/client-runtime/operations/projects";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type {
   EnvironmentId,
@@ -56,15 +55,10 @@ function failureMessage(result: Parameters<typeof squashAtomCommandFailure>[0]):
 }
 
 /**
- * Resolves when the clone reaches a phase `settles` accepts, or null once it is
- * removed. By default a failed or cancelled clone keeps waiting, since the
- * composer offers a retry.
+ * Resolves when the clone finishes, or null once it is removed. A failed or
+ * cancelled clone keeps waiting, since the composer offers a retry.
  */
-function waitForClone(
-  environmentId: EnvironmentId,
-  projectId: ProjectId,
-  settles: (phase: ProjectCloneSnapshot["phase"]) => boolean = (phase) => phase === "done",
-) {
+function waitForClone(environmentId: EnvironmentId, projectId: ProjectId) {
   return new Promise<ProjectCloneSnapshot | null>((resolve) => {
     const atom = environmentProjectClonesAtom(environmentId);
     let seen = false;
@@ -74,7 +68,7 @@ function waitForClone(
       if (settled) return;
       const clone = clones.find((candidate) => candidate.projectId === projectId);
       if (clone) seen = true;
-      const result = clone && settles(clone.phase) ? clone : !clone && seen ? null : undefined;
+      const result = clone?.phase === "done" ? clone : !clone && seen ? null : undefined;
       if (result === undefined) return;
       settled = true;
       unsubscribe?.();
@@ -223,24 +217,12 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
   return projectId;
 }
 
-/** True once the clone finishes; false when it fails, is cancelled, or is removed. */
-export async function cloneFinished(
-  environmentId: EnvironmentId,
-  projectId: ProjectId,
-): Promise<boolean> {
-  const clone = await waitForClone(environmentId, projectId, (phase) => phase !== "running");
-  return clone?.phase === "done";
-}
-
-/**
- * Clones a project onto a cluster machine that lacks it, into the folder the
- * Add to another machine dialog proposes and copying no ignored files.
- */
+/** Clones a project onto a cluster machine that lacks it, copying no ignored files. */
 export function cloneProjectToClusterMachine(input: {
   readonly project: Pick<EnvironmentProject, "environmentId" | "workspaceRoot" | "title">;
   readonly target: { readonly environmentId: EnvironmentId; readonly label: string };
-  readonly targetSettings: Parameters<typeof getDefaultCloneDestinationPath>[1];
   readonly remoteUrl: string;
+  readonly destinationPath: string;
 }): Promise<ProjectId> {
   return addProjectToMachine({
     source: { environmentId: input.project.environmentId, cwd: input.project.workspaceRoot },
@@ -249,7 +231,7 @@ export function cloneProjectToClusterMachine(input: {
     projectId: newProjectId(),
     title: input.project.title,
     remoteUrl: input.remoteUrl,
-    destinationPath: getDefaultCloneDestinationPath(input.remoteUrl, input.targetSettings),
+    destinationPath: input.destinationPath,
     files: [],
   });
 }

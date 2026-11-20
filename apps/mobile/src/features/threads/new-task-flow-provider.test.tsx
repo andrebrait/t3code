@@ -52,6 +52,11 @@ vi.mock("../../state/entities", () => ({
   waitForProject: vi.fn(),
 }));
 vi.mock("../../state/environments", () => ({ useEnvironments: () => ({ environments: [] }) }));
+vi.mock("../../state/preferences", async () => {
+  const { AsyncResult, Atom } = await import("effect/reactivity");
+  return { mobilePreferencesAtom: Atom.make(AsyncResult.success({})) };
+});
+vi.mock("../../state/server", () => ({ serverEnvironment: {} }));
 vi.mock("../../state/sourceControl", () => ({ sourceControlEnvironment: {} }));
 vi.mock("../../lib/uuid", () => ({ uuidv4: () => "uuid" }));
 vi.mock("../../state/vcs", () => ({

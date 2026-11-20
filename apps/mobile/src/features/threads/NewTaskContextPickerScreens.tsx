@@ -207,6 +207,32 @@ export function NewTaskEnvironmentPickerRouteScreen() {
           showsVerticalScrollIndicator={false}
         >
           <PickerSurface>
+            {flow.canAutoBalance ? (
+              <Pressable
+                accessibilityRole="radio"
+                accessibilityState={{ checked: flow.autoEnvironment }}
+                disabled={flow.switchingToEnvironmentId !== null}
+                onPress={() => {
+                  void Haptics.selectionAsync();
+                  flow.chooseAutoEnvironment();
+                  navigation.goBack();
+                }}
+                className="min-h-16 flex-row items-center gap-3 border-b border-border-subtle bg-grouped-card px-4 py-3 active:bg-subtle"
+              >
+                <SymbolView name="server.rack" size={20} tintColorClassName="accent-icon-muted" />
+                <View className="min-w-0 flex-1 gap-1">
+                  <Text className="text-base font-t3-medium text-foreground" numberOfLines={1}>
+                    {gt("Auto balance")}
+                  </Text>
+                  <Text className="text-xs text-foreground-muted" numberOfLines={2}>
+                    {gt("Starts on the machine with the most free CPU and memory when you send.")}
+                  </Text>
+                </View>
+                {flow.autoEnvironment ? (
+                  <SymbolView name="checkmark" size={16} tintColorClassName="accent-icon" />
+                ) : null}
+              </Pressable>
+            ) : null}
             {flow.environments.map((environment, index) => (
               <EnvironmentPickerRow
                 key={String(environment.environmentId)}
@@ -220,7 +246,9 @@ export function NewTaskEnvironmentPickerRouteScreen() {
                     if (switched) navigation.goBack();
                   });
                 }}
-                selected={flow.selectedEnvironmentId === environment.environmentId}
+                selected={
+                  !flow.autoEnvironment && flow.selectedEnvironmentId === environment.environmentId
+                }
                 title={environment.environmentLabel}
               />
             ))}

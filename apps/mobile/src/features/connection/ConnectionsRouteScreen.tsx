@@ -10,6 +10,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppBar } from "../../components/ui/AppBar";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
 import { LocalEnvironmentList } from "./LocalEnvironmentList";
+import { LoadBalancingSettings } from "./LoadBalancingSettings";
 import { PullRequestRoutingSettings } from "./PullRequestRoutingSettings";
 import { useClusterHosts, useClusterMemberIds } from "../../state/cluster";
 import { ClusterSection } from "./ClusterSection";
@@ -91,6 +92,7 @@ export function ConnectionsRouteScreen() {
           />
         ))}
         <PullRequestRoutingSettings />
+        <LoadBalancingSettings />
       </ScrollView>
     </View>
   );

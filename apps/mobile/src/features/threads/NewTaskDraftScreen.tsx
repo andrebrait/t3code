@@ -13,7 +13,7 @@ import { scopedProjectKey } from "../../lib/scopedEntities";
 import { connectionTone } from "../connection/connectionTone";
 import { runtimeConnectionErrorText } from "../connection/environmentStatusText";
 import { AppBar } from "../../components/ui/AppBar";
-import { ThreadId } from "@t3tools/contracts";
+import { type EnvironmentId, type MessageId, ThreadId } from "@t3tools/contracts";
 
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
@@ -29,7 +29,7 @@ import {
   usePreventRemove,
   useRoute,
 } from "@react-navigation/native";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { KeyboardController } from "react-native-keyboard-controller";
@@ -722,6 +722,42 @@ export function NewTaskDraftScreen(props: {
     return message.messageId;
   }
 
+  // An Auto send that moved the draft finishes with the render showing the picked machine.
+  const latestStartRef = useRef(handleStart);
+  const autoMoveRef = useRef<{ environmentId: EnvironmentId; resume: () => void } | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resumes an Auto send once the draft renders on the machine it moved to
+  useLayoutEffect(() => {
+    latestStartRef.current = handleStart;
+    if (!flow.submitting && autoMoveRef.current?.environmentId === selectedProject?.environmentId) {
+      autoMoveRef.current?.resume();
+      autoMoveRef.current = null;
+    }
+  });
+  async function handleSend(): Promise<MessageId | null> {
+    if (!flow.autoEnvironment || isComposerInteractionLocked || cloneBlocksStart) {
+      return handleStart();
+    }
+    flow.setSubmitting(true);
+    const target = await flow.autoBalance();
+    if (target === null || target === selectedProject?.environmentId) {
+      flow.setSubmitting(false);
+      if (target !== null) return handleStart();
+      Dialog.alert(
+        gt("Choose a machine to continue"),
+        gt(
+          "No eligible machine has available resources. Choose a machine in the composer to override.",
+        ),
+      );
+      return null;
+    }
+    const moved = new Promise<void>((resume) => {
+      autoMoveRef.current = { environmentId: target, resume };
+    });
+    flow.setSubmitting(false);
+    await moved;
+    return latestStartRef.current();
+  }
+
   // Keep the current surface until the local draft selection is ready. Publishing
   // an empty loading surface here flashes between two already-cached threads.
   if (!selectedProject) return null;
@@ -756,7 +792,7 @@ export function NewTaskDraftScreen(props: {
   const environmentControl = (
     <DraftEnvironmentControl
       connectionState={connectionState}
-      label={selectedEnvironmentLabel}
+      label={flow.autoEnvironment ? gt("Auto balance") : selectedEnvironmentLabel}
       machineKind={resolveEnvironmentMachineKind(selectedEnvironmentServerConfig)}
       disabled={isComposerInteractionLocked}
       onChooseEnvironment={() => openContextPicker("NewTaskEnvironment")}
@@ -1095,7 +1131,7 @@ export function NewTaskDraftScreen(props: {
         onRemoveDraftImage={flow.removeAttachment}
         onStopThread={() => {}}
         onResumeQueue={null}
-        onSendMessage={handleStart}
+        onSendMessage={handleSend}
         offersSideChat={false}
         onSendCommand={async () => null}
         onReconnectEnvironment={() => onReconnectEnvironment(selectedProject.environmentId)}

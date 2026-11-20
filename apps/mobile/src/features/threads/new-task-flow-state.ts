@@ -30,6 +30,8 @@ export interface NewTaskFlowState {
   readonly draftKey: string | null;
   readonly submitting: boolean;
   readonly expandedProvider: string | null;
+  /** The user picked a machine, so Auto balance no longer chooses one. */
+  readonly manualEnvironment: boolean;
 }
 
 export const INITIAL_NEW_TASK_FLOW_STATE: NewTaskFlowState = {
@@ -38,6 +40,7 @@ export const INITIAL_NEW_TASK_FLOW_STATE: NewTaskFlowState = {
   draftKey: null,
   submitting: false,
   expandedProvider: null,
+  manualEnvironment: false,
 };
 
 // Every draft route on the stack keeps its flow, not just the one the provider

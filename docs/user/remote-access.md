@@ -444,6 +444,8 @@ connected to over its link. It follows the thread while it runs. On web and
 desktop it opens as a tab in the right panel, beside the thread you are in, or
 in the main view with ⌘/Ctrl-click, like
 [subagents and side chats](thread-sidebar.md#open-a-thread-beside-the-one-you-are-in).
+On mobile it opens in the inspector on layouts that have one, where Maximize
+fills the screen, and as its own screen elsewhere.
 The read-only view shows the thread's messages and each step's summary and
 output. Diffs, attachments, approvals and the thread's panels need a connection
 to that machine.

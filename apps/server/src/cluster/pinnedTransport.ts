@@ -4,10 +4,10 @@ import * as NodeNet from "node:net";
 import * as NodeTls from "node:tls";
 
 import { normalizeCertificateFingerprint } from "@t3tools/contracts";
-import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
-import type * as HttpClient from "effect/http/HttpClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import type * as Socket from "effect/socket/Socket";
 import type * as Undici from "undici";
 
@@ -97,8 +97,15 @@ export const makeAgent = Effect.fn("pinnedTransport.makeAgent")(function* (
     ),
     (agent) => Effect.promise(() => agent.destroy()),
   );
-  const httpClient = yield* NodeHttpClient.makeUndici.pipe(
-    Effect.provideService(NodeHttpClient.Dispatcher, dispatcher),
+  // undici's own fetch takes the dispatcher; @effect/platform-node's undici client would import undici statically.
+  const pinnedFetch = ((input, init) =>
+    undici.fetch(input as never, { ...init, dispatcher } as never)) as typeof globalThis.fetch;
+  const httpClient = (yield* HttpClient.HttpClient.pipe(
+    Effect.provide(FetchHttpClient.layer),
+  )).pipe(
+    HttpClient.transform((effect) =>
+      Effect.provideService(effect, FetchHttpClient.Fetch, pinnedFetch),
+    ),
   );
   const webSocket: Socket.WebSocketConstructor["Service"] = (url, options) => {
     const { protocols, headers } =

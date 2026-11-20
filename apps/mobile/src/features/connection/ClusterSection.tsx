@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   clusterActions,
   clusterJoinTarget,
+  clusterMemberConnectionPhase,
   clusterMemberStatusText,
   offersCluster,
 } from "@t3tools/client-runtime/state/cluster";
@@ -15,6 +16,7 @@ import {
   type EnvironmentId,
   parseClusterJoinUrl,
 } from "@t3tools/contracts";
+import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import * as Clipboard from "expo-clipboard";
 import { useGT, useMessages } from "gt-react-native";
 import { type ReactNode, useState } from "react";
@@ -30,8 +32,10 @@ import { Sheet } from "../../components/ui/Sheet";
 import type { MessageResolver } from "../../i18n/messages";
 import { cn } from "../../lib/cn";
 import { clusterEnvironment } from "../../state/cluster";
+import { useEnvironments } from "../../state/environments";
 import { useEnvironmentServerConfig } from "../../state/entities";
 import { formatEnvironmentQueryError, useEnvironmentQuery } from "../../state/query";
+import { ConnectionStatusDot } from "./ConnectionStatusDot";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "../settings/components/SettingsSection";
 
@@ -59,6 +63,7 @@ export function ClusterSection(props: {
     clusterEnvironment.status({ environmentId: props.environmentId, input: {} }),
   );
   const role = status.data?.role ?? null;
+  const { presentationById } = useEnvironments();
   const members = useEnvironmentQuery(
     role === "main"
       ? clusterEnvironment.members({ environmentId: props.environmentId, input: {} })
@@ -167,6 +172,12 @@ export function ClusterSection(props: {
                 )}
               >
                 <ListRow
+                  leading={
+                    <ClusterMemberLight
+                      member={member}
+                      devicePhase={presentationById.get(member.environmentId)?.connection.phase}
+                    />
+                  }
                   label={member.label}
                   description={member.address}
                   meta={
@@ -227,6 +238,20 @@ const Row = ({ children }: { readonly children: ReactNode }) => (
 const Separated = ({ children }: { readonly children: ReactNode }) => (
   <View className="border-t border-border-subtle">{children}</View>
 );
+
+function ClusterMemberLight(props: {
+  readonly member: ClusterMember;
+  readonly devicePhase: EnvironmentConnectionPhase | undefined;
+}) {
+  const phase = clusterMemberConnectionPhase(props.member, props.devicePhase);
+  return (
+    <ConnectionStatusDot
+      state={phase}
+      pulse={phase === "connecting" || phase === "reconnecting"}
+      size={8}
+    />
+  );
+}
 
 function SheetBody({ children }: { readonly children: ReactNode }) {
   return (

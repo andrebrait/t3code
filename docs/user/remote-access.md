@@ -520,8 +520,13 @@ To add a machine over HTTPS:
    later, the member shows **certificate changed**. Invite the machine again.
 
 To add a machine over SSH instead, enter `user@host` in **Add member** on the
-web or desktop app, or run `t3 cluster add ssh://user@host`. The main host needs an SSH
-key or a running ssh-agent; password prompts are not supported. The mobile app adds members by join string only.
+web or desktop app, or run `t3 cluster add ssh://user@host`. Under **Sign in with**,
+choose your SSH config or agent, a password, or a key file on the main host (with
+its passphrase if it has one). On the command line, pass `--password-stdin`, or
+`--key <path>` with `--passphrase-stdin` for an encrypted key. The main host signs
+in once that way, then adds its own cluster key to `~/.ssh/authorized_keys` on
+the member and reconnects with only that key. Nothing you type is saved. The
+mobile app adds members by join string only.
 
 - Joining signs out the member's other remote clients and ends its linked
   environments. From then on it accepts only its main host and apps on its own
@@ -532,7 +537,10 @@ key or a running ssh-agent; password prompts are not supported. The mobile app a
   already running on a member continues.
 
 To take a machine out, select it on the main host and choose **Remove**, or run
-`t3 cluster remove <id>`. On the member, choose **Leave cluster** or run
+`t3 cluster remove <id>`. Removing an SSH member also deletes the main host's
+cluster key from its `~/.ssh/authorized_keys`; if the member cannot be reached,
+the app says so, and you delete the line ending in `t3code-cluster:` there by
+hand. On the member, choose **Leave cluster** or run
 `t3 cluster leave`. It becomes a standalone environment again, and you pair
 apps with it as usual.
 

@@ -7854,7 +7854,7 @@
   "9ff2b973feb1f701": "Lämnar…",
   "102b7b49ef3cdee1": "Lämna klustret",
   "32b30e32d451d005": "Lägg till en medlem",
-  "db3aa4a62b85e301": "Klistra in anslutningssträngen från den andra maskinens Gå med i ett kluster…, eller ange user@host för att lägga till den via SSH. SSH kräver en nyckel eller en körande ssh-agent på den här maskinen.",
+  "c54285d78ba3d478": "Klistra in anslutningssträngen från den andra maskinen, eller ange user@host för att lägga till den via SSH. SSH kräver en nyckel eller en körande ssh-agent på den här maskinen.",
   "7310ad79a8ffca7d": "Anslutningssträng eller SSH-mål",
   "3953d1cccd71ab7e": "Namn (valfritt)",
   "ccfce317440dbd50": "Låter en huvudvärd lägga till den här maskinen som medlem.",

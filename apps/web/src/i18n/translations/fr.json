@@ -7849,7 +7849,7 @@
   "9ff2b973feb1f701": "Départ…",
   "102b7b49ef3cdee1": "Quitter le cluster",
   "32b30e32d451d005": "Ajouter un membre",
-  "db3aa4a62b85e301": "Collez la chaîne d’adhésion depuis Rejoindre un cluster… de l’autre machine, ou saisissez user@host pour l’ajouter via SSH. SSH nécessite une clé ou un ssh-agent en cours d’exécution sur cette machine.",
+  "c54285d78ba3d478": "Collez la chaîne d’adhésion de l’autre machine, ou saisissez user@host pour l’ajouter via SSH. SSH nécessite une clé ou un ssh-agent en cours d’exécution sur cette machine.",
   "7310ad79a8ffca7d": "Chaîne d’adhésion ou cible SSH",
   "3953d1cccd71ab7e": "Nom (facultatif)",
   "ccfce317440dbd50": "Permet à un hôte principal d’ajouter cette machine comme membre.",

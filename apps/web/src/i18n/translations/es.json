@@ -7848,7 +7848,7 @@
   "9ff2b973feb1f701": "Saliendo…",
   "102b7b49ef3cdee1": "Salir del clúster",
   "32b30e32d451d005": "Añadir un miembro",
-  "db3aa4a62b85e301": "Pega la cadena de unión de Unirse a un clúster… de la otra máquina, o introduce user@host para añadirla por SSH. SSH necesita una clave o un ssh-agent en ejecución en esta máquina.",
+  "c54285d78ba3d478": "Pega la cadena de unión de la otra máquina, o introduce user@host para añadirla por SSH. SSH necesita una clave o un ssh-agent en ejecución en esta máquina.",
   "7310ad79a8ffca7d": "Cadena de unión o destino SSH",
   "3953d1cccd71ab7e": "Nombre (opcional)",
   "ccfce317440dbd50": "Permite que un host principal añada esta máquina como miembro.",

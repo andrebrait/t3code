@@ -6,6 +6,7 @@ import {
   type ClusterSshLogin,
   parseClusterSshTarget,
 } from "@t3tools/contracts";
+import { CLI_RELEASE_BASE_URL_ENV } from "@t3tools/shared/cliRelease";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SshAuth from "@t3tools/ssh/auth";
 import { type RunSshCommandOptions, runSshCommand, shellSingleQuote } from "@t3tools/ssh/command";
@@ -21,6 +22,7 @@ import * as Redacted from "effect/Redacted";
 import * as Semaphore from "effect/Semaphore";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import packageJson from "../../package.json" with { type: "json" };
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -345,12 +347,28 @@ const make = Effect.gen(function* () {
 
 export const layer = Layer.effect(ClusterSshKey, make);
 
+/** What a member runs: a source checkout when dev points at one, else this server's own release. */
+export const resolveSshCliRunner = (env: NodeJS.ProcessEnv): SshTunnel.RemoteT3RunnerOptions => {
+  const devEntryPath = env.T3CODE_DEV_REMOTE_T3_SERVER_ENTRY_PATH?.trim();
+  if (devEntryPath) {
+    return { nodeScriptPath: devEntryPath, nodeEngineRange: packageJson.engines.node };
+  }
+  const releaseBaseUrl = env[CLI_RELEASE_BASE_URL_ENV]?.trim() || undefined;
+  return {
+    archiveVersion: packageJson.version,
+    ...(releaseBaseUrl === undefined ? {} : { releaseBaseUrl }),
+  };
+};
+
 /** The ssh manager for member links: members outlive this host, and only the cluster key signs in. */
 export const layerSshManager = Layer.unwrap(
   Effect.gen(function* () {
     const key = yield* ClusterSshKey;
+    const env = yield* HostProcess.Environment;
     return SshTunnel.SshEnvironmentManager.layer({
       keepRemoteServer: true,
+      // Per connect: a login shell's environment may be installed after this layer is built.
+      resolveCliRunner: Effect.sync(() => resolveSshCliRunner(env)),
       identityFile: key.identityFile.pipe(
         Effect.mapError(
           (error) =>

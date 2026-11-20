@@ -108,3 +108,26 @@ it.effect(
       assert.equal(yield* Ref.get(ensured), 3);
     }),
 );
+
+it.effect("turns a throw while launching the remote runner into a ClusterError", () =>
+  Effect.gen(function* () {
+    const ssh = SshTunnel.SshEnvironmentManager.of({
+      ensureEnvironment: () => Effect.sync(() => SshTunnel.buildRemoteT3RunnerScript()),
+      disconnectEnvironment: () => Effect.void,
+      closeAllTunnels: Effect.void,
+    });
+    const upstream = yield* ClusterUpstream.ClusterUpstream.pipe(
+      Effect.provide(
+        ClusterUpstream.layer.pipe(
+          Layer.provide(Layer.succeed(SshTunnel.SshEnvironmentManager, ssh)),
+          dependencies,
+        ),
+      ),
+    );
+    const error = yield* upstream
+      .connect({ transport: "ssh", sshTarget: "me@box" })
+      .pipe(Effect.flip);
+    assert.equal(error._tag, "ClusterError");
+    assert.match(error.message, /runner/);
+  }),
+);

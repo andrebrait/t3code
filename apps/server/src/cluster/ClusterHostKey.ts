@@ -54,12 +54,14 @@ export const parseKnownHostsFiles = (value: string, isAbsolute: (file: string) =
 };
 
 // Keys of the type ssh named, so the probe captures the key it judged.
-const HOST_KEY_ALGORITHMS: Record<string, string> = {
+export const HOST_KEY_ALGORITHMS: Record<string, string> = {
   ED25519: "ssh-ed25519",
   ECDSA: "ecdsa-sha2-nistp256,ecdsa-sha2-nistp384,ecdsa-sha2-nistp521",
   RSA: "rsa-sha2-512,rsa-sha2-256,ssh-rsa",
   "ED25519-SK": "sk-ssh-ed25519@openssh.com",
   "ECDSA-SK": "sk-ecdsa-sha2-nistp256@openssh.com",
+  DSA: "ssh-dss",
+  "MLDSA44-ED25519": "ssh-mldsa44-ed25519@openssh.com",
 };
 
 /** `ssh-keygen -l -f` lines: `256 SHA256:… host (ED25519)`. */
@@ -102,7 +104,8 @@ export const verifyHostKey = Effect.fn("ClusterHostKey.verifyHostKey")(function*
 
   const check = yield* runSshCommand(target, {
     batchMode: "yes",
-    preHostArgs: [...noAuth, "-o", "StrictHostKeyChecking=yes"],
+    // ERROR keeps ssh's host key verdicts but drops a server banner and the user's QUIET.
+    preHostArgs: [...noAuth, "-o", "StrictHostKeyChecking=yes", "-o", "LogLevel=ERROR"],
     remoteCommandArgs: ["true"],
     timeoutMs: PROBE_TIMEOUT_MS,
   }).pipe(
@@ -150,7 +153,8 @@ export const verifyHostKey = Effect.fn("ClusterHostKey.verifyHostKey")(function*
           "-o",
           "StrictHostKeyChecking=accept-new",
           "-o",
-          `UserKnownHostsFile=${file}`,
+          // ssh splits an unquoted value on whitespace.
+          `UserKnownHostsFile="${file}"`,
           "-o",
           "GlobalKnownHostsFile=/dev/null",
           ...(algorithms === undefined ? [] : ["-o", `HostKeyAlgorithms=${algorithms}`]),

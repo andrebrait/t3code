@@ -83,6 +83,10 @@ export const ClusterAddMemberInput = Schema.Struct({
   label: Schema.optionalKey(TrimmedNonEmptyString),
   /** For an ssh target; ssh config and agent when absent. */
   login: Schema.optionalKey(ClusterSshLogin),
+  /** The ssh host key the user approved; the add goes on only while the host still presents it. */
+  trustHostKey: Schema.optionalKey(
+    Schema.Struct({ fingerprint: TrimmedNonEmptyString, replace: Schema.Boolean }),
+  ),
 });
 export type ClusterAddMemberInput = typeof ClusterAddMemberInput.Type;
 
@@ -130,6 +134,15 @@ export const ClusterJoinResult = Schema.Struct({
 });
 export type ClusterJoinResult = typeof ClusterJoinResult.Type;
 
+/** The key an ssh host presented, and the ones this machine knew for it, as `SHA256:…`. */
+export const ClusterHostKey = Schema.Struct({
+  host: Schema.String,
+  keyType: Schema.String,
+  fingerprint: Schema.String,
+  knownFingerprints: Schema.Array(Schema.String),
+});
+export type ClusterHostKey = typeof ClusterHostKey.Type;
+
 export class ClusterError extends Schema.TaggedError<ClusterError>()(
   "ClusterError",
   {
@@ -145,12 +158,15 @@ export class ClusterError extends Schema.TaggedError<ClusterError>()(
       "incompatible",
       "pairing_rejected",
       "ssh",
+      "host_key_unknown",
+      "host_key_changed",
       "storage",
       "forbidden",
       // The control link: a fetch or reply for a call nothing waits for.
       "unknown_request",
     ]),
     message: Schema.String,
+    hostKey: Schema.optionalKey(ClusterHostKey),
     cause: Schema.optionalKey(Schema.Defect()),
   },
   { httpApiStatus: 409 },

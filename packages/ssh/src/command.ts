@@ -134,6 +134,9 @@ export function controlMasterArgs(controlPath: string): string[] {
   return ["-F", "none", "-o", `ControlPath=${controlPath}`, "-o", "ProxyCommand=false"];
 }
 
+export const sshIdentityArgs = (identityFile: string | undefined): string[] =>
+  identityFile === undefined ? [] : ["-i", identityFile, "-o", "IdentitiesOnly=yes"];
+
 export function getLastNonEmptyOutputLine(stdout: string): string | null {
   return (
     stdout
@@ -273,6 +276,7 @@ const runSshCommandInScope = Effect.fn("ssh/command.runSshCommand.inScope")(func
     "ServerAliveInterval=15",
     "-o",
     "ServerAliveCountMax=3",
+    ...sshIdentityArgs(input.identityFile),
     ...(input.preHostArgs ?? []),
     "--",
     hostSpec,

@@ -40,6 +40,7 @@ import {
   resolveSshTarget,
   runSshCommand,
   shellSingleQuote,
+  sshIdentityArgs,
   sshTargetLogFields,
   targetConnectionKey,
 } from "./command.ts";
@@ -121,6 +122,8 @@ export interface SshEnvironmentManagerOptions {
   // Closing or disconnecting drops only the tunnel, and the server launches marked kept, so no
   // client's stop ends it: a cluster host's member must outlive its host and other clients.
   readonly keepRemoteServer?: boolean;
+  // Every ssh run signs in with only this key, so no agent or ssh config key decides.
+  readonly identityFile?: Effect.Effect<string, SshCommandError>;
 }
 
 interface SshTunnelEntry {
@@ -1257,6 +1260,7 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
       ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),
       ...(input?.batchMode === undefined ? {} : { batchMode: input.batchMode }),
       ...(input?.interactiveAuth === undefined ? {} : { interactiveAuth: input.interactiveAuth }),
+      ...(input?.identityFile === undefined ? {} : { identityFile: input.identityFile }),
     });
     if (!getLastNonEmptyOutputLine(result.stdout)) {
       return yield* new SshLaunchError({
@@ -1317,6 +1321,7 @@ export const issueRemotePairingToken = Effect.fn("ssh/tunnel.issueRemotePairingT
     ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),
     ...(input?.batchMode === undefined ? {} : { batchMode: input.batchMode }),
     ...(input?.interactiveAuth === undefined ? {} : { interactiveAuth: input.interactiveAuth }),
+    ...(input?.identityFile === undefined ? {} : { identityFile: input.identityFile }),
   });
   if (!getLastNonEmptyOutputLine(result.stdout)) {
     return yield* new SshPairingError({
@@ -1368,6 +1373,7 @@ const stopRemoteServer = Effect.fn("ssh/tunnel.stopRemoteServer")(function* (
     ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),
     ...(input?.batchMode === undefined ? {} : { batchMode: input.batchMode }),
     ...(input?.interactiveAuth === undefined ? {} : { interactiveAuth: input.interactiveAuth }),
+    ...(input?.identityFile === undefined ? {} : { identityFile: input.identityFile }),
   });
   yield* Effect.logInfo("ssh.remoteServer.stop.succeeded", {
     ...sshTargetLogFields(target),
@@ -1390,6 +1396,7 @@ const readRemoteServerLogTail = Effect.fn("ssh/tunnel.readRemoteServerLogTail")(
     ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),
     ...(input?.batchMode === undefined ? {} : { batchMode: input.batchMode }),
     ...(input?.interactiveAuth === undefined ? {} : { interactiveAuth: input.interactiveAuth }),
+    ...(input?.identityFile === undefined ? {} : { identityFile: input.identityFile }),
   });
   return result.stdout.trim();
 });
@@ -1551,6 +1558,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     "ServerAliveInterval=15",
     "-o",
     "ServerAliveCountMax=3",
+    ...sshIdentityArgs(input.authOptions.identityFile),
     "-n",
     "-N",
     "-L",
@@ -1918,13 +1926,17 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     input: SshAuthAttemptInput<T>,
   ): Effect.fn.Return<T, SshEnvironmentEffectError, SshEnvironmentEffectContext> {
     const promptService = yield* SshAuth.SshPasswordPrompt;
+    const identity =
+      options.identityFile === undefined ? {} : { identityFile: yield* options.identityFile };
     const authOptions =
       input.authSecret === null
         ? {
+            ...identity,
             batchMode: promptService.isAvailable ? ("yes" as const) : ("no" as const),
             interactiveAuth: !promptService.isAvailable,
           }
         : {
+            ...identity,
             authSecret: input.authSecret,
             batchMode: "no" as const,
             interactiveAuth: true,

@@ -190,3 +190,28 @@ it.effect("lists the private keys in ~/.ssh by their headers, never their conten
     assert.deepEqual(yield* ClusterSshKey.listSshKeyFiles(NodePath.join(dir, "missing")), []);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
+
+describe("resolveSshCliRunner", () => {
+  it("runs the source checkout when the dev entry path is set", () => {
+    const runner = ClusterSshKey.resolveSshCliRunner({
+      T3CODE_DEV_REMOTE_T3_SERVER_ENTRY_PATH: " /src/apps/server/src/bin.ts ",
+    });
+    assert.equal(runner.nodeScriptPath, "/src/apps/server/src/bin.ts");
+    assert.isString(runner.nodeEngineRange);
+    assert.isUndefined(runner.archiveVersion);
+  });
+
+  it("otherwise installs this server's own release, from the release base url if set", () => {
+    const plain = ClusterSshKey.resolveSshCliRunner({
+      T3CODE_DEV_REMOTE_T3_SERVER_ENTRY_PATH: " ",
+    });
+    assert.match(plain.archiveVersion ?? "", /^\d+\.\d+\.\d+/);
+    assert.isUndefined(plain.nodeScriptPath);
+    assert.isUndefined(plain.releaseBaseUrl);
+    assert.equal(
+      ClusterSshKey.resolveSshCliRunner({ T3CODE_RELEASE_BASE_URL: "https://mirror.test/t3" })
+        .releaseBaseUrl,
+      "https://mirror.test/t3",
+    );
+  });
+});

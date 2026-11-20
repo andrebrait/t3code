@@ -79,6 +79,10 @@ const forwardPublicDescriptor = Effect.fn("ClusterProxy.forwardPublicDescriptor"
   request: HttpServerRequest.HttpServerRequest,
 ) {
   const cluster = yield* ClusterService.ClusterService;
+  // Unauthenticated: answer only while the control link is up, so a stranger never starts ssh.
+  const members = Option.getOrElse(yield* Stream.runHead(cluster.members), () => []);
+  const status = members.find((member) => member.environmentId === memberId)?.status;
+  if (status !== undefined && status !== "online") return memberFailure(memberId, status);
   const connected = yield* Effect.result(cluster.connect(memberId));
   if (Result.isFailure(connected)) return connectFailure(memberId, connected.failure);
   const { upstream } = connected.success;

@@ -1,4 +1,5 @@
 import {
+  AuthAccessWriteScope,
   ClusterError,
   type ClusterMember,
   type ClusterSshLogin,
@@ -37,6 +38,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import { renderTerminalQrCode } from "../startupAccess.ts";
 import * as ServerTls from "../tls/ServerTls.ts";
 import { authLocationFlags, type CliAuthLocationFlags, resolveCliAuthConfig } from "./config.ts";
+import * as RunningServer from "./runningServer.ts";
 
 const layerClusterCli = ClusterService.layer.pipe(
   Layer.provide(
@@ -67,7 +69,7 @@ const runWithCluster = Effect.fn("cluster.runWithCluster")(function* <A, E, R>(
     Effect.flatMap(run),
     Effect.provide(
       layerClusterCli.pipe(
-        Layer.provide(ServerConfig.layer(config)),
+        Layer.provideMerge(ServerConfig.layer(config)),
         Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
       ),
     ),
@@ -392,7 +394,12 @@ const leaveCommand = Command.make("leave", { ...authLocationFlags }).pipe(
   Command.withDescription("Leave this environment's cluster and become standalone again."),
   Command.withHandler((flags) =>
     runWithCluster(flags, (cluster) =>
-      cluster.leave.pipe(
+      // Through the running server, so it revokes its main host's session and closes its link.
+      RunningServer.changeState({
+        scopes: [AuthAccessWriteScope],
+        viaServer: (client) => client.cluster.leave({ headers: {} }),
+        locally: cluster.leave,
+      }).pipe(
         Effect.flatMap(({ left }) =>
           Console.log(
             left

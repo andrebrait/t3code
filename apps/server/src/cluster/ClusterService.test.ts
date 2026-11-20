@@ -2,6 +2,7 @@
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import {
+  AuthAccessWriteScope,
   ClusterError,
   type ClusterHostRequest,
   type ClusterLinkEvent,
@@ -23,6 +24,9 @@ import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
@@ -274,6 +278,39 @@ it.effect("a member leaves without its main host and is standalone again", () =>
       expect(yield* member.cluster.leave).toEqual({ left: false });
     }),
   ),
+);
+
+it.effect(
+  "over HTTP, only its cluster host or a session that manages access makes a member leave",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const member = yield* serveMember(box);
+        const join = Effect.flatMap(member.cluster.invite({}), (invite) =>
+          member.cluster.acceptJoin({ code: invite.code, host: studio }, bot),
+        );
+        const leave = (token: string) =>
+          HttpClient.execute(
+            HttpClientRequest.post(`${member.url}/api/cluster/leave`).pipe(
+              HttpClientRequest.bearerToken(token),
+            ),
+          ).pipe(Effect.map((response) => response.status));
+
+        const host = yield* join;
+        const reader = yield* member.auth.issueSession({ scopes: ["orchestration:read"] });
+        expect(yield* leave(reader.token)).toBe(403);
+        const manager = yield* member.auth.issueSession({ scopes: [AuthAccessWriteScope] });
+        expect(yield* leave(manager.token)).toBe(200);
+        expect(yield* member.cluster.status).toMatchObject({ role: "standalone" });
+        expect(
+          yield* member.auth.authenticateHttpRequest(bearer(host.token)).pipe(Effect.flip),
+        ).toMatchObject({ _tag: "ServerAuthInvalidCredentialError" });
+
+        const rejoined = yield* join;
+        expect(yield* leave(rejoined.token)).toBe(200);
+        expect(yield* member.cluster.status).toMatchObject({ role: "standalone" });
+      }),
+    ).pipe(Effect.provide(FetchHttpClient.layer)),
 );
 
 const memberCount = (main: { cluster: { members: Stream.Stream<ReadonlyArray<unknown>> } }) =>

@@ -1,4 +1,5 @@
 import {
+  AuthAccessWriteScope,
   type ClusterError,
   ClusterLinkEvent,
   EnvironmentAuthenticatedPrincipal,
@@ -48,9 +49,14 @@ export const layer = HttpApiBuilder.group(
         Effect.fn("environment.cluster.leave")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           const principal = yield* EnvironmentAuthenticatedPrincipal;
-          if (principal.subject !== EnvironmentAuth.CLUSTER_HOST_SUBJECT) {
+          // A client proxied by the cluster host never holds access:write here.
+          if (
+            principal.subject !== EnvironmentAuth.CLUSTER_HOST_SUBJECT &&
+            !principal.scopes.has(AuthAccessWriteScope)
+          ) {
             return yield* new EnvironmentHttpForbiddenError({
-              message: "Only this environment's cluster host can remove it from the cluster.",
+              message:
+                "Only this environment's cluster host, or a session that manages its access, can remove it from the cluster.",
             });
           }
           return yield* cluster.leave;

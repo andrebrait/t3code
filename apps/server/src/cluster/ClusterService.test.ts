@@ -1,4 +1,13 @@
-import { type ClusterHostRequest, type ClusterLinkEvent, EnvironmentId } from "@t3tools/contracts";
+// @effect-diagnostics nodeBuiltinImport:off - Reads the test's secrets directory directly.
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import {
+  ClusterError,
+  type ClusterHostRequest,
+  type ClusterLinkEvent,
+  type ClusterSshLogin,
+  EnvironmentId,
+} from "@t3tools/contracts";
 import { SshCommandError } from "@t3tools/ssh/errors";
 import * as SshTunnel from "@t3tools/ssh/tunnel";
 import { expect, it } from "@effect/vitest";
@@ -9,6 +18,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -16,6 +26,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ClusterService from "./ClusterService.ts";
+import * as ClusterSshKey from "./ClusterSshKey.ts";
 import {
   awaitStatus,
   type ClusterEnvironment,
@@ -321,6 +332,7 @@ it.effect("removal tells a reachable member, and forgets one that already left",
       expect(yield* main.cluster.removeMember(box.environmentId)).toEqual({
         removed: true,
         memberNotified: false,
+        keyRevoked: null,
       });
       expect(yield* main.cluster.status).toMatchObject({ role: "standalone" });
 
@@ -328,6 +340,7 @@ it.effect("removal tells a reachable member, and forgets one that already left",
       expect(yield* main.cluster.removeMember(box.environmentId)).toEqual({
         removed: true,
         memberNotified: true,
+        keyRevoked: null,
       });
       expect(yield* member.cluster.status).toMatchObject({ role: "standalone", host: null });
       expect(yield* memberCount(main)).toEqual(Option.some(0));
@@ -338,6 +351,7 @@ it.effect("removal tells a reachable member, and forgets one that already left",
       expect(yield* main.cluster.removeMember(box.environmentId)).toEqual({
         removed: true,
         memberNotified: true,
+        keyRevoked: null,
       });
       expect(yield* member.cluster.status).toMatchObject({ role: "standalone", host: null });
     }),
@@ -403,47 +417,92 @@ it.effect("two adds of one member racing leave the stored token the live one", (
   ),
 );
 
-it.effect("adds a member over ssh, and a password prompt fails with a clear error", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const member = yield* serveMember(box);
-      const ssh = SshTunnel.SshEnvironmentManager.of({
-        ensureEnvironment: (target, options) =>
-          target.username === "nokey"
-            ? Effect.fail(
-                new SshCommandError({
-                  message: "Permission denied (publickey,password).",
-                  command: ["ssh"],
-                  exitCode: 255,
-                  stderr: "",
-                }),
-              )
-            : member.cluster.invite({}).pipe(
-                Effect.orDie,
-                Effect.map((invite) => ({
-                  target,
-                  httpBaseUrl: member.url,
-                  wsBaseUrl: member.url.replace(/^http/, "ws"),
-                  pairingToken: options?.pairingPurpose === "cluster-member" ? invite.code : null,
-                })),
-              ),
-        disconnectEnvironment: () => Effect.void,
-        closeAllTunnels: Effect.void,
-      });
-      const main = yield* makeEnvironment(studioDescriptor, ssh);
-      expect(yield* main.cluster.addMember({ target: "ssh://me@box:2222" })).toMatchObject({
-        transport: "ssh",
-        address: "me@box:2222",
-      });
-      expect(
-        yield* main.cluster.addMember({ target: "nokey@other" }).pipe(Effect.flip),
-      ).toMatchObject({
-        reason: "ssh",
-        message:
-          "SSH to nokey@other needs a key or a running ssh-agent; this server cannot answer password prompts.",
-      });
-    }),
-  ),
+it.effect(
+  "adds an ssh member after installing its key with the chosen login, and revokes it on removal",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const member = yield* serveMember(box);
+        const ssh = SshTunnel.SshEnvironmentManager.of({
+          ensureEnvironment: (target, options) =>
+            target.username === "nokey"
+              ? Effect.fail(
+                  new SshCommandError({
+                    message: "Permission denied (publickey,password).",
+                    command: ["ssh"],
+                    exitCode: 255,
+                    stderr: "",
+                  }),
+                )
+              : member.cluster.invite({}).pipe(
+                  Effect.orDie,
+                  Effect.map((invite) => ({
+                    target,
+                    httpBaseUrl: member.url,
+                    wsBaseUrl: member.url.replace(/^http/, "ws"),
+                    pairingToken: options?.pairingPurpose === "cluster-member" ? invite.code : null,
+                  })),
+                ),
+          disconnectEnvironment: () => Effect.void,
+          closeAllTunnels: Effect.void,
+        });
+        const authorized: Array<readonly [string, ClusterSshLogin]> = [];
+        const revoked: Array<string> = [];
+        const sshKey = ClusterSshKey.ClusterSshKey.of({
+          identityFile: Effect.succeed("/state/cluster_ed25519"),
+          authorize: (target, login) =>
+            target === "refused@box"
+              ? Effect.fail(new ClusterError({ reason: "ssh", message: "refused" }))
+              : Effect.sync(() => void authorized.push([target, login])),
+          revoke: (target) => Effect.sync(() => revoked.push(target)).pipe(Effect.as(false)),
+          list: Effect.succeed([]),
+        });
+        const main = yield* makeEnvironment(studioDescriptor, ssh, sshKey);
+        const password = { _tag: "password", password: Redacted.make("hunter2-secret") } as const;
+        const keyFile = {
+          _tag: "keyFile",
+          path: "/home/me/.ssh/id_ed25519",
+          passphrase: Redacted.make("passphrase-secret"),
+        } as const;
+        expect(
+          yield* main.cluster.addMember({ target: "ssh://me@box:2222", login: password }),
+        ).toMatchObject({ transport: "ssh", address: "me@box:2222" });
+        yield* main.cluster.addMember({ target: "me@box:2222", login: keyFile });
+        yield* main.cluster.addMember({ target: "me@box:2222" });
+        expect(authorized).toEqual([
+          ["me@box:2222", password],
+          ["me@box:2222", keyFile],
+          ["me@box:2222", { _tag: "config" }],
+        ]);
+        // What the user typed is never stored.
+        const stored = [
+          JSON.stringify(yield* main.sql`SELECT * FROM cluster_members`),
+          ...NodeFS.readdirSync(main.secretsDir).map((name) =>
+            NodeFS.readFileSync(NodePath.join(main.secretsDir, name), "utf8"),
+          ),
+        ].join("\n");
+        expect(stored).not.toContain("hunter2-secret");
+        expect(stored).not.toContain("passphrase-secret");
+
+        expect(
+          yield* main.cluster.addMember({ target: "refused@box" }).pipe(Effect.flip),
+        ).toMatchObject({ reason: "ssh", message: "refused" });
+        expect(
+          yield* main.cluster.addMember({ target: "nokey@other" }).pipe(Effect.flip),
+        ).toMatchObject({
+          reason: "ssh",
+          message:
+            "SSH to nokey@other refused this host's cluster key. Add the member again to reinstall it.",
+        });
+
+        expect(yield* main.cluster.removeMember(box.environmentId)).toEqual({
+          removed: true,
+          memberNotified: true,
+          keyRevoked: false,
+        });
+        expect(revoked).toEqual(["me@box:2222"]);
+      }),
+    ),
 );
 
 const readCall = {

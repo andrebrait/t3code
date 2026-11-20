@@ -76,6 +76,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.clusterRemoveMember]: "cluster",
   [WS_METHODS.clusterRenameMember]: "cluster",
   [WS_METHODS.clusterLeave]: "cluster",
+  [WS_METHODS.clusterSshKeys]: "cluster",
   [WS_METHODS.serverGetSettings]: "server",
   [WS_METHODS.serverUpdateSettings]: "server",
   [WS_METHODS.serverSearchAcpRegistry]: "server",

@@ -142,7 +142,16 @@ const createFixtureSource = Effect.fn("createMigrateDevDbFixtureSource")(functio
         VALUES ('delivery-1', 'task-1', 'key-1', 1900000000000, '{}', '{}', '[]')`;
       yield* sql`INSERT INTO auth_sessions (session_id, subject, scopes, method, issued_at, expires_at)
         VALUES ('session-1', 'user', '[]', 'pairing', '2026-08-01', '2027-08-01')`;
-      if (toMigrationInclusive === undefined) yield* insertPeerLink(sql);
+      if (toMigrationInclusive === undefined) {
+        yield* insertPeerLink(sql);
+        yield* sql`INSERT INTO cluster_members
+          (environment_id, label, transport, url, secret_name, status, joined_at)
+          VALUES ('environment-gpu', 'GPU', 'https', 'https://gpu.example', 'cluster-member-gpu',
+            'online', '2026-11-01')`;
+        yield* sql`INSERT INTO cluster_membership
+          (singleton, host_environment_id, host_label, joined_at, host_session_id)
+          VALUES (1, 'environment-studio', 'Studio', '2026-11-01', 'session-host')`;
+      }
     }),
   );
   return databasePath;
@@ -193,7 +202,9 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
               (SELECT COUNT(*) FROM scheduled_task_webhook_replay_keys) +
                 (SELECT COUNT(*) FROM scheduled_task_webhook_pending) AS webhooks,
               (SELECT COUNT(*) FROM orchestration_v2_projection_context_transfers) AS transfers,
-              (SELECT COUNT(*) FROM peer_environment_links) AS links`;
+              (SELECT COUNT(*) FROM peer_environment_links) +
+                (SELECT COUNT(*) FROM cluster_members) +
+                (SELECT COUNT(*) FROM cluster_membership) AS links`;
           return { threads, events, sessions, pullRequest, project, leftovers };
         }),
       );

@@ -1942,6 +1942,8 @@
   "77786d60b52150dd": "No se pudo quitar {label}",
   "273389bda2366710": "{label} quitado aquí",
   "372d2d33a8ca8db8": "No respondió. Ejecuta t3 cluster leave en él para terminar.",
+  "5596d3a6af9c2db4": "La clave del clúster sigue en {label}",
+  "bacdab8c7c77200c": "El host principal no pudo conectarse para eliminar su clave. Borra allí la línea t3code-cluster de ~/.ssh/authorized_keys.",
   "887009bf8c4df3ab": "¿Quitar {label}?",
   "4c9f798d43774921": "Volverá a ser un entorno independiente.",
   "651052b5c10b8205": "No se pudo añadir el miembro",

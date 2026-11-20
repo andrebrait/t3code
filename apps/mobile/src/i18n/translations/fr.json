@@ -1942,6 +1942,8 @@
   "77786d60b52150dd": "Impossible de retirer {label}",
   "273389bda2366710": "{label} retiré ici",
   "372d2d33a8ca8db8": "Aucune réponse. Exécutez t3 cluster leave sur cette machine pour terminer.",
+  "5596d3a6af9c2db4": "La clé du cluster est toujours sur {label}",
+  "bacdab8c7c77200c": "L’hôte principal n’a pas pu le joindre pour retirer sa clé. Supprime la ligne t3code-cluster de ~/.ssh/authorized_keys sur cette machine.",
   "887009bf8c4df3ab": "Retirer {label} ?",
   "4c9f798d43774921": "Il redeviendra un environnement autonome.",
   "651052b5c10b8205": "Impossible d’ajouter le membre",

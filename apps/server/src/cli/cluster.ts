@@ -1,5 +1,7 @@
 import {
+  ClusterError,
   type ClusterMember,
+  type ClusterSshLogin,
   ClusterInvite,
   ClusterRemoveMemberResult,
   EnvironmentId,
@@ -7,20 +9,22 @@ import {
   ClusterStatus,
 } from "@t3tools/contracts";
 import * as SshAuth from "@t3tools/ssh/auth";
-import * as SshTunnel from "@t3tools/ssh/tunnel";
 import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
+import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ClusterService from "../cluster/ClusterService.ts";
+import * as ClusterSshKey from "../cluster/ClusterSshKey.ts";
 import * as ClusterUpstream from "../cluster/ClusterUpstream.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -33,10 +37,12 @@ import { authLocationFlags, type CliAuthLocationFlags, resolveCliAuthConfig } fr
 const layerClusterCli = ClusterService.layer.pipe(
   Layer.provide(
     ClusterUpstream.layer.pipe(
-      Layer.provide(SshTunnel.SshEnvironmentManager.layer()),
+      // Kept like the server's: the CLI exiting must not stop the member it just added.
+      Layer.provide(ClusterSshKey.layerSshManager),
       Layer.provide(SshAuth.SshPasswordPrompt.disabledLayer),
     ),
   ),
+  Layer.provide(ClusterSshKey.layer),
   Layer.provide(PeerLinks.layer),
   Layer.provide(ServerTls.layer),
   Layer.provideMerge(ServerSettings.layer.pipe(Layer.provide(ManagedPolicy.layer))),
@@ -141,28 +147,94 @@ const inviteCommand = Command.make("invite", {
   ),
 );
 
+// Secrets come only from stdin, never argv, which other users on this machine can read.
+const readStdinSecret = Effect.gen(function* () {
+  const stdio = yield* Stdio.Stdio;
+  const text = yield* stdio.stdin.pipe(Stream.decodeText(), Stream.mkString);
+  return Redacted.make(text.replace(/\r?\n$/, ""));
+}).pipe(
+  Effect.mapError(
+    (cause) => new ClusterError({ reason: "ssh", message: "Could not read stdin.", cause }),
+  ),
+);
+
+const sshLogin = (flags: {
+  readonly passwordStdin: boolean;
+  readonly key: Option.Option<string>;
+  readonly passphraseStdin: boolean;
+}): Effect.Effect<ClusterSshLogin | undefined, ClusterError, Stdio.Stdio> => {
+  if (flags.passwordStdin && Option.isSome(flags.key)) {
+    return Effect.fail(
+      new ClusterError({
+        reason: "invalid_target",
+        message: "Pass --password-stdin or --key, not both.",
+      }),
+    );
+  }
+  if (flags.passphraseStdin && Option.isNone(flags.key)) {
+    return Effect.fail(
+      new ClusterError({ reason: "invalid_target", message: "--passphrase-stdin needs --key." }),
+    );
+  }
+  if (flags.passwordStdin) {
+    return readStdinSecret.pipe(
+      Effect.map((password) => ({ _tag: "password", password }) as const),
+    );
+  }
+  if (Option.isNone(flags.key)) return Effect.undefined;
+  const path = flags.key.value;
+  return flags.passphraseStdin
+    ? readStdinSecret.pipe(
+        Effect.map((passphrase) => ({ _tag: "keyFile", path, passphrase }) as const),
+      )
+    : Effect.succeed({ _tag: "keyFile", path });
+};
+
 const addCommand = Command.make("add", {
   ...authLocationFlags,
   target: Argument.String("target").pipe(
     Argument.withDescription("The member's join string, or an ssh target such as ssh://me@box."),
   ),
   label: Flag.String("label").pipe(Flag.withDescription("What to call the member."), Flag.optional),
+  passwordStdin: Flag.Boolean("password-stdin").pipe(
+    Flag.withDescription("Sign in to an ssh target once with the password read from stdin."),
+    Flag.withDefault(false),
+  ),
+  key: Flag.String("key").pipe(
+    Flag.withDescription("Sign in to an ssh target once with this private key file."),
+    Flag.optional,
+  ),
+  passphraseStdin: Flag.Boolean("passphrase-stdin").pipe(
+    Flag.withDescription("Read the --key file's passphrase from stdin."),
+    Flag.withDefault(false),
+  ),
 }).pipe(
-  Command.withDescription("Add an environment to this machine's cluster."),
+  Command.withDescription(
+    "Add an environment to this machine's cluster. Over ssh, this machine signs in once and installs its own cluster key there.",
+  ),
   Command.withHandler((flags) =>
-    runWithCluster(flags, (cluster) =>
-      cluster
-        .addMember({
-          target: flags.target,
-          ...(Option.isSome(flags.label) ? { label: flags.label.value } : {}),
-        })
-        .pipe(
-          Effect.flatMap((member) =>
-            Console.log(
-              `Added ${member.label} (${member.environmentId}) over ${member.transport}.`,
+    sshLogin(flags).pipe(
+      Effect.flatMap((login) =>
+        runWithCluster(flags, (cluster) =>
+          cluster
+            .addMember({
+              target: flags.target,
+              ...(Option.isSome(flags.label) ? { label: flags.label.value } : {}),
+              ...(login === undefined ? {} : { login }),
+            })
+            .pipe(
+              Effect.flatMap((member) =>
+                Console.log(
+                  `Added ${member.label} (${member.environmentId}) over ${member.transport}.${
+                    member.transport === "ssh"
+                      ? " Installed this machine's cluster key in ~/.ssh/authorized_keys there."
+                      : ""
+                  }`,
+                ),
+              ),
             ),
-          ),
         ),
+      ),
     ),
   ),
 );
@@ -206,9 +278,17 @@ const removeCommand = Command.make("remove", {
                   ? encodeRemoveJson(result)
                   : !result.removed
                     ? "No such member."
-                    : result.memberNotified
-                      ? "Removed the member."
-                      : "Removed the member, but it could not be told. Run `t3 cluster leave` there to finish.",
+                    : `${
+                        result.memberNotified
+                          ? "Removed the member."
+                          : "Removed the member, but it could not be told. Run `t3 cluster leave` there to finish."
+                      }${
+                        result.keyRevoked === null
+                          ? ""
+                          : result.keyRevoked
+                            ? " Removed this machine's cluster key there."
+                            : " Its cluster key could not be removed there: delete the t3code-cluster line in ~/.ssh/authorized_keys by hand."
+                      }`,
               ),
             ),
           ),

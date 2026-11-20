@@ -2716,6 +2716,7 @@ export const layerWsRpc = (
         [WS_METHODS.clusterRemoveMember]: ({ memberId }) => cluster.removeMember(memberId),
         [WS_METHODS.clusterRenameMember]: (input) => cluster.renameMember(input),
         [WS_METHODS.clusterLeave]: (_input) => cluster.leave,
+        [WS_METHODS.clusterSshKeys]: (_input) => cluster.sshKeys,
         [WS_METHODS.peerLinksAnswerRequest]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
             Effect.andThen(peerLinkRequests.answer(input)),

@@ -183,6 +183,7 @@ import * as CloudHttp from "./cloud/http.ts";
 import * as ClusterProxy from "./cluster/ClusterProxy.ts";
 import * as ClusterHttp from "./cluster/http.ts";
 import * as ClusterService from "./cluster/ClusterService.ts";
+import * as ClusterSshKey from "./cluster/ClusterSshKey.ts";
 import * as ClusterUpstream from "./cluster/ClusterUpstream.ts";
 import * as ClusterHostRequests from "./mcp/ClusterHostRequests.ts";
 import * as GuestHttp from "./guest/http.ts";
@@ -239,7 +240,6 @@ import * as OrchestrationHttp from "./orchestration-v2/http.ts";
 import * as ProjectHttp from "./project/http.ts";
 import * as NetService from "@t3tools/shared/Net";
 import * as SshAuth from "@t3tools/ssh/auth";
-import * as SshTunnel from "@t3tools/ssh/tunnel";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import {
   disableTailscaleServe,
@@ -932,12 +932,13 @@ const layerMakeRoutes = Layer.mergeAll(
         ClusterService.layer.pipe(
           Layer.provide(
             ClusterUpstream.layer.pipe(
-              Layer.provide(SshTunnel.SshEnvironmentManager.layer({ keepRemoteServer: true })),
-              // The server's own ssh keys or agent; no client answers its prompts, desktop included.
+              Layer.provide(ClusterSshKey.layerSshManager),
+              // Only the cluster key signs in; no client answers its prompts, desktop included.
               Layer.provide(SshAuth.SshPasswordPrompt.disabledLayer),
               Layer.provide(NetService.layer),
             ),
           ),
+          Layer.provide(ClusterSshKey.layer),
         ),
       ),
       Layer.provideMerge(PeerMcpClient.layer),

@@ -92,6 +92,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.clusterRemoveMember]: AuthAccessWriteScope,
   [WS_METHODS.clusterRenameMember]: AuthAccessWriteScope,
   [WS_METHODS.clusterLeave]: AuthAccessWriteScope,
+  // Names the main host's private key files, never their contents.
+  [WS_METHODS.clusterSshKeys]: AuthAccessWriteScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 

@@ -50,7 +50,7 @@ const sshError = (target: string, cause: unknown) =>
   new ClusterError({
     reason: "ssh",
     message: SshAuth.isSshAuthFailure(cause)
-      ? `SSH to ${target} needs a key or a running ssh-agent; this server cannot answer password prompts.`
+      ? `SSH to ${target} refused this host's cluster key. Add the member again to reinstall it.`
       : cause instanceof Error
         ? cause.message
         : `SSH to ${target} failed.`,

@@ -31,14 +31,14 @@ const DROPPED_REQUEST_HEADERS = new Set([
   "x-forwarded-proto",
 ]);
 
-// An upstream must not set cookies or security policy on this server's origin; CORS is this server's.
+// An upstream must not set cookies or origin-wide policy here; CORS is this server's. Its CSP stays:
+// it only restricts that response, and agent HTML depends on its sandbox.
 const DROPPED_RESPONSE_HEADERS = new Set([
   ...HOP_BY_HOP,
   "content-encoding",
   "set-cookie",
   "clear-site-data",
   "strict-transport-security",
-  "content-security-policy",
 ]);
 
 const keep = (

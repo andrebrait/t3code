@@ -44,7 +44,9 @@ const fixture = (
       if (fail) return yield* Effect.die(new Error("upstream failed"));
       return HttpClientResponse.fromWeb(
         request,
-        new Response(stream ?? "frame", { headers: { "set-cookie": "upstream=1" } }),
+        new Response(stream ?? "frame", {
+          headers: { "set-cookie": "upstream=1", "content-security-policy": "sandbox" },
+        }),
       );
     }),
   );
@@ -281,6 +283,8 @@ describe("device hub proxy", () => {
     );
     expect(routed.status).toBe(200);
     expect(routed.headers.get("set-cookie")).toBeNull();
+    // Upstream HTML relies on its sandbox policy; without it, it would run on this origin.
+    expect(routed.headers.get("content-security-policy")).toBe("sandbox");
     await routed.text();
     expect(requests).toEqual(["https://session.test/api?device=udid-1"]);
     expect(headers[0]?.authorization).toBe("Bearer session-token");

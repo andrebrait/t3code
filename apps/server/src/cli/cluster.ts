@@ -22,7 +22,7 @@ import * as Schema from "effect/Schema";
 import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
-import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
+import { Argument, Command, Flag, GlobalFlag, Prompt } from "effect/cli";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ClusterService from "../cluster/ClusterService.ts";
@@ -53,9 +53,9 @@ const layerClusterCli = ClusterService.layer.pipe(
   Layer.provide(FetchHttpClient.layer),
 );
 
-const runWithCluster = Effect.fn("cluster.runWithCluster")(function* <A, E>(
+const runWithCluster = Effect.fn("cluster.runWithCluster")(function* <A, E, R>(
   flags: CliAuthLocationFlags,
-  run: (cluster: ClusterService.ClusterService["Service"]) => Effect.Effect<A, E>,
+  run: (cluster: ClusterService.ClusterService["Service"]) => Effect.Effect<A, E, R>,
   options?: { readonly quietLogs?: boolean },
 ) {
   const logLevel = yield* GlobalFlag.LogLevel;
@@ -165,7 +165,17 @@ const sshLogin = (flags: {
   readonly passwordStdin: boolean;
   readonly key: Option.Option<string>;
   readonly passphraseStdin: boolean;
+  readonly trustHostKey: Option.Option<string>;
+  readonly replaceHostKey: boolean;
 }): Effect.Effect<ClusterSshLogin | undefined, ClusterError, Stdio.Stdio> => {
+  if (flags.replaceHostKey && Option.isNone(flags.trustHostKey)) {
+    return Effect.fail(
+      new ClusterError({
+        reason: "invalid_target",
+        message: "--replace-host-key needs --trust-host-key.",
+      }),
+    );
+  }
   if (flags.passwordStdin && Option.isSome(flags.key)) {
     return Effect.fail(
       new ClusterError({
@@ -206,6 +216,38 @@ const sshLogin = (flags: {
     : Effect.succeed({ _tag: "keyFile", path });
 };
 
+const isHostKeyError = (error: ClusterError) =>
+  error.hostKey !== undefined &&
+  (error.reason === "host_key_unknown" || error.reason === "host_key_changed");
+
+/** The host key error a script sees, naming the flags that trust exactly that key. */
+export const hostKeyHint = (error: ClusterError) =>
+  new ClusterError({
+    reason: error.reason,
+    message: `${error.message}\nIf that fingerprint is right, run the command again with --trust-host-key ${error.hostKey?.fingerprint ?? ""}${
+      error.reason === "host_key_changed" ? " --replace-host-key" : ""
+    }.`,
+    ...(error.hostKey === undefined ? {} : { hostKey: error.hostKey }),
+  });
+
+/** Asks in the terminal, as ssh does; a changed key needs `replace` typed out. */
+const askHostKey = Effect.fn("cluster.askHostKey")(function* (error: ClusterError) {
+  const replace = error.reason === "host_key_changed";
+  yield* Console.log(error.message);
+  const approved = replace
+    ? yield* Prompt.run(
+        Prompt.String({ message: "Type replace to replace the old key and continue" }),
+      ).pipe(
+        Effect.map((answer) => answer.trim() === "replace"),
+        Effect.orElseSucceed(() => false),
+      )
+    : yield* Prompt.run(Prompt.Confirm({ message: "Trust this host?", initial: false })).pipe(
+        Effect.orElseSucceed(() => false),
+      );
+  if (!approved) return yield* error;
+  return { fingerprint: error.hostKey?.fingerprint ?? "", replace };
+});
+
 const addCommand = Command.make("add", {
   ...authLocationFlags,
   target: Argument.String("target").pipe(
@@ -224,6 +266,18 @@ const addCommand = Command.make("add", {
     Flag.withDescription("Read the --key file's passphrase from stdin."),
     Flag.withDefault(false),
   ),
+  trustHostKey: Flag.String("trust-host-key").pipe(
+    Flag.withDescription(
+      "Trust the ssh target's host key if its fingerprint is this one, such as SHA256:….",
+    ),
+    Flag.optional,
+  ),
+  replaceHostKey: Flag.Boolean("replace-host-key").pipe(
+    Flag.withDescription(
+      "With --trust-host-key, replace a changed host key in ~/.ssh/known_hosts.",
+    ),
+    Flag.withDefault(false),
+  ),
 }).pipe(
   Command.withDescription(
     "Add an environment to this machine's cluster. Over ssh, this machine signs in once and installs its own cluster key there.",
@@ -231,25 +285,50 @@ const addCommand = Command.make("add", {
   Command.withHandler((flags) =>
     sshLogin(flags).pipe(
       Effect.flatMap((login) =>
-        runWithCluster(flags, (cluster) =>
-          cluster
-            .addMember({
-              target: flags.target,
-              ...(Option.isSome(flags.label) ? { label: flags.label.value } : {}),
-              ...(login === undefined ? {} : { login }),
-            })
-            .pipe(
-              Effect.flatMap((member) =>
-                Console.log(
-                  `Added ${member.label} (${member.environmentId}) over ${member.transport}.${
-                    member.transport === "ssh"
-                      ? " Installed this machine's cluster key in ~/.ssh/authorized_keys there."
-                      : ""
-                  }`,
-                ),
+        runWithCluster(flags, (cluster) => {
+          const input = {
+            target: flags.target,
+            ...(Option.isSome(flags.label) ? { label: flags.label.value } : {}),
+            ...(login === undefined ? {} : { login }),
+          };
+          // A secret on stdin means stdin is not the user's terminal.
+          const interactive =
+            Boolean(process.stdin.isTTY && process.stdout.isTTY) &&
+            !flags.passwordStdin &&
+            !flags.passphraseStdin;
+          const added = Option.isSome(flags.trustHostKey)
+            ? cluster.addMember({
+                ...input,
+                trustHostKey: {
+                  fingerprint: flags.trustHostKey.value,
+                  replace: flags.replaceHostKey,
+                },
+              })
+            : cluster
+                .addMember(input)
+                .pipe(
+                  Effect.catchIf(isHostKeyError, (error) =>
+                    interactive
+                      ? askHostKey(error).pipe(
+                          Effect.flatMap((trustHostKey) =>
+                            cluster.addMember({ ...input, trustHostKey }),
+                          ),
+                        )
+                      : Effect.fail(hostKeyHint(error)),
+                  ),
+                );
+          return added.pipe(
+            Effect.flatMap((member) =>
+              Console.log(
+                `Added ${member.label} (${member.environmentId}) over ${member.transport}.${
+                  member.transport === "ssh"
+                    ? " Installed this machine's cluster key in ~/.ssh/authorized_keys there."
+                    : ""
+                }`,
               ),
             ),
-        ),
+          );
+        }),
       ),
     ),
   ),

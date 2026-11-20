@@ -191,25 +191,22 @@ const make = Effect.gen(function* () {
     );
 
   // A peer that renews a used link says when it now ends; one that does not sends nothing.
-  const recordLinkExpiry = (
-    { link }: McpRoute,
-    headers: Readonly<Record<string, string>>,
-  ) =>
+  const recordLinkExpiry = ({ link }: McpRoute, headers: Readonly<Record<string, string>>) =>
     link === undefined
       ? Effect.void
       : Option.match(
-      Option.filter(
-        Option.flatMap(
-          Option.fromNullishOr(headers[McpInvocationContext.LINK_EXPIRES_AT_HEADER]),
-          DateTime.make,
-        ),
-        (expiresAt) => !DateTime.Equivalence(expiresAt, link.expiresAt),
-      ),
-      {
-        onNone: () => Effect.void,
-        onSome: (expiresAt) => links.recordExpiry(link.environmentId, expiresAt),
-      },
-    );
+          Option.filter(
+            Option.flatMap(
+              Option.fromNullishOr(headers[McpInvocationContext.LINK_EXPIRES_AT_HEADER]),
+              DateTime.make,
+            ),
+            (expiresAt) => !DateTime.Equivalence(expiresAt, link.expiresAt),
+          ),
+          {
+            onNone: () => Effect.void,
+            onSome: (expiresAt) => links.recordExpiry(link.environmentId, expiresAt),
+          },
+        );
 
   const openSession = Effect.fn("PeerMcpClient.openSession")(
     function* (route: McpRoute, limitHeader: Record<string, string>) {

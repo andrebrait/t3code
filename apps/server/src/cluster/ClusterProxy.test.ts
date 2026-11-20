@@ -308,6 +308,11 @@ it.effect("answers 502 for a member that stopped answering", () =>
       const main = yield* serveMain;
       const invite = yield* member.cluster.invite({ url: member.url });
       yield* main.cluster.addMember({ target: invite.joinString ?? "" });
+      // Unauthenticated, so it never dials a member without a live link (for ssh, a spawned ssh).
+      const anonymous = yield* get(
+        `${main.url}/cluster/${box.environmentId}/.well-known/t3/environment`,
+      );
+      expect(anonymous.status).toBe(502);
       const reader = yield* clientToken(main, ["orchestration:read"]);
       yield* Scope.close(memberScope, Exit.void);
 

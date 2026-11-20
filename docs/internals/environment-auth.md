@@ -145,11 +145,15 @@ join codes and its startup link, so exclusivity needs no per-request address che
 
 The main host forwards each client request with its own `cluster-host` token and
 `x-t3-cluster-scopes` naming the client's scopes. The member intersects its
-session with that header, which only narrows, and only for `cluster-host`
-sessions; the proxy always overwrites a client-sent value. An unparseable header
-grants nothing. WebSocket tickets from a `cluster-host` session carry the capped
-scopes in a `scp` claim. The proxy refuses `/api/cluster/*` and strips hop-by-hop
-and origin-affecting headers.
+session with that header, only for `cluster-host` sessions, and always drops
+`access:write`: a proxied client could otherwise mint join codes, pairing links,
+guest shares or MCP approvals on the member that outlive its revocation on the
+main host, so a member's access is managed only on the member itself. The proxy
+always overwrites a client-sent value, and an unparseable header grants nothing.
+WebSocket tickets from a `cluster-host` session carry the capped scopes in a
+`scp` claim. The proxy refuses `/api/cluster/*`, `/mcp` and `/oauth/mcp/*`, and
+strips hop-by-hop and origin-affecting headers; `/api/cluster/leave` also refuses
+any request carrying the scopes header.
 
 The proxy decides on a canonical path (cut at `;`, decoded, slashes collapsed,
 trailing slash trimmed, lowercased) and forwards that same cut path. The

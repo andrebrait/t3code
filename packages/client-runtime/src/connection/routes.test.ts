@@ -490,10 +490,8 @@ describe("cluster member pull request routing key", () => {
     enabled: true,
   });
 
-  it("derives from the main host's key and the member id", () => {
-    expect(pullRequestRoutingConnectionKey(member("host-key"))).toBe(
-      JSON.stringify(["ClusterConnectionTarget", "host-key", "environment-box"]),
-    );
+  it("is the main host's key", () => {
+    expect(pullRequestRoutingConnectionKey(member("host-key"))).toBe("host-key");
   });
 
   it("changes when the main host's address changes", () => {

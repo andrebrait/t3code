@@ -47,10 +47,8 @@ function routeConnectionKey(
   if (target._tag === "RelayConnectionTarget")
     return JSON.stringify([target._tag, target.environmentId]);
   const profile = Option.getOrNull(entry.profile);
-  if (target._tag === "ClusterConnectionTarget")
-    return target.hostConnectionKey === null
-      ? null
-      : JSON.stringify([target._tag, target.hostConnectionKey, target.environmentId]);
+  // A member is reached through its main host, so it shares the host's trust.
+  if (target._tag === "ClusterConnectionTarget") return target.hostConnectionKey;
   if (target._tag === "SshConnectionTarget") {
     if (profile?._tag !== "SshConnectionProfile") return null;
     const { alias, hostname, username, port } = profile.target;
@@ -91,10 +89,7 @@ export function pullRequestRoutingPermissionFor(
   entry: ConnectionCatalogEntry,
   permissions: ReadonlyArray<StoredPullRequestRoutingPermission>,
 ): PullRequestRoutingPermission {
-  const key =
-    entry.target._tag === "ClusterConnectionTarget"
-      ? entry.target.hostConnectionKey
-      : pullRequestRoutingConnectionKey(entry);
+  const key = pullRequestRoutingConnectionKey(entry);
   return key === null
     ? "off"
     : (permissions.find((permission) => permission.connectionKey === key)?.permission ?? "off");

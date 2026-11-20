@@ -2093,13 +2093,7 @@ describe("EnvironmentRegistry cluster members", () => {
               profile: Option.none(),
               enabled: true,
             }),
-          ).toBe(
-            JSON.stringify([
-              "ClusterConnectionTarget",
-              pullRequestRoutingConnectionKey(hostEntry),
-              MEMBER_ID,
-            ]),
-          );
+          ).toBe(pullRequestRoutingConnectionKey(hostEntry));
           expect(hasRoutes(yield* Ref.get(harness.storedTargets), MEMBER_ID)).toBe(false);
           const sessionsBefore = (yield* Ref.get(harness.sessions)).length;
           const entriesBefore = yield* SubscriptionRef.get(registry.entries);

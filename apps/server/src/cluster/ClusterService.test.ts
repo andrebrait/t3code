@@ -584,6 +584,19 @@ it.effect(
           keyRevoked: false,
         });
         expect(revoked).toEqual(["nokey@other", "self@studio", "me@box:2222", "me@box9"]);
+
+        // A failed move drops the stored member, so both its old and its new target lose the key.
+        yield* main.cluster.addMember({
+          target: "me@box9",
+          trustHostKey: { fingerprint: "SHA256:box9", replace: false },
+        });
+        yield* main.sql`CREATE TRIGGER refuse_members BEFORE INSERT ON cluster_members
+          BEGIN SELECT RAISE(ABORT, 'refused'); END`;
+        expect(
+          yield* main.cluster.addMember({ target: "me@box3" }).pipe(Effect.flip),
+        ).toMatchObject({ reason: "storage" });
+        expect(revoked.slice(4)).toEqual(["me@box9", "me@box3"]);
+        expect(yield* main.cluster.storedMembers).toEqual([]);
       }),
     ),
 );

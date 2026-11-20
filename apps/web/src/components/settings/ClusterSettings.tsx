@@ -409,6 +409,10 @@ function AddMemberAction({
         if (busy) return;
         setOpen(next);
         setError(null);
+        if (!next) {
+          setRaw("");
+          setLabel("");
+        }
       }}
     >
       <DialogTrigger

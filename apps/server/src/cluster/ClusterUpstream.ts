@@ -101,6 +101,8 @@ const make = Effect.gen(function* () {
       .pipe(
         Effect.provideContext(sshContext),
         Effect.mapError((cause) => sshError(sshTarget, cause)),
+        // Building the remote runner script throws, which would otherwise escape as a defect.
+        Effect.catchDefect((defect) => Effect.fail(sshError(sshTarget, defect))),
       );
   });
 

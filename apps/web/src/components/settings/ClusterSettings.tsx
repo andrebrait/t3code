@@ -12,6 +12,8 @@ import {
   isAtomCommandInterrupted,
 } from "@t3tools/client-runtime/state/runtime";
 import {
+  type ClusterAddMemberInput,
+  ClusterError,
   type ClusterInvite,
   type ClusterMember,
   type ClusterSshKeyFile,
@@ -19,7 +21,9 @@ import {
   type EnvironmentId,
   parseClusterJoinString,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Schema from "effect/Schema";
 import { ChevronRightIcon, LinkIcon, PlusIcon } from "lucide-react";
 import { T, useGT, useMessages, Var } from "gt-react";
 import { type ComponentProps, type ReactNode, useId, useState } from "react";
@@ -36,6 +40,15 @@ import { useNowMinute } from "../../hooks/useNowMinute";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { ConnectionStatusDot } from "../ConnectionStatusDot";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogPopup,
+  AlertDialogTitle,
+} from "../ui/alert-dialog";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -60,6 +73,19 @@ const commandFailure = (result: AtomCommandResult<unknown, unknown>, m: MessageR
   result._tag === "Failure" && !isAtomCommandInterrupted(result)
     ? formatEnvironmentQueryError(result.cause, m)
     : null;
+
+const isClusterError = Schema.is(ClusterError);
+
+/** The host key an ssh add stopped at, for the user to trust or replace. */
+const hostKeyFailure = (result: AtomCommandResult<unknown, unknown>) => {
+  if (result._tag !== "Failure") return null;
+  const error = Cause.squash(result.cause);
+  return isClusterError(error) &&
+    error.hostKey !== undefined &&
+    (error.reason === "host_key_unknown" || error.reason === "host_key_changed")
+    ? { changed: error.reason === "host_key_changed", ...error.hostKey }
+    : null;
+};
 
 const FailureText = ({ error }: { readonly error: string | null }) =>
   error === null ? null : (
@@ -410,6 +436,7 @@ function AddMemberAction({
   const [customKeyPath, setCustomKeyPath] = useState("");
   const [passphrase, setPassphrase] = useState("");
   const [keys, setKeys] = useState<ReadonlyArray<ClusterSshKeyFile> | null>(null);
+  const [hostKey, setHostKey] = useState<ReturnType<typeof hostKeyFailure>>(null);
   const addMember = useAtomCommand(clusterEnvironment.addMember, { label: "add cluster member" });
   const listKeys = useAtomCommand(clusterEnvironment.sshKeys, { label: "list cluster ssh keys" });
   const target = clusterAddTarget(raw, { ssh: true });
@@ -433,6 +460,7 @@ function AddMemberAction({
     setCustomKeyPath("");
     setPassphrase("");
     setKeys(null);
+    setHostKey(null);
   };
   const chooseMethod = async (next: ClusterSshLogin["_tag"]) => {
     setMethod(next);
@@ -441,7 +469,7 @@ function AddMemberAction({
     setKeys(result._tag === "Success" ? result.value : []);
     setError(commandFailure(result, m));
   };
-  const submit = async () => {
+  const submit = async (trustHostKey?: ClusterAddMemberInput["trustHostKey"]) => {
     if (busy || target === null || (ssh && login === null)) return;
     setBusy(true);
     const result = await addMember({
@@ -450,10 +478,13 @@ function AddMemberAction({
         target,
         ...(label.trim() ? { label: label.trim() } : {}),
         ...(ssh && login !== null ? { login } : {}),
+        ...(trustHostKey === undefined ? {} : { trustHostKey }),
       },
     });
     setBusy(false);
-    setError(commandFailure(result, m));
+    const presented = hostKeyFailure(result);
+    setHostKey(presented);
+    setError(presented === null ? commandFailure(result, m) : null);
     if (result._tag === "Success") {
       toastManager.add({
         type: "success",
@@ -679,6 +710,57 @@ function AddMemberAction({
           </Button>
         </DialogFooter>
       </DialogPopup>
+      <AlertDialog
+        open={hostKey !== null}
+        onOpenChange={(next) => {
+          if (!next) setHostKey(null);
+        }}
+      >
+        <AlertDialogPopup>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {hostKey?.changed ? gt("Host key changed") : gt("Unknown host")}
+            </AlertDialogTitle>
+            <AlertDialogDescription className="whitespace-pre-line break-all">
+              {hostKey === null
+                ? null
+                : hostKey.changed
+                  ? gt(
+                      "The host key for {host} has changed. Someone may be intercepting the connection, or the machine was reinstalled.\nNew {keyType} key fingerprint: {fingerprint}\nPreviously known: {known}",
+                      {
+                        host: hostKey.host,
+                        keyType: hostKey.keyType,
+                        fingerprint: hostKey.fingerprint,
+                        known: hostKey.knownFingerprints.join(", "),
+                      },
+                    )
+                  : gt(
+                      "The authenticity of {host} can't be established. {keyType} key fingerprint is {fingerprint}. Trust this host and continue?",
+                      {
+                        host: hostKey.host,
+                        keyType: hostKey.keyType,
+                        fingerprint: hostKey.fingerprint,
+                      },
+                    )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose render={<Button variant="outline" />}>
+              <T>Cancel</T>
+            </AlertDialogClose>
+            <Button
+              variant={hostKey?.changed ? "destructive" : "default"}
+              onClick={() => {
+                if (hostKey === null) return;
+                setHostKey(null);
+                void submit({ fingerprint: hostKey.fingerprint, replace: hostKey.changed });
+              }}
+            >
+              {hostKey?.changed ? gt("Replace and continue") : gt("Trust")}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogPopup>
+      </AlertDialog>
     </Dialog>
   );
 }

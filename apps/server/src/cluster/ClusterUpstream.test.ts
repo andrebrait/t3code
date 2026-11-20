@@ -112,7 +112,10 @@ it.effect(
 it.effect("turns a throw while launching the remote runner into a ClusterError", () =>
   Effect.gen(function* () {
     const ssh = SshTunnel.SshEnvironmentManager.of({
-      ensureEnvironment: () => Effect.sync(() => SshTunnel.buildRemoteT3RunnerScript()),
+      ensureEnvironment: () =>
+        Effect.sync(() => SshTunnel.buildRemoteT3RunnerScript()).pipe(
+          Effect.flatMap(() => Effect.never),
+        ),
       disconnectEnvironment: () => Effect.void,
       closeAllTunnels: Effect.void,
     });

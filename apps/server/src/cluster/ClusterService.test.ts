@@ -80,7 +80,7 @@ it.effect("a member keeps only its cluster host and loopback sessions after join
       const invite = yield* member.cluster.invite({ url: "https://box.local:3773" });
       expect(invite).toMatchObject({
         fingerprint: FINGERPRINT,
-        joinString: `https://box.local:3773#${invite.code}.${FINGERPRINT}`,
+        joinString: `https://box.local:3773/pair#token=${invite.code}&sha256=${FINGERPRINT}`,
       });
       // The main host trusts either the pin or a CA-valid chain, so every address carries the pin.
       for (const url of [
@@ -91,7 +91,7 @@ it.effect("a member keeps only its cluster host and loopback sessions after join
         "https://box.tail1234.ts.net",
       ]) {
         const { code, joinString } = yield* member.cluster.invite({ url });
-        expect(joinString).toBe(`${new URL(url).origin}#${code}.${FINGERPRINT}`);
+        expect(joinString).toBe(`${new URL(url).origin}/pair#token=${code}&sha256=${FINGERPRINT}`);
       }
       const joined = yield* member.cluster.acceptJoin({ code: invite.code, host: studio }, bot);
       expect(joined).toMatchObject({ environmentId: box.environmentId, label: "Box" });

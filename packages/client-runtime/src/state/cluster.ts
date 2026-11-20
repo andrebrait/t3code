@@ -3,7 +3,8 @@ import {
   type ClusterSshLogin,
   type ClusterStatus,
   type ServerConfig,
-  parseClusterJoinString,
+  formatClusterJoinUrl,
+  parseClusterJoinUrl,
   parseClusterSshTarget,
   WS_METHODS,
 } from "@t3tools/contracts";
@@ -87,14 +88,25 @@ export const clusterActions = (
   join: access.enabled && access.canInvite && role === "standalone",
 });
 
-/** Pasted join codes often wrap or carry stray spaces; none of their characters is a space. */
-export function clusterAddTarget(raw: string, options: { readonly ssh: boolean }): string | null {
-  const target = raw.replace(/\s+/g, "");
-  if (parseClusterJoinString(target) !== undefined) return target;
-  return options.ssh && !target.includes("#") && parseClusterSshTarget(target) !== undefined
-    ? target
-    : null;
+/** The Add member join URL from its fields; pasted codes may carry spaces, which no code has. */
+export function clusterJoinTarget(input: {
+  readonly url: string;
+  readonly code: string;
+  readonly fingerprint: string | null;
+}): string | null {
+  const url = input.url.trim();
+  const origin = URL.parse(/^[a-z][a-z\d+.-]*:\/\//i.test(url) ? url : `https://${url}`);
+  if (origin === null) return null;
+  const target = formatClusterJoinUrl({
+    url: origin.href,
+    code: input.code.replace(/\s+/g, ""),
+    fingerprint: input.fingerprint,
+  });
+  return parseClusterJoinUrl(target) === undefined ? null : target;
 }
+
+export const clusterSshTarget = (raw: string): string | null =>
+  parseClusterSshTarget(raw) === undefined ? null : raw.trim();
 
 /** A key path the main host resolves the same way from any working directory. */
 export const clusterKeyPathValid = (path: string) => /^(?:~|\/|[A-Za-z]:[\\/])/.test(path.trim());

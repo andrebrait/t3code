@@ -5,32 +5,45 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   clusterActions,
-  clusterAddTarget,
+  clusterJoinTarget,
   clusterMemberStatusText,
   clusterName,
   clusterSshLogin,
+  clusterSshTarget,
   defaultClusterInviteUrl,
   offersCluster,
 } from "./cluster.ts";
 
 const SHA = "ab".repeat(32);
-const JOIN = `https://box.local:3773#K7M2Q9RZ3NWD.${SHA}`;
 
-describe("clusterAddTarget", () => {
-  it("accepts a join code pasted with spaces and line breaks", () => {
-    const wrapped = ` ${JOIN.slice(0, 30)}\n${JOIN.slice(30, 70)}\r\n  ${JOIN.slice(70)}\t`;
-    expect(clusterAddTarget(wrapped, { ssh: false })).toBe(JOIN);
+describe("clusterJoinTarget", () => {
+  it("builds the join URL from the address and a code pasted with spaces and line breaks", () => {
+    expect(
+      clusterJoinTarget({ url: " box.local:3773 ", code: "K7M2 Q9RZ\n3NWD", fingerprint: SHA }),
+    ).toBe(`https://box.local:3773/pair#token=K7M2Q9RZ3NWD&sha256=${SHA}`);
+    expect(
+      clusterJoinTarget({ url: "http://box.local:3773", code: "k7m2q9rz3nwd", fingerprint: null }),
+    ).toBe("http://box.local:3773/pair#token=k7m2q9rz3nwd");
   });
 
-  it("takes ssh targets only where the main host can dial them", () => {
-    expect(clusterAddTarget(" me@box ", { ssh: true })).toBe("me@box");
-    expect(clusterAddTarget("ssh://me@box:2222", { ssh: true })).toBe("ssh://me@box:2222");
-    expect(clusterAddTarget("me@box", { ssh: false })).toBeNull();
-    expect(clusterAddTarget(`https://box.local:3773#K7M2Q9RZ3NWD`, { ssh: true })).toBe(
-      `https://box.local:3773#K7M2Q9RZ3NWD`,
-    );
-    expect(clusterAddTarget(`me@box#K7M2Q9RZ3NWD`, { ssh: true })).toBeNull();
-    expect(clusterAddTarget("", { ssh: true })).toBeNull();
+  it("is null until the address and code are both valid", () => {
+    expect(clusterJoinTarget({ url: "", code: "K7M2Q9RZ3NWD", fingerprint: null })).toBeNull();
+    expect(clusterJoinTarget({ url: "box.local", code: "", fingerprint: null })).toBeNull();
+    expect(
+      clusterJoinTarget({ url: "box.local", code: "K7M2Q9RZ3NW1", fingerprint: null }),
+    ).toBeNull();
+    expect(
+      clusterJoinTarget({ url: "ftp://box", code: "K7M2Q9RZ3NWD", fingerprint: null }),
+    ).toBeNull();
+  });
+});
+
+describe("clusterSshTarget", () => {
+  it("takes only ssh targets", () => {
+    expect(clusterSshTarget(" me@box ")).toBe("me@box");
+    expect(clusterSshTarget("ssh://me@box:2222")).toBe("ssh://me@box:2222");
+    expect(clusterSshTarget("https://box.local:3773/pair#token=K7M2Q9RZ3NWD")).toBeNull();
+    expect(clusterSshTarget("")).toBeNull();
   });
 });
 

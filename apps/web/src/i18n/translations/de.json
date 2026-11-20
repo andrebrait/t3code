@@ -7829,7 +7829,7 @@
   "3202e5e7e3ac64f4": "Clustermitglieder konnten nicht geladen werden",
   "20ec2553636ff8b6": "Clustermitglieder werden geladen…",
   "185c47873cbc3a58": "Noch keine Mitglieder",
-  "87be230ed4df86c3": "Wähle auf dem anderen Rechner „Einem Cluster beitreten…“ und füge seinen Beitrittscode unter „Mitglied hinzufügen“ ein.",
+  "17cfe673d6bca544": "Wähle auf dem anderen Rechner „Einem Cluster beitreten…“ und gib seine Beitritts-URL unter „Mitglied hinzufügen“ ein.",
   "e83d7e0f8edc2a67": "Nie erreicht",
   "6e5bd943c29069ba": "Zuletzt gesehen {time}",
   "4b8e5df2cc93095e": "{label} aus dem Cluster entfernen? Es wird wieder zu einer eigenständigen Umgebung.",
@@ -7841,6 +7841,7 @@
   "2c5674665579a329": "Entfernen",
   "f924c86d559777c8": "{label} hinzugefügt",
   "f81ac6a7cad64430": "Mitglied hinzufügen",
+  "2c247e98c101af27": "Mitglied hinzufügen über",
   "7d527a0de1c5b074": "Anmelden mit",
   "10676cd2deb563e3": "Schlüssel auf dem Haupthost",
   "bd6ae18c37a2f7c9": "Schlüssel werden geladen…",
@@ -7855,8 +7856,9 @@
   "1287f93691c96377": "Ersetzen und fortfahren",
   "cad9c74911412589": "Vertrauen",
   "014616905723cd98": "Einem Cluster beitreten…",
+  "dbcaf6d670a63563": "Beitritts-URL",
+  "c52e9ac4f629bd56": "Beitrittscode",
   "0fd5390a359a5653": "Beitrittscode erstellen",
-  "474319bf8c34993b": "Beitrittscode kopieren",
   "90ae616e9cb53922": "Den Cluster von {host} verlassen? Koppel danach Clients erneut mit diesem Rechner.",
   "cd600c8a4e87d47d": "Cluster konnte nicht verlassen werden",
   "2ed706790c2b5d0a": "Mitglied von {host}",
@@ -7864,8 +7866,8 @@
   "9ff2b973feb1f701": "Verlasse…",
   "102b7b49ef3cdee1": "Cluster verlassen",
   "32b30e32d451d005": "Mitglied hinzufügen",
-  "f873f8a9b703b58a": "Füge den Beitrittscode vom anderen Rechner ein oder gib user@host ein, um ihn per SSH hinzuzufügen. Der Haupthost meldet sich einmal an und installiert seinen eigenen Schlüssel, damit er sich selbst wieder verbinden kann.",
-  "ba762eea3c513adf": "Beitrittscode oder SSH-Ziel",
+  "9403368abb06b527": "Gib die Beitritts-URL und den Beitrittscode vom anderen Rechner ein oder füge ihn per SSH hinzu. Per SSH meldet sich der Haupthost einmal an und installiert seinen eigenen Schlüssel, damit er sich selbst wieder verbinden kann.",
+  "9b9c711b341a6843": "Beitrittscode",
   "83b275291bf40e25": "Der Haupthost installiert seinen eigenen Schlüssel auf diesem Rechner",
   "5690bd95f5c6e460": [
     "Er meldet sich einmal mit deiner Auswahl an und fügt dann einen Cluster-Schlüssel zu",
@@ -7885,22 +7887,16 @@
   "93bbd9bbc3bf0fce": "Eigener Schlüsselpfad…",
   "eb90caeca80020cf": "Gib einen vollständigen Pfad ein oder einen, der mit ~ beginnt.",
   "caeef5373ed7dc22": "Passphrase",
+  "dc634d8a4725cea7": "URL",
+  "547a08e18ae84e4b": "Füge hier die vollständige Beitritts-URL ein, um beide Felder automatisch auszufüllen.",
   "3953d1cccd71ab7e": "Name (optional)",
   "ccfce317440dbd50": "Erlaubt einem Haupthost, diesen Rechner als Mitglied hinzuzufügen.",
   "ddf0e1eb84511ae2": "Einem Cluster beitreten",
   "c3d0edea2211cbbd": "Beim Beitritt werden die anderen Clients dieses Rechners abgemeldet und die verknüpften Umgebungen beendet. Danach ist er über den Haupthost erreichbar.",
   "a7e90c3ca71d8a2b": "Adresse, unter der der Haupthost diesen Rechner erreicht",
-  "a51baf4208ff026b": [
-    "Code ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    ". Füge eine Adresse hinzu, um einen Beitrittscode zu erhalten."
-  ],
-  "c4a1872f647cca8f": [
-    "Füge sie beim Haupthost unter „Mitglied hinzufügen“ ein. Zertifikat-SHA-256:",
+  "75495e154c01a46a": "Füge eine Adresse hinzu, um eine Beitritts-URL zu erhalten.",
+  "51f1724b6424e9b8": [
+    "Füge die Beitritts-URL beim Haupthost unter „Mitglied hinzufügen“ ein. Zertifikat-SHA-256:",
     " ",
     {
       "i": 1,

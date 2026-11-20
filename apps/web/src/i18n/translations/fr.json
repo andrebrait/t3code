@@ -7829,7 +7829,7 @@
   "3202e5e7e3ac64f4": "Impossible de charger les membres du cluster",
   "20ec2553636ff8b6": "Chargement des membres du cluster…",
   "185c47873cbc3a58": "Aucun membre pour l’instant",
-  "87be230ed4df86c3": "Sur l’autre machine, choisissez Rejoindre un cluster… et collez son code d’adhésion dans Ajouter un membre.",
+  "17cfe673d6bca544": "Sur l’autre machine, choisissez Rejoindre un cluster… et saisissez son URL d’adhésion dans Ajouter un membre.",
   "e83d7e0f8edc2a67": "Jamais joint",
   "6e5bd943c29069ba": "Vu pour la dernière fois {time}",
   "4b8e5df2cc93095e": "Retirer {label} du cluster ? Il redeviendra un environnement autonome.",
@@ -7841,6 +7841,7 @@
   "2c5674665579a329": "Retirer",
   "f924c86d559777c8": "{label} ajouté",
   "f81ac6a7cad64430": "Ajouter un membre",
+  "2c247e98c101af27": "Ajouter le membre avec",
   "7d527a0de1c5b074": "Se connecter avec",
   "10676cd2deb563e3": "Clé sur l’hôte principal",
   "bd6ae18c37a2f7c9": "Chargement des clés…",
@@ -7855,8 +7856,9 @@
   "1287f93691c96377": "Remplacer et continuer",
   "cad9c74911412589": "Faire confiance",
   "014616905723cd98": "Rejoindre un cluster…",
+  "dbcaf6d670a63563": "URL d’adhésion",
+  "c52e9ac4f629bd56": "Code d’adhésion",
   "0fd5390a359a5653": "Créer le code d’adhésion",
-  "474319bf8c34993b": "Copier le code d’adhésion",
   "90ae616e9cb53922": "Quitter le cluster de {host} ? Réappariez ensuite les clients avec cette machine.",
   "cd600c8a4e87d47d": "Impossible de quitter le cluster",
   "2ed706790c2b5d0a": "Membre de {host}",
@@ -7864,8 +7866,8 @@
   "9ff2b973feb1f701": "Départ…",
   "102b7b49ef3cdee1": "Quitter le cluster",
   "32b30e32d451d005": "Ajouter un membre",
-  "f873f8a9b703b58a": "Colle le code d’adhésion de l’autre machine, ou saisis user@host pour l’ajouter via SSH. L’hôte principal se connecte une fois et installe sa propre clé pour pouvoir se reconnecter seul.",
-  "ba762eea3c513adf": "Code d’adhésion ou cible SSH",
+  "9403368abb06b527": "Saisis l’URL et le code d’adhésion de l’autre machine, ou ajoute-la via SSH. Via SSH, l’hôte principal se connecte une fois et installe sa propre clé pour pouvoir se reconnecter seul.",
+  "9b9c711b341a6843": "Code d’adhésion",
   "83b275291bf40e25": "L’hôte principal va installer sa propre clé sur cette machine",
   "5690bd95f5c6e460": [
     "Il se connecte une fois avec ce que tu choisis, puis ajoute une clé de cluster à",
@@ -7885,22 +7887,16 @@
   "93bbd9bbc3bf0fce": "Chemin de clé personnalisé…",
   "eb90caeca80020cf": "Saisis un chemin complet, ou un chemin qui commence par ~.",
   "caeef5373ed7dc22": "Phrase secrète",
+  "dc634d8a4725cea7": "URL",
+  "547a08e18ae84e4b": "Collez ici l’URL d’adhésion complète pour remplir automatiquement les deux champs.",
   "3953d1cccd71ab7e": "Nom (facultatif)",
   "ccfce317440dbd50": "Permet à un hôte principal d’ajouter cette machine comme membre.",
   "ddf0e1eb84511ae2": "Rejoindre un cluster",
   "c3d0edea2211cbbd": "En rejoignant un cluster, cette machine déconnecte ses autres clients et met fin à ses environnements liés. Elle est ensuite accessible via l’hôte principal.",
   "a7e90c3ca71d8a2b": "Adresse à laquelle l’hôte principal joint cette machine",
-  "a51baf4208ff026b": [
-    "Code ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    ". Ajoutez une adresse pour obtenir un code d’adhésion."
-  ],
-  "c4a1872f647cca8f": [
-    "Collez-la dans Ajouter un membre de l’hôte principal. SHA-256 du certificat :",
+  "75495e154c01a46a": "Ajoutez une adresse pour obtenir une URL d’adhésion.",
+  "51f1724b6424e9b8": [
+    "Collez l’URL d’adhésion dans Ajouter un membre de l’hôte principal. SHA-256 du certificat :",
     " ",
     {
       "i": 1,

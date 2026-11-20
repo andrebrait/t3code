@@ -7836,7 +7836,7 @@
   "3202e5e7e3ac64f4": "Could not load cluster members",
   "20ec2553636ff8b6": "Loading cluster members…",
   "185c47873cbc3a58": "No members yet",
-  "87be230ed4df86c3": "On the other machine, choose Join a cluster… and paste its join code in Add member.",
+  "17cfe673d6bca544": "On the other machine, choose Join a cluster… and enter its join URL in Add member.",
   "e83d7e0f8edc2a67": "Never reached",
   "6e5bd943c29069ba": "Last seen {time}",
   "4b8e5df2cc93095e": "Remove {label} from the cluster? It becomes a standalone environment again.",
@@ -7848,6 +7848,7 @@
   "2c5674665579a329": "Remove",
   "f924c86d559777c8": "Added {label}",
   "f81ac6a7cad64430": "Add member",
+  "2c247e98c101af27": "Add the member with",
   "7d527a0de1c5b074": "Sign in with",
   "10676cd2deb563e3": "Key on the main host",
   "bd6ae18c37a2f7c9": "Loading keys…",
@@ -7862,8 +7863,9 @@
   "1287f93691c96377": "Replace and continue",
   "cad9c74911412589": "Trust",
   "014616905723cd98": "Join a cluster…",
+  "dbcaf6d670a63563": "Join URL",
+  "c52e9ac4f629bd56": "Join code",
   "0fd5390a359a5653": "Create join code",
-  "474319bf8c34993b": "Copy join code",
   "90ae616e9cb53922": "Leave the cluster of {host}? Pair clients with this machine again afterwards.",
   "cd600c8a4e87d47d": "Could not leave the cluster",
   "2ed706790c2b5d0a": "Member of {host}",
@@ -7871,8 +7873,8 @@
   "9ff2b973feb1f701": "Leaving…",
   "102b7b49ef3cdee1": "Leave cluster",
   "32b30e32d451d005": "Add a member",
-  "f873f8a9b703b58a": "Paste the join code from the other machine, or enter user@host to add it over SSH. The main host signs in once and installs its own key, so it can reconnect on its own.",
-  "ba762eea3c513adf": "Join code or SSH target",
+  "9403368abb06b527": "Enter the join URL and code from the other machine, or add it over SSH. Over SSH, the main host signs in once and installs its own key, so it can reconnect on its own.",
+  "9b9c711b341a6843": "Join code",
   "83b275291bf40e25": "The main host will install its own key on this machine",
   "5690bd95f5c6e460": [
     "It signs in once with what you choose, then adds a cluster key to",
@@ -7892,22 +7894,16 @@
   "93bbd9bbc3bf0fce": "Custom key path…",
   "eb90caeca80020cf": "Enter a full path, or one that starts with ~.",
   "caeef5373ed7dc22": "Passphrase",
+  "dc634d8a4725cea7": "URL",
+  "547a08e18ae84e4b": "Paste the full join URL here to fill both fields automatically.",
   "3953d1cccd71ab7e": "Name (optional)",
   "ccfce317440dbd50": "Lets a main host add this machine as a member.",
   "ddf0e1eb84511ae2": "Join a cluster",
   "c3d0edea2211cbbd": "Joining signs out this machine's other clients and ends its linked environments. Afterwards it is reached through the main host.",
   "a7e90c3ca71d8a2b": "Address the main host reaches this machine at",
-  "a51baf4208ff026b": [
-    "Code ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    ". Add an address to get a join code."
-  ],
-  "c4a1872f647cca8f": [
-    "Paste it in the main host's Add member. Certificate SHA-256:",
+  "75495e154c01a46a": "Add an address to get a join URL.",
+  "51f1724b6424e9b8": [
+    "Paste the join URL in the main host's Add member. Certificate SHA-256:",
     " ",
     {
       "i": 1,

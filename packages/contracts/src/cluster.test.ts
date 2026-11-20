@@ -3,41 +3,41 @@ import { describe, expect, it } from "vite-plus/test";
 import { EnvironmentId } from "./baseSchemas.ts";
 import {
   clusterMemberBaseUrl,
-  formatClusterJoinString,
+  formatClusterJoinUrl,
   formatClusterSshTarget,
   normalizeCertificateFingerprint,
-  parseClusterJoinString,
+  parseClusterJoinUrl,
   parseClusterSshTarget,
 } from "./cluster.ts";
 
 const SHA = "ab".repeat(32);
 
-describe("cluster join codes", () => {
-  it("round-trips the member's origin, code and certificate fingerprint", () => {
-    const joinString = formatClusterJoinString({
+describe("cluster join URLs", () => {
+  it("round-trips the member's origin, code and certificate fingerprint as a pairing URL", () => {
+    const joinUrl = formatClusterJoinUrl({
       url: "https://box.local:3773/some/path",
       code: "K7M2Q9RZ3NWD",
       fingerprint: SHA.toUpperCase().match(/../g)!.join(":"),
     });
-    expect(joinString).toBe(`https://box.local:3773#K7M2Q9RZ3NWD.${SHA}`);
-    expect(parseClusterJoinString(` ${joinString} `)).toEqual({
+    expect(joinUrl).toBe(`https://box.local:3773/pair#token=K7M2Q9RZ3NWD&sha256=${SHA}`);
+    expect(parseClusterJoinUrl(` ${joinUrl} `)).toEqual({
       url: "https://box.local:3773",
       code: "K7M2Q9RZ3NWD",
       fingerprint: SHA,
     });
-    expect(parseClusterJoinString(`https://box.local:3773#k7m2q9rz3nwd.${SHA}`)?.code).toBe(
-      "K7M2Q9RZ3NWD",
-    );
+    expect(
+      parseClusterJoinUrl(`https://box.local:3773/pair#token=k7m2q9rz3nwd&sha256=${SHA}`)?.code,
+    ).toBe("K7M2Q9RZ3NWD");
   });
 
-  it("round-trips a join code without a fingerprint", () => {
-    const joinString = formatClusterJoinString({
+  it("round-trips a join URL without a fingerprint", () => {
+    const joinUrl = formatClusterJoinUrl({
       url: "https://box.tail1234.ts.net/",
       code: "K7M2Q9RZ3NWD",
       fingerprint: null,
     });
-    expect(joinString).toBe("https://box.tail1234.ts.net#K7M2Q9RZ3NWD");
-    expect(parseClusterJoinString(joinString)).toEqual({
+    expect(joinUrl).toBe("https://box.tail1234.ts.net/pair#token=K7M2Q9RZ3NWD");
+    expect(parseClusterJoinUrl(joinUrl)).toEqual({
       url: "https://box.tail1234.ts.net",
       code: "K7M2Q9RZ3NWD",
       fingerprint: null,
@@ -46,15 +46,17 @@ describe("cluster join codes", () => {
 
   it.each([
     "https://box.local:3773",
-    `https://box.local:3773#K7M2Q9RZ3NW1`,
-    `https://box.local:3773#K7M2Q9RZ3NWD.`,
-    `https://box.local:3773#K7M2Q9RZ3NW1.${SHA}`,
-    `https://box.local:3773#K7M2Q9RZ3NWD.${SHA}.extra`,
-    `https://box.local:3773#K7M2Q9RZ3NWD.${SHA.slice(2)}`,
-    `ftp://box.local#K7M2Q9RZ3NWD.${SHA}`,
-    `me@box`,
+    "https://box.local:3773/pair",
+    "https://box.local:3773/pair#token=",
+    "https://box.local:3773/pair#token=K7M2Q9RZ3NW1",
+    "https://box.local:3773/pair#token=K7M2Q9RZ3NWD&sha256=",
+    `https://box.local:3773/pair#token=K7M2Q9RZ3NWD&sha256=${SHA.slice(2)}`,
+    `https://box.local:3773/pair#sha256=${SHA}`,
+    `https://box.local:3773#K7M2Q9RZ3NWD.${SHA}`,
+    `ftp://box.local/pair#token=K7M2Q9RZ3NWD&sha256=${SHA}`,
+    "me@box",
   ])("rejects %s", (value) => {
-    expect(parseClusterJoinString(value)).toBeUndefined();
+    expect(parseClusterJoinUrl(value)).toBeUndefined();
   });
 
   it("normalizes Node's colon-separated fingerprints", () => {

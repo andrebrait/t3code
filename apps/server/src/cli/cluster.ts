@@ -2,7 +2,8 @@ import {
   ClusterError,
   type ClusterMember,
   type ClusterSshLogin,
-  parseClusterJoinString,
+  formatClusterJoinUrl,
+  parseClusterJoinUrl,
   parseClusterSshTarget,
   ClusterInvite,
   ClusterRemoveMemberResult,
@@ -33,6 +34,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { renderTerminalQrCode } from "../startupAccess.ts";
 import * as ServerTls from "../tls/ServerTls.ts";
 import { authLocationFlags, type CliAuthLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
@@ -114,11 +116,28 @@ const formatList = (status: ClusterStatus, members: ReadonlyArray<ClusterMember>
           )
           .join("\n")}`;
 
+/** Laid out like `t3 pair`: a QR code of the join URL, then the URL and its parts. */
+export const formatJoinOutput = (invite: ClusterInvite) => {
+  const expires = `Expires: ${DateTime.formatIso(invite.expiresAt)}`;
+  return invite.joinString === null
+    ? [`Join code: ${invite.code}`, expires, "Pass --url to print a join URL."].join("\n")
+    : [
+        `Add ${new URL(invite.joinString).origin} to a cluster from its main host.`,
+        "",
+        renderTerminalQrCode(invite.joinString),
+        "",
+        `Join URL: ${invite.joinString}`,
+        `Join code: ${invite.code}`,
+        expires,
+        "",
+      ].join("\n");
+};
+
 const joinCommand = Command.make("join", {
   ...authLocationFlags,
   url: Flag.String("url").pipe(
     Flag.withDescription(
-      "Where the main host reaches this environment, such as https://box.local:3773. Prints a join code.",
+      "Where the main host reaches this environment, such as https://box.local:3773. Prints a join URL.",
     ),
     Flag.optional,
   ),
@@ -138,9 +157,7 @@ const joinCommand = Command.make("join", {
               Console.log(
                 flags.json
                   ? encodeInviteJson({ ...invite, credential: invite.code })
-                  : invite.joinString !== null
-                    ? `Join code (expires ${DateTime.formatIso(invite.expiresAt)}):\n${invite.joinString}`
-                    : `Code: ${invite.code}\nCertificate SHA-256: ${invite.fingerprint}\nPass --url to print a join code.`,
+                  : formatJoinOutput(invite),
               ),
             ),
           ),
@@ -148,6 +165,34 @@ const joinCommand = Command.make("join", {
     ),
   ),
 );
+
+/** The member's join URL, built from its address when the join code comes apart in `--code`. */
+export const addTarget = (
+  target: string,
+  code: Option.Option<string>,
+): Effect.Effect<string, ClusterError> => {
+  if (Option.isNone(code)) return Effect.succeed(target);
+  const url = URL.parse(target.trim());
+  if (url === null || (url.protocol !== "https:" && url.protocol !== "http:")) {
+    return Effect.fail(
+      new ClusterError({
+        reason: "invalid_target",
+        message: "--code needs the member's address, such as https://box.local:3773.",
+      }),
+    );
+  }
+  if (new URLSearchParams(url.hash.slice(1)).has("token")) {
+    return Effect.fail(
+      new ClusterError({
+        reason: "invalid_target",
+        message: "That join URL already carries a join code. Pass it without --code.",
+      }),
+    );
+  }
+  return Effect.succeed(
+    formatClusterJoinUrl({ url: url.href, code: code.value.trim(), fingerprint: null }),
+  );
+};
 
 // Secrets come only from stdin, never argv, which other users on this machine can read.
 const readStdinSecret = Effect.gen(function* () {
@@ -187,7 +232,7 @@ const sshLogin = (flags: {
   const signsIn = flags.passwordStdin || Option.isSome(flags.key) || flags.passphraseStdin;
   if (
     signsIn &&
-    (parseClusterJoinString(flags.target) !== undefined ||
+    (parseClusterJoinUrl(flags.target) !== undefined ||
       parseClusterSshTarget(flags.target) === undefined)
   ) {
     return Effect.fail(
@@ -251,7 +296,13 @@ const askHostKey = Effect.fn("cluster.askHostKey")(function* (error: ClusterErro
 const addCommand = Command.make("add", {
   ...authLocationFlags,
   target: Argument.String("target").pipe(
-    Argument.withDescription("The member's join code, or an ssh target such as ssh://me@box."),
+    Argument.withDescription(
+      "The member's join URL, its address with --code, or an ssh target such as ssh://me@box.",
+    ),
+  ),
+  code: Flag.String("code").pipe(
+    Flag.withDescription("The member's join code, when the target is its address."),
+    Flag.optional,
   ),
   label: Flag.String("label").pipe(Flag.withDescription("What to call the member."), Flag.optional),
   passwordStdin: Flag.Boolean("password-stdin").pipe(
@@ -283,11 +334,14 @@ const addCommand = Command.make("add", {
     "Add an environment to this machine's cluster. Over ssh, this machine signs in once and installs its own cluster key there.",
   ),
   Command.withHandler((flags) =>
-    sshLogin(flags).pipe(
-      Effect.flatMap((login) =>
+    addTarget(flags.target, flags.code).pipe(
+      Effect.flatMap((target) =>
+        sshLogin({ ...flags, target }).pipe(Effect.map((login) => ({ target, login }))),
+      ),
+      Effect.flatMap(({ target, login }) =>
         runWithCluster(flags, (cluster) => {
           const input = {
-            target: flags.target,
+            target,
             ...(Option.isSome(flags.label) ? { label: flags.label.value } : {}),
             ...(login === undefined ? {} : { login }),
           };

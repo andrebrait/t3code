@@ -7828,7 +7828,7 @@
   "3202e5e7e3ac64f4": "Não foi possível carregar os membros do cluster",
   "20ec2553636ff8b6": "Carregando os membros do cluster…",
   "185c47873cbc3a58": "Ainda não há membros",
-  "87be230ed4df86c3": "Na outra máquina, escolha Entrar em um cluster… e cole o código de adesão dela em Adicionar membro.",
+  "17cfe673d6bca544": "Na outra máquina, escolha Entrar em um cluster… e insira a URL de adesão dela em Adicionar membro.",
   "e83d7e0f8edc2a67": "Nunca alcançado",
   "6e5bd943c29069ba": "Visto pela última vez {time}",
   "4b8e5df2cc93095e": "Remover {label} do cluster? Ele volta a ser um ambiente independente.",
@@ -7840,6 +7840,7 @@
   "2c5674665579a329": "Remover",
   "f924c86d559777c8": "{label} adicionado",
   "f81ac6a7cad64430": "Adicionar membro",
+  "2c247e98c101af27": "Adicionar o membro com",
   "7d527a0de1c5b074": "Entrar com",
   "10676cd2deb563e3": "Chave no host principal",
   "bd6ae18c37a2f7c9": "Carregando chaves…",
@@ -7854,8 +7855,9 @@
   "1287f93691c96377": "Substituir e continuar",
   "cad9c74911412589": "Confiar",
   "014616905723cd98": "Entrar em um cluster…",
+  "dbcaf6d670a63563": "URL de adesão",
+  "c52e9ac4f629bd56": "Código de adesão",
   "0fd5390a359a5653": "Criar código de adesão",
-  "474319bf8c34993b": "Copiar código de adesão",
   "90ae616e9cb53922": "Sair do cluster de {host}? Depois, pareie os clientes com esta máquina novamente.",
   "cd600c8a4e87d47d": "Não foi possível sair do cluster",
   "2ed706790c2b5d0a": "Membro de {host}",
@@ -7863,8 +7865,8 @@
   "9ff2b973feb1f701": "Saindo…",
   "102b7b49ef3cdee1": "Sair do cluster",
   "32b30e32d451d005": "Adicionar um membro",
-  "f873f8a9b703b58a": "Cole o código de adesão da outra máquina ou digite user@host para adicioná-la por SSH. O host principal entra uma vez e instala a própria chave, para poder se reconectar sozinho.",
-  "ba762eea3c513adf": "Código de adesão ou destino SSH",
+  "9403368abb06b527": "Digite a URL e o código de adesão da outra máquina, ou adicione-a por SSH. Por SSH, o host principal entra uma vez e instala a própria chave, para poder se reconectar sozinho.",
+  "9b9c711b341a6843": "Código de adesão",
   "83b275291bf40e25": "O host principal vai instalar a própria chave nesta máquina",
   "5690bd95f5c6e460": [
     "Ele entra uma vez com o que você escolher e depois adiciona uma chave do cluster a",
@@ -7884,22 +7886,16 @@
   "93bbd9bbc3bf0fce": "Caminho de chave personalizado…",
   "eb90caeca80020cf": "Digite um caminho completo ou um que comece com ~.",
   "caeef5373ed7dc22": "Frase secreta",
+  "dc634d8a4725cea7": "URL",
+  "547a08e18ae84e4b": "Cole a URL de adesão completa aqui para preencher os dois campos automaticamente.",
   "3953d1cccd71ab7e": "Nome (opcional)",
   "ccfce317440dbd50": "Permite que um host principal adicione esta máquina como membro.",
   "ddf0e1eb84511ae2": "Entrar em um cluster",
   "c3d0edea2211cbbd": "Ao aderir, os outros clientes desta máquina são desconectados e seus ambientes vinculados são encerrados. Depois, ela passa a ser acessada pelo host principal.",
   "a7e90c3ca71d8a2b": "Endereço pelo qual o host principal acessa esta máquina",
-  "a51baf4208ff026b": [
-    "Código ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    ". Adicione um endereço para obter um código de adesão."
-  ],
-  "c4a1872f647cca8f": [
-    "Cole em Adicionar membro no host principal. SHA-256 do certificado:",
+  "75495e154c01a46a": "Adicione um endereço para obter uma URL de adesão.",
+  "51f1724b6424e9b8": [
+    "Cole a URL de adesão em Adicionar membro no host principal. SHA-256 do certificado:",
     " ",
     {
       "i": 1,

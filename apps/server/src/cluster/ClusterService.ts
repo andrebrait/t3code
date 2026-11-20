@@ -636,6 +636,8 @@ const make = Effect.gen(function* () {
       const sshTarget = join === undefined ? parseClusterSshTarget(input.target) : undefined;
       let keyInstalled = false;
       let rowWritten = false;
+      // Set once the member has joined: a failure after that must not leave it joined to no one.
+      let undoJoin: Effect.Effect<void> = Effect.void;
       const resolved =
         join !== undefined
           ? {
@@ -691,6 +693,9 @@ const make = Effect.gen(function* () {
             payload: { code, host: { environmentId: self.environmentId, label: self.label } },
           })
           .pipe(Effect.timeout(REQUEST_TIMEOUT), Effect.mapError(reachError(connection.origin)));
+        undoJoin = client.cluster
+          .leave({ headers: { authorization: `Bearer ${joined.token}` } })
+          .pipe(Effect.timeout(REQUEST_TIMEOUT), Effect.ignore);
         if (joined.environmentId !== descriptor.environmentId) {
           return yield* new ClusterError({
             reason: "unreachable",
@@ -742,6 +747,7 @@ const make = Effect.gen(function* () {
         Effect.onError(() =>
           Effect.gen(function* () {
             if (rowWritten) return yield* reload.pipe(Effect.ignore);
+            yield* undoJoin;
             if (!keyInstalled || newSshTarget === null) return;
             const rows = yield* SubscriptionRef.get(rowsRef);
             if (rows.some((row) => row.ssh_target === newSshTarget)) return;

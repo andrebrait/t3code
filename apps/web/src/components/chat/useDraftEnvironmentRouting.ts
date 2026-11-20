@@ -7,9 +7,9 @@ import { useScratchProject } from "../../hooks/useScratchProject";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import {
   type EnvironmentId,
+  type ProjectId,
   type ProviderDriverKind,
   ProviderInstanceId,
-  resolveProjectProviderInstanceEnabled,
   type ThreadContextRecord,
 } from "@t3tools/contracts";
 import {
@@ -36,10 +36,12 @@ import { useProjects } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { DraftSessionState } from "../../composerDraftStore";
-import { loadBalancingSendWarning } from "./composerSend.logic";
+import { loadBalancingCandidateIds, loadBalancingSendWarning } from "./composerSend.logic";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { seedDraftModelSelection } from "../../lib/seedDraftModelSelection";
 import { draftFanoutSelectionsAtom } from "./chatViewSend";
+import { cloneFinished, cloneProjectToClusterMachine } from "../../lib/addProjectToMachine";
+import type { EnvironmentOption } from "../BranchToolbar.logic";
 
 interface DraftEnvironmentRoutingInput {
   readonly draftId: DraftId | null;
@@ -114,43 +116,49 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
   const { openScratchProject } = useScratchProject();
   const needsLoadBalancing = automaticEnvironment && !draftThread?.loadBalancedEnvironmentId;
   const loadBalancingCandidates = automaticEnvironment
-    ? logicalProjectEnvironments
-        .filter((candidate) => {
-          const environment = environmentById.get(candidate.environmentId);
-          return (
-            environment?.connection.phase === "connected" &&
-            (loadBalancingSettings.loadBalancingWeights[candidate.environmentId] ?? 50) > 0 &&
-            referencedThreadContexts.every(
-              (record) => record.environmentId === candidate.environmentId,
-            ) &&
-            providersByEnvironment
-              .get(candidate.environmentId)
-              ?.some(
-                (provider) =>
-                  (activeProviderInstanceId === null ||
-                    provider.instanceId === activeProviderInstanceId) &&
-                  provider.driver === selectedProvider &&
-                  (environment.serverConfig?.settings
-                    ? resolveProjectProviderInstanceEnabled(
-                        environment.serverConfig.settings,
-                        candidate.projectId,
-                        provider.instanceId,
-                      )
-                    : provider.enabled) &&
-                  provider.installed &&
-                  provider.status !== "error" &&
-                  provider.auth.status !== "unauthenticated" &&
-                  provider.availability !== "unavailable",
-              )
-          );
-        })
-        .map((candidate) => candidate.environmentId)
+    ? loadBalancingCandidateIds({
+        candidates: logicalProjectEnvironments,
+        environmentById,
+        providersByEnvironment,
+        weights: loadBalancingSettings.loadBalancingWeights,
+        referencedThreadContexts,
+        activeProviderInstanceId,
+        selectedProvider,
+      })
     : [];
   const loadBalancing = useLoadBalancedEnvironment(
     needsLoadBalancing ? loadBalancingCandidates : [],
     loadBalancingSettings.loadBalancingWeights,
   );
   const readRouting = useStableCallback(() => ({ input, loadBalancingCandidates }));
+  // Starts cloning the draft's project onto a cluster machine that lacks it; null after a toast.
+  const startClusterClone = async (
+    draft: Pick<DraftSessionState, "environmentId" | "projectId">,
+    target: EnvironmentOption & { readonly cloneRemoteUrl: string },
+  ) => {
+    const source = allProjects.find(
+      (project) => project.environmentId === draft.environmentId && project.id === draft.projectId,
+    );
+    if (!source) return null;
+    try {
+      const projectId = await cloneProjectToClusterMachine({
+        project: source,
+        target: { environmentId: target.environmentId, label: target.label },
+        targetSettings: environmentById.get(target.environmentId)?.serverConfig?.settings,
+        remoteUrl: target.cloneRemoteUrl,
+      });
+      return scopeProjectRef(target.environmentId, projectId);
+    } catch (cause) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: m(msg("Could not start the clone.")),
+          description: thrownErrorMessage(cause, m) ?? m(msg("An error occurred.")),
+        }),
+      );
+      return null;
+    }
+  };
   const refreshBeforeSend = () => {
     if (
       !automaticEnvironment ||
@@ -181,6 +189,9 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       const target = current.input.logicalProjectEnvironments.find(
         (candidate) => candidate.environmentId === environmentId,
       );
+      if (target && !target.projectId && target.cloneRemoteUrl && originalDraft) {
+        return cloneBeforeSend(originalDraft, { ...target, cloneRemoteUrl: target.cloneRemoteUrl });
+      }
       if (!target?.projectId) {
         toastManager.add({
           type: "warning",
@@ -206,12 +217,57 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       return true;
     });
   };
+  // The send waits on the clone; its composer banner shows progress, and a failed or
+  // cancelled clone keeps the draft there unsent with the banner's retry.
+  const cloneBeforeSend = async (
+    originalDraft: DraftSessionState,
+    target: EnvironmentOption & { readonly cloneRemoteUrl: string },
+  ) => {
+    if (!draftId) return false;
+    const projectRef = await startClusterClone(originalDraft, target);
+    const draft = getDraftSession(draftId);
+    if (
+      !projectRef ||
+      readRouting().input.draftId !== draftId ||
+      !draft ||
+      draft.promotedTo ||
+      draft.environmentId !== originalDraft.environmentId ||
+      draft.projectId !== originalDraft.projectId
+    )
+      return false;
+    carryFanoutSelections(draft, target.environmentId);
+    flushSync(() =>
+      setDraftThreadContext(draftId, {
+        projectRef,
+        environmentSelection: "auto",
+        loadBalancedEnvironmentId: target.environmentId,
+        branch: originalDraft.branch ?? null,
+      }),
+    );
+    if (!(await cloneFinished(projectRef.environmentId, projectRef.projectId))) return false;
+    const settled = getDraftSession(draftId);
+    return (
+      readRouting().input.draftId === draftId &&
+      settled !== null &&
+      !settled.promotedTo &&
+      settled.environmentId === projectRef.environmentId &&
+      settled.projectId === projectRef.projectId
+    );
+  };
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- writes the resolved load-balanced environment into the draft store once the async pick settles
   useEffect(() => {
     if (!needsLoadBalancing || loadBalancing.pending || !draftId || sendInFlightRef.current) return;
     const target = logicalProjectEnvironments.find(
       (environment) => environment.environmentId === loadBalancing.environmentId,
     );
+    // A machine that would clone keeps the draft here until the send clones it.
+    if (target && !target.projectId && target.cloneRemoteUrl) {
+      setDraftThreadContext(draftId, {
+        environmentSelection: "auto",
+        loadBalancedEnvironmentId: target.environmentId,
+      });
+      return;
+    }
     if (!target?.projectId) return;
     const draft = getDraftSession(draftId);
     if (draft) carryFanoutSelections(draft, target.environmentId);
@@ -310,8 +366,9 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     const request = { environmentId: target.environmentId, scope: environmentChangeScope };
     environmentChangeRef.current = request;
     setBusyEnvironmentChange(null);
-    // `triagePrompt` is the prompt the target machine prepared for a triage draft.
-    const retarget = (project: (typeof allProjects)[number], triagePrompt?: string) => {
+    // `triagePrompt` is the prompt the target machine prepared for a triage draft. A project
+    // only known by id is a clone still starting, which never belongs to a scratch draft.
+    const retarget = (project: (typeof allProjects)[number] | ProjectId, triagePrompt?: string) => {
       const currentDraft = getDraftSession(draftId);
       if (
         environmentChangeRef.current !== request ||
@@ -330,8 +387,11 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
         if (nextPrompt !== prompt) setPrompt(draftId, nextPrompt);
       }
       carryFanoutSelections(currentDraft, target.environmentId);
-      const projectRef = scopeProjectRef(target.environmentId, project.id);
-      if (activeProjectIsScratch) {
+      const projectRef = scopeProjectRef(
+        target.environmentId,
+        typeof project === "string" ? project : project.id,
+      );
+      if (activeProjectIsScratch && typeof project !== "string") {
         setLogicalProjectDraftThreadId(
           deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings),
           projectRef,
@@ -383,9 +443,12 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     const switchMachine = async () => {
       const triagePrompt = followsTriage ? await prepareTriagePrompt() : undefined;
       if (triagePrompt === null) return;
+      const cloneRemoteUrl = activeProjectIsScratch ? undefined : target.cloneRemoteUrl;
       const project =
         knownProject ??
-        (await openScratchProject(target.environmentId, m(msg("Could not switch machine"))));
+        (cloneRemoteUrl
+          ? (await startClusterClone(originalDraft, { ...target, cloneRemoteUrl }))?.projectId
+          : await openScratchProject(target.environmentId, m(msg("Could not switch machine"))));
       if (project) retarget(project, triagePrompt);
     };
     setBusyEnvironmentChange(request);

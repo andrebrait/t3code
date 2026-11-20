@@ -159,6 +159,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
               <span className="inline-flex items-center gap-1.5">
                 <EnvironmentMachineIcon kind={env.machine} className="size-3" />
                 {env.label}
+                {env.cloneRemoteUrl ? <CloneHint /> : null}
               </span>
             </SelectItem>
           ))}
@@ -175,3 +176,12 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
     </Select>
   );
 });
+
+/** Marks a cluster machine that clones the project before its first thread. */
+export function CloneHint() {
+  return (
+    <span className="shrink-0 text-muted-foreground text-xs">
+      <T>clones the project</T>
+    </span>
+  );
+}

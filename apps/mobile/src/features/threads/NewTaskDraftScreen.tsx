@@ -372,7 +372,11 @@ export function NewTaskDraftScreen(props: {
   const { environments, selectedEnvironmentId, switchEnvironment, switchingToEnvironmentId } = flow;
   const cycleEnvironment = () => {
     if (isComposerInteractionLocked) return true;
-    const next = nextEnvironmentId(environments, switchingToEnvironmentId ?? selectedEnvironmentId);
+    // Cycling never clones: a machine that would is picked from the list.
+    const next = nextEnvironmentId(
+      environments.filter((environment) => !environment.cloneRemoteUrl),
+      switchingToEnvironmentId ?? selectedEnvironmentId,
+    );
     if (next !== null) void switchEnvironment(next);
     return true;
   };

@@ -2,11 +2,7 @@ import { m } from "../i18n/messages";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { useParams } from "@tanstack/react-router";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import {
-  getAddProjectInitialQuery,
-  getCloneDestinationPath,
-  getCloneDirectoryPath,
-} from "@t3tools/client-runtime/operations/projects";
+import { getDefaultCloneDestinationPath } from "@t3tools/client-runtime/operations/projects";
 import { resolvePastedPath } from "@t3tools/shared/path";
 import {
   type EnvironmentId,
@@ -118,12 +114,9 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
     (protocol === "ssh" ? sshUrl : protocol === "https" ? httpsUrl : null) ?? sourceUrl;
 
   const targetEnvironment = environments.find((env) => env.environmentId === target?.environmentId);
-  const defaultPath = getCloneDestinationPath(
-    getAddProjectInitialQuery(targetEnvironment?.serverConfig?.settings.addProjectBaseDirectory),
-    getCloneDirectoryPath(
-      sourceUrl,
-      targetEnvironment?.serverConfig?.settings.ghqCloneLayout === true,
-    ),
+  const defaultPath = getDefaultCloneDestinationPath(
+    sourceUrl,
+    targetEnvironment?.serverConfig?.settings,
   );
   const [pathOverride, setPathOverride] = useState<string | null>(null);
   const destinationPath = pathOverride ?? defaultPath;

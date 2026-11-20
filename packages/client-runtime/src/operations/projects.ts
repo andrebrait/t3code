@@ -1,3 +1,4 @@
+import type { ConnectionCatalogEntry } from "../connection/catalog.ts";
 import type { EnvironmentConnectionPhase } from "../connection/presentation.ts";
 import type {
   CommandId,
@@ -279,6 +280,65 @@ export function getCloneDestinationPath(
   }
   const base = ensureBrowseDirectoryPath(directoryPath);
   return `${base}${base.endsWith("\\") ? name.replaceAll("/", "\\") : name}`;
+}
+
+/** Where a clone lands by default: the machine's Add Project base folder, then the repository. */
+export function getDefaultCloneDestinationPath(
+  remoteUrl: string,
+  settings: Pick<ServerSettings, "addProjectBaseDirectory" | "ghqCloneLayout"> | undefined,
+): string {
+  return getCloneDestinationPath(
+    getAddProjectInitialQuery(settings?.addProjectBaseDirectory),
+    getCloneDirectoryPath(remoteUrl, settings?.ghqCloneLayout === true),
+  );
+}
+
+/**
+ * The remote a clone of the project comes from, or null when it has none. Projects group by
+ * their origin remote, so a clone from it groups with the project; an origin without a known
+ * URL gives null rather than a clone that would group apart.
+ */
+export function projectCloneRemoteUrl(
+  project: Pick<EnvironmentProject, "repositoryIdentity">,
+): string | null {
+  const identity = project.repositoryIdentity;
+  if (!identity) return null;
+  return identity.origin ? (identity.origin.remoteUrl ?? null) : identity.locator.remoteUrl;
+}
+
+/**
+ * Cluster machines that can clone a project living on `projectEnvironmentId`: the online
+ * members of that machine's cluster, plus its main host when the project lives on a member.
+ * Machines in `hasProject` are left out, and a project without a remote gets none.
+ */
+export function clusterCloneEnvironmentIds(input: {
+  readonly project: Pick<EnvironmentProject, "environmentId" | "repositoryIdentity">;
+  readonly environments: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly entry: Pick<ConnectionCatalogEntry, "enabled" | "target">;
+    readonly connection: { readonly phase: EnvironmentConnectionPhase };
+  }>;
+  readonly hasProject: ReadonlySet<EnvironmentId>;
+}): EnvironmentId[] {
+  if (projectCloneRemoteUrl(input.project) === null) return [];
+  const projectTarget = input.environments.find(
+    (environment) => environment.environmentId === input.project.environmentId,
+  )?.entry.target;
+  if (!projectTarget) return [];
+  const hostId =
+    projectTarget._tag === "ClusterConnectionTarget"
+      ? projectTarget.hostEnvironmentId
+      : projectTarget.environmentId;
+  return input.environments
+    .filter(({ environmentId, entry, connection }) => {
+      if (!entry.enabled || connection.phase !== "connected") return false;
+      if (input.hasProject.has(environmentId) || environmentId === input.project.environmentId)
+        return false;
+      return entry.target._tag === "ClusterConnectionTarget"
+        ? entry.target.hostEnvironmentId === hostId && entry.target.status === "online"
+        : environmentId === hostId;
+    })
+    .map((environment) => environment.environmentId);
 }
 
 export function getNewProjectPathPreview(newProjectsRoot: string, name: string): string {

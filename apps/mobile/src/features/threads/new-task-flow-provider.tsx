@@ -15,9 +15,11 @@ import type {
   ServerProvider,
 } from "@t3tools/contracts";
 import {
+  AuthSourceControlWriteScope,
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   MessageId,
+  ProjectId,
   repositoryGroupingKeyOf,
   ThreadId,
 } from "@t3tools/contracts";
@@ -26,7 +28,16 @@ import { isTriagePrompt, replaceTriagePlaybookLink } from "@t3tools/shared/triag
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 
-import { useProjects, useServerConfigs, useThreadShells } from "../../state/entities";
+import {
+  useProjects,
+  useServerConfigs,
+  useThreadShells,
+  waitForProject,
+} from "../../state/entities";
+import { useEnvironments } from "../../state/environments";
+import { useEnvironmentsWithScope } from "../../state/session";
+import { sourceControlEnvironment } from "../../state/sourceControl";
+import { uuidv4 } from "../../lib/uuid";
 import type { TurnCommandMetadata } from "../../lib/commandMetadata";
 import type { DraftComposerAttachment } from "../../lib/composerImages";
 import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
@@ -74,7 +85,12 @@ import {
   useRemoteConnectionStatus,
   useSavedRemoteConnections,
 } from "../../state/use-remote-environment-registry";
-import { availableScratchWorkspaceRoot } from "@t3tools/client-runtime/operations/projects";
+import {
+  availableScratchWorkspaceRoot,
+  clusterCloneEnvironmentIds,
+  getDefaultCloneDestinationPath,
+  projectCloneRemoteUrl,
+} from "@t3tools/client-runtime/operations/projects";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -165,6 +181,8 @@ type NewTaskFlowContextValue = {
   readonly environments: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
     readonly environmentLabel: string;
+    /** A cluster machine without the project, which clones it from this remote when picked. */
+    readonly cloneRemoteUrl?: string;
   }>;
   readonly selectedProject: EnvironmentProject | null;
   /** The machines the selected project's environment links to, whose threads it can read. */
@@ -355,6 +373,8 @@ export function NewTaskFlowProvider(
   const isScratchDraft = projectDefaults.isScratch;
   const serverConfigs = useServerConfigs();
   const { connectedEnvironments } = useRemoteConnectionStatus();
+  const { environments: environmentPresentations } = useEnvironments();
+  const canClone = useEnvironmentsWithScope(environmentPresentations, AuthSourceControlWriteScope);
   const selectedProjectDraftKey = selectedProject ? activeDraftKey : null;
   const activePendingKey =
     props.active === false
@@ -614,6 +634,10 @@ export function NewTaskFlowProvider(
       setSwitchingToEnvironmentId(null);
       return true;
     }
+    const cloneRemoteUrl = environments.find(
+      (environment) => environment.environmentId === environmentId,
+    )?.cloneRemoteUrl;
+    if (cloneRemoteUrl && selectedProject) return cloneToEnvironment(environmentId, cloneRemoteUrl);
     if (!isScratchDraft) {
       selectEnvironment(environmentId);
       return true;
@@ -655,6 +679,59 @@ export function NewTaskFlowProvider(
             : m(msg("The folder for threads without a project could not be created."))),
       );
     }
+    return false;
+  };
+
+  const startProjectClone = useAtomCommand(sourceControlEnvironment.startProjectClone, {
+    reportFailure: false,
+  });
+  // The draft moves to the clone right away; its composer shows progress and holds the start.
+  const cloneToEnvironment = async (
+    environmentId: EnvironmentId,
+    remoteUrl: string,
+  ): Promise<boolean> => {
+    if (!selectedProject) return false;
+    const request = {};
+    latestSwitchRef.current = request;
+    setSwitchingToEnvironmentId(environmentId);
+    const { projectKey } = readFlow();
+    const started = await startProjectClone({
+      environmentId,
+      input: {
+        projectId: ProjectId.make(uuidv4()),
+        title: selectedProject.title,
+        createdAt: new Date().toISOString(),
+        remoteUrl,
+        destinationPath: getDefaultCloneDestinationPath(
+          remoteUrl,
+          serverConfigs.get(environmentId)?.settings,
+        ),
+      },
+    });
+    const project =
+      started._tag === "Success"
+        ? await waitForProject({ environmentId, projectId: started.value.projectId }, 15_000)
+        : null;
+    if (latestSwitchRef.current !== request) return false;
+    latestSwitchRef.current = null;
+    setSwitchingToEnvironmentId(null);
+    if (readFlow().projectKey !== projectKey) return false;
+    if (project) {
+      setProject(project);
+      return true;
+    }
+    if (started._tag === "Failure" && isAtomCommandInterrupted(started)) return false;
+    Dialog.alert(
+      m(msg("Could not start the clone.")),
+      started._tag === "Failure"
+        ? (errorDisplayMessage(squashAtomCommandFailure(started), m) ??
+            m(msg("An error occurred.")))
+        : m(
+            msg(
+              "The project was created but has not reached this device yet. It will appear in the project list once the connection catches up.",
+            ),
+          ),
+    );
     return false;
   };
 
@@ -815,7 +892,7 @@ export function NewTaskFlowProvider(
   // Use || null: placeholder workspaceRoot can be empty, and an empty basename rejects real hosts.
   const selectedWorkspaceBasename = selectedProject?.workspaceRoot.split("/").at(-1) || null;
   const selectedProjectTitle = selectedProject?.title ?? null;
-  const environments = (() => {
+  const environments: NewTaskFlowContextValue["environments"] = (() => {
     if (isScratchDraft) {
       return scratchEnvironments.map((environment) => ({
         environmentId: environment.environmentId,
@@ -823,10 +900,7 @@ export function NewTaskFlowProvider(
       }));
     }
     const seen = new Set<EnvironmentId>();
-    const result: Array<{
-      readonly environmentId: EnvironmentId;
-      readonly environmentLabel: string;
-    }> = [];
+    const result: Array<NewTaskFlowContextValue["environments"][number]> = [];
     const hostsSelectedRepository = (project: EnvironmentProject) => {
       if (selectedRepositoryKey === null && selectedWorkspaceBasename === null) {
         return true;
@@ -858,6 +932,22 @@ export function NewTaskFlowProvider(
         environmentId: project.environmentId,
         environmentLabel: environment.environmentLabel,
       });
+    }
+    const cloneRemoteUrl = selectedProject ? projectCloneRemoteUrl(selectedProject) : null;
+    if (selectedProject && cloneRemoteUrl !== null) {
+      for (const environmentId of clusterCloneEnvironmentIds({
+        project: selectedProject,
+        environments: environmentPresentations,
+        hasProject: seen,
+      })) {
+        const environment = savedConnectionsById[environmentId];
+        if (!environment || !canClone.has(environmentId)) continue;
+        result.push({
+          environmentId,
+          environmentLabel: environment.environmentLabel,
+          cloneRemoteUrl,
+        });
+      }
     }
     return result;
   })();

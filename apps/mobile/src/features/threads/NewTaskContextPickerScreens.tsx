@@ -61,6 +61,7 @@ function EnvironmentPickerRow(props: {
   selected: boolean;
   disabled: boolean;
   isLast: boolean;
+  clonesProject: boolean;
   onPress: () => void;
 }) {
   const gt = useGT();
@@ -96,7 +97,7 @@ function EnvironmentPickerRow(props: {
             <View className="flex-row items-center gap-1.5">
               <ConnectionStatusDot state={connection?.phase ?? "offline"} pulse={false} size={6} />
               <Text className="shrink text-xs text-foreground-muted" numberOfLines={2}>
-                {status}
+                {props.clonesProject ? gt("{status} · clones the project", { status }) : status}
               </Text>
             </View>
           </View>
@@ -211,6 +212,7 @@ export function NewTaskEnvironmentPickerRouteScreen() {
                 key={String(environment.environmentId)}
                 environmentId={environment.environmentId}
                 isLast={index === flow.environments.length - 1}
+                clonesProject={environment.cloneRemoteUrl !== undefined}
                 disabled={flow.switchingToEnvironmentId !== null}
                 onPress={() => {
                   void Haptics.selectionAsync();

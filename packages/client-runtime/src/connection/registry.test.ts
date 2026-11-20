@@ -2083,6 +2083,16 @@ describe("EnvironmentRegistry cluster members", () => {
             hostEnvironmentId: TARGET.environmentId,
             hostLabel: "Studio",
           });
+          const hostEntry = (yield* SubscriptionRef.get(registry.entries)).get(
+            TARGET.environmentId,
+          )!;
+          expect(pullRequestRoutingConnectionKey({ target: target!, profile: Option.none() })).toBe(
+            JSON.stringify([
+              "ClusterConnectionTarget",
+              pullRequestRoutingConnectionKey(hostEntry),
+              MEMBER_ID,
+            ]),
+          );
           expect(hasRoutes(yield* Ref.get(harness.storedTargets), MEMBER_ID)).toBe(false);
           const sessionsBefore = (yield* Ref.get(harness.sessions)).length;
           const entriesBefore = yield* SubscriptionRef.get(registry.entries);

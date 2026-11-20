@@ -247,6 +247,7 @@ describe("ConnectionResolver", () => {
       label: "Box",
       hostEnvironmentId: HOST_ID,
       hostLabel: "Studio",
+      hostConnectionKey: null,
       status: "online",
       statusDetail: null,
     }),

@@ -941,6 +941,7 @@ export const make = Effect.gen(function* () {
         }),
       );
     }
+    const hostEntry = (yield* SubscriptionRef.get(entries)).get(input.hostEnvironmentId);
     for (const member of input.members) {
       const environmentId = member.environmentId;
       yield* withLeaseLock(
@@ -956,6 +957,8 @@ export const make = Effect.gen(function* () {
             label: member.label,
             hostEnvironmentId: input.hostEnvironmentId,
             hostLabel: input.hostLabel,
+            hostConnectionKey:
+              hostEntry === undefined ? null : pullRequestRoutingConnectionKey(hostEntry),
             status: member.status,
             statusDetail: member.lastError,
           });

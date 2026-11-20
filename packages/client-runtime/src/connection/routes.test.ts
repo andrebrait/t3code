@@ -471,6 +471,38 @@ describe("learned routes", () => {
   });
 });
 
+describe("cluster member pull request routing key", () => {
+  const member = (hostConnectionKey: string | null) => ({
+    target: new ClusterConnectionTarget({
+      environmentId: EnvironmentId.make("environment-box"),
+      label: "Box",
+      hostEnvironmentId: EnvironmentId.make("environment-studio"),
+      hostLabel: "Studio",
+      hostConnectionKey,
+      status: "online",
+      statusDetail: null,
+    }),
+    profile: Option.none(),
+    enabled: true,
+  });
+
+  it("derives from the main host's key and the member id", () => {
+    expect(pullRequestRoutingConnectionKey(member("host-key"))).toBe(
+      JSON.stringify(["ClusterConnectionTarget", "host-key", "environment-box"]),
+    );
+  });
+
+  it("changes when the main host's address changes", () => {
+    expect(pullRequestRoutingConnectionKey(member("host-key-2"))).not.toBe(
+      pullRequestRoutingConnectionKey(member("host-key")),
+    );
+  });
+
+  it("is null when the main host has no key", () => {
+    expect(pullRequestRoutingConnectionKey(member(null))).toBeNull();
+  });
+});
+
 it("names a cluster member's route after its main host and gives it no address", () => {
   const route = {
     target: new ClusterConnectionTarget({
@@ -478,6 +510,7 @@ it("names a cluster member's route after its main host and gives it no address",
       label: "Box",
       hostEnvironmentId: EnvironmentId.make("environment-studio"),
       hostLabel: "Studio",
+      hostConnectionKey: null,
       status: "online",
       statusDetail: null,
     }),

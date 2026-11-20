@@ -47,6 +47,10 @@ function routeConnectionKey(
   if (target._tag === "RelayConnectionTarget")
     return JSON.stringify([target._tag, target.environmentId]);
   const profile = Option.getOrNull(entry.profile);
+  if (target._tag === "ClusterConnectionTarget")
+    return target.hostConnectionKey === null
+      ? null
+      : JSON.stringify([target._tag, target.hostConnectionKey, target.environmentId]);
   if (target._tag === "SshConnectionTarget") {
     if (profile?._tag !== "SshConnectionProfile") return null;
     const { alias, hostname, username, port } = profile.target;

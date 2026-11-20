@@ -62,6 +62,7 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
   readonly credentials?: ReadonlyArray<readonly [string, ConnectionCredential]>;
   readonly authorizeBearer?: RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization["Service"]["authorizeBearer"];
   readonly authorizeDpop?: RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization["Service"]["authorizeDpop"];
+  readonly authorizeDirectDpop?: RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization["Service"]["authorizeDirectDpop"];
   readonly primaryBearerToken?: string;
   readonly prepareSsh?: ClientCapabilities.SshEnvironmentGateway["Service"]["prepare"];
   readonly descriptorProtocolVersion?: number | null | undefined;
@@ -113,7 +114,7 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
           },
         })),
     authorizeDpopHttp: () => Effect.die("unused"),
-    authorizeDirectDpop: () => Effect.die("unused"),
+    authorizeDirectDpop: options?.authorizeDirectDpop ?? (() => Effect.die("unused")),
     authorizeDirectDpopHttp: () => Effect.die("unused"),
     rememberCheckedDescriptor: () => Effect.void,
     renewDpopBeforeExpiry: () => Effect.die("unused"),
@@ -377,6 +378,56 @@ describe("ConnectionResolver", () => {
       ]);
       expect(prepared.environmentId).toBe(ENVIRONMENT_ID);
       expect(prepared.httpAuthorization).toMatchObject({ _tag: "Dpop", issuedFor: HOST_ID });
+    }),
+  );
+
+  it.effect("reaches a member of a directly paired DPoP host with the host's credential", () =>
+    Effect.gen(function* () {
+      const calls = yield* Ref.make<ReadonlyArray<unknown>>([]);
+      const directConnection = {
+        connectionId: "studio-direct",
+        httpBaseUrl: "https://studio.example.test",
+      };
+      const layerBroker = yield* makeDependencies({
+        clusterHosts: [
+          host({
+            _tag: "Dpop",
+            accessToken: "host-access",
+            expiresAtEpochMs: Number.MAX_SAFE_INTEGER,
+            directConnection,
+          }),
+        ],
+        authorizeDirectDpop: (input) =>
+          Ref.update(calls, (current) => [...current, input]).pipe(
+            Effect.as({
+              environmentId: input.expectedEnvironmentId,
+              label: "Studio",
+              httpBaseUrl: input.httpBaseUrl,
+              socketUrl: `${input.wsBaseUrl}?wsTicket=dpop`,
+              httpAuthorization: {
+                _tag: "Dpop" as const,
+                accessToken: "host-access",
+                expiresAtEpochMs: Number.MAX_SAFE_INTEGER,
+                directConnection,
+              },
+            }),
+          ),
+      });
+      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(layerBroker));
+
+      const prepared = yield* broker.prepare(memberEntry);
+
+      expect(yield* Ref.get(calls)).toEqual([
+        {
+          expectedEnvironmentId: ENVIRONMENT_ID,
+          connectionId: "studio-direct",
+          credentialHttpBaseUrl: "https://studio.example.test",
+          httpBaseUrl: "https://studio.example.test/cluster/environment-1",
+          wsBaseUrl: "wss://studio.example.test/cluster/environment-1/ws",
+        },
+      ]);
+      expect(prepared.environmentId).toBe(ENVIRONMENT_ID);
+      expect(prepared.httpAuthorization).toMatchObject({ _tag: "Dpop", directConnection });
     }),
   );
 

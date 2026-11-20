@@ -332,11 +332,19 @@ const makeClusterBroker = Effect.fn("clientRuntime.connection.broker.makeCluster
             bearerToken: hostAuthorization.token,
             connectionMethod: "direct",
           })
-        : yield* remote.authorizeDpop({
-            expectedEnvironmentId: target.hostEnvironmentId,
-            clusterMemberId: target.environmentId,
-            directEndpoint: { httpBaseUrl, wsBaseUrl },
-          });
+        : hostAuthorization.directConnection !== undefined
+          ? yield* remote.authorizeDirectDpop({
+              expectedEnvironmentId: target.environmentId,
+              connectionId: hostAuthorization.directConnection.connectionId,
+              credentialHttpBaseUrl: hostAuthorization.directConnection.httpBaseUrl,
+              httpBaseUrl,
+              wsBaseUrl,
+            })
+          : yield* remote.authorizeDpop({
+              expectedEnvironmentId: target.hostEnvironmentId,
+              clusterMemberId: target.environmentId,
+              directEndpoint: { httpBaseUrl, wsBaseUrl },
+            });
     return {
       ...authorized,
       environmentId: target.environmentId,

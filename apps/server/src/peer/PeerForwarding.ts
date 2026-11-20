@@ -210,7 +210,7 @@ const make = Effect.gen(function* () {
       messages: {
         name,
         revoked: `${name} no longer accepts this main host. Remove it in Settings → Cluster and add it again.`,
-        off: `${name} has clusters turned off. Turn them on in its Settings → Labs.`,
+        off: `${name} refused this call from the main host, for example under a managed policy there. Run the work on another machine.`,
         unreachable: `${name} is not answering. Work there resumes once it is back.`,
       },
       // The member's control link records its status; one call says nothing more.

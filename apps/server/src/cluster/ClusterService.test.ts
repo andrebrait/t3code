@@ -11,6 +11,7 @@ import {
 import { SshCommandError } from "@t3tools/ssh/errors";
 import * as SshTunnel from "@t3tools/ssh/tunnel";
 import { expect, it } from "@effect/vitest";
+import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -217,8 +218,13 @@ it.effect("a member that stopped between joining and revoking finishes on start"
         VALUES (1, 'environment-studio', 'Studio', '2026-11-19T00:00:00.000Z', 'session-host')
       `;
 
-      yield* Layer.build(
+      const context = yield* Layer.build(
         ClusterService.layer.pipe(Layer.provide(Layer.succeedContext(member.context))),
+      );
+      // Building the service is not starting the server: `t3 cluster` commands build it too.
+      expect(yield* member.auth.listSessions()).toHaveLength(1);
+      yield* Context.get(context, ClusterService.ClusterService).start(
+        ClusterService.refuseHostRequests,
       );
       expect(yield* member.auth.listSessions()).toEqual([]);
     }),

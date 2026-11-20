@@ -21,6 +21,8 @@ export interface EnvironmentOption {
   label: string;
   isPrimary: boolean;
   machine: EnvironmentMachineKind;
+  /** A cluster machine without the project, which clones it from this remote when picked. */
+  cloneRemoteUrl?: string;
 }
 
 /** "Add to another machine" stays muted until hovered: easy to find, quieter than the machines. */

@@ -1,8 +1,9 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, type RepositoryIdentity } from "@t3tools/contracts";
 
 import {
+  clusterCloneEnvironmentIds,
   findExistingAddProject,
   getCloneDestinationForPickedFolder,
   getCloneDestinationPath,
@@ -10,11 +11,14 @@ import {
   getCloneDirectoryName,
   getCloneDirectoryPath,
   getAddProjectInitialQuery,
+  getDefaultCloneDestinationPath,
   getDefaultCloneUrl,
   githubIncompleteOwnerRepositoryMessage,
   normalizePastedCloneUrl,
+  projectCloneRemoteUrl,
   sortAddProjectProviderSources,
 } from "./projects.ts";
+import { ClusterConnectionTarget, PrimaryConnectionTarget } from "../connection/model.ts";
 import type { EnvironmentProject } from "../state/models.ts";
 import { isFilesystemBrowseQuery } from "../state/projects.ts";
 
@@ -231,5 +235,120 @@ describe("add project shared logic", () => {
     expect(findExistingAddProject({ projects, environmentId: env, path: "/repo" })?.id).toBe(
       "project",
     );
+  });
+});
+
+describe("cluster clone targets", () => {
+  const HOST = EnvironmentId.make("host");
+  const identity: RepositoryIdentity = {
+    canonicalKey: "github.com/t3tools/t3code",
+    locator: {
+      source: "git-remote" as const,
+      remoteName: "origin",
+      remoteUrl: "git@github.com:t3tools/t3code.git",
+    },
+  };
+  const host = {
+    environmentId: HOST,
+    entry: {
+      enabled: true,
+      target: new PrimaryConnectionTarget({
+        environmentId: HOST,
+        label: "Studio",
+        httpBaseUrl: "http://studio",
+        wsBaseUrl: "ws://studio",
+      }),
+    },
+    connection: { phase: "connected" as const },
+  };
+  const member = (
+    id: string,
+    overrides: {
+      status?: ClusterConnectionTarget["status"];
+      enabled?: boolean;
+      phase?: "connected" | "offline";
+      hostEnvironmentId?: EnvironmentId;
+    } = {},
+  ) => ({
+    environmentId: EnvironmentId.make(id),
+    entry: {
+      enabled: overrides.enabled ?? true,
+      target: new ClusterConnectionTarget({
+        environmentId: EnvironmentId.make(id),
+        label: id,
+        hostEnvironmentId: overrides.hostEnvironmentId ?? HOST,
+        hostLabel: "Studio",
+        hostConnectionKey: null,
+        status: overrides.status ?? "online",
+        statusDetail: null,
+      }),
+    },
+    connection: { phase: overrides.phase ?? "connected" },
+  });
+  const environments = [
+    host,
+    member("box"),
+    member("offline", { status: "offline" }),
+    member("revoked", { status: "revoked" }),
+    member("disconnected", { phase: "offline" }),
+    member("disabled", { enabled: false }),
+    member("has-project"),
+    member("other-cluster", { hostEnvironmentId: EnvironmentId.make("other-host") }),
+  ];
+  const targets = (projectEnvironmentId: EnvironmentId, repositoryIdentity = identity) =>
+    clusterCloneEnvironmentIds({
+      project: { environmentId: projectEnvironmentId, repositoryIdentity },
+      environments,
+      hasProject: new Set([EnvironmentId.make("has-project")]),
+    });
+
+  it("offers online members of the project machine's cluster that lack the project", () => {
+    expect(targets(HOST)).toEqual(["box"]);
+  });
+
+  it("offers the main host and the other members for a project on a member", () => {
+    expect(targets(EnvironmentId.make("box"))).toEqual(["host"]);
+    expect(targets(EnvironmentId.make("has-project"))).toEqual(["host", "box"]);
+  });
+
+  it("offers nothing for a project without a remote it can group by", () => {
+    expect(
+      clusterCloneEnvironmentIds({
+        project: { environmentId: HOST, repositoryIdentity: null },
+        environments,
+        hasProject: new Set(),
+      }),
+    ).toEqual([]);
+    expect(
+      targets(HOST, { ...identity, origin: { canonicalKey: "github.com/julius/t3code" } }),
+    ).toEqual([]);
+  });
+
+  it("clones from the origin remote that the project groups by", () => {
+    expect(projectCloneRemoteUrl({ repositoryIdentity: identity })).toBe(
+      "git@github.com:t3tools/t3code.git",
+    );
+    expect(
+      projectCloneRemoteUrl({
+        repositoryIdentity: {
+          ...identity,
+          origin: {
+            canonicalKey: "github.com/julius/t3code",
+            remoteUrl: "https://github.com/julius/t3code.git",
+          },
+        },
+      }),
+    ).toBe("https://github.com/julius/t3code.git");
+  });
+
+  it("clones into the machine's Add Project folder by default", () => {
+    const url = "git@github.com:t3tools/t3code.git";
+    expect(getDefaultCloneDestinationPath(url, undefined)).toBe("~/t3code");
+    expect(
+      getDefaultCloneDestinationPath(url, {
+        addProjectBaseDirectory: "/srv",
+        ghqCloneLayout: true,
+      }),
+    ).toBe("/srv/github.com/t3tools/t3code");
   });
 });

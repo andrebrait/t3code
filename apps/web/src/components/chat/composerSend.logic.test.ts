@@ -1,4 +1,11 @@
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
+  ThreadId,
+} from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { describe, expect, it } from "vite-plus/test";
 import type { ComposerThreadDraftState } from "../../composerDraftStore";
@@ -8,6 +15,7 @@ import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 import {
   approvalRedirectNotice,
   composerDraftContentChanged,
+  loadBalancingCandidateIds,
   loadBalancingSendWarning,
   multipleModelSendBlock,
   referencedThreadContexts,
@@ -164,5 +172,56 @@ describe("approvalRedirectNotice", () => {
   it("stays quiet when the decline failed or the user left the thread", () => {
     expect(approvalRedirectNotice({ ...settled, declined: false })).toBeNull();
     expect(approvalRedirectNotice(settled)).toBeNull();
+  });
+});
+
+describe("loadBalancingCandidateIds", () => {
+  const codex = ProviderDriverKind.make("codex");
+  const provider: ServerProvider = {
+    instanceId: ProviderInstanceId.make("codex"),
+    driver: codex,
+    enabled: true,
+    installed: true,
+    version: null,
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-01-01T00:00:00.000Z",
+    models: [],
+    slashCommands: [],
+    skills: [],
+  };
+  const member = EnvironmentId.make("member");
+  const offline = EnvironmentId.make("offline");
+  const connected = { connection: { phase: "connected" }, serverConfig: null };
+  const candidateIds = (weights: Record<string, number> = {}) =>
+    loadBalancingCandidateIds({
+      candidates: [
+        { environmentId: local, projectId: ProjectId.make("project") },
+        // A cluster machine that would clone the project.
+        { environmentId: member, projectId: null },
+        { environmentId: offline, projectId: null },
+      ],
+      environmentById: new Map([
+        [local, connected],
+        [member, connected],
+        [offline, { connection: { phase: "offline" }, serverConfig: null }],
+      ]),
+      providersByEnvironment: new Map([
+        [local, [provider]],
+        [member, [provider]],
+        [offline, [provider]],
+      ]),
+      weights,
+      referencedThreadContexts: [],
+      activeProviderInstanceId: null,
+      selectedProvider: codex,
+    });
+
+  it("counts a connected machine that would clone like one that has the project", () => {
+    expect(candidateIds()).toEqual([local, member]);
+  });
+
+  it("leaves out a machine set to Manual only", () => {
+    expect(candidateIds({ [member]: 0 })).toEqual([local]);
   });
 });

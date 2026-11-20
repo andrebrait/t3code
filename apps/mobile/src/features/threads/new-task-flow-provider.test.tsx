@@ -49,7 +49,11 @@ vi.mock("../../state/entities", () => ({
   useThreadShells: () => [],
   useEnvironmentServerConfig: () => mocks.serverConfig() ?? null,
   useServerConfigs: () => new Map(),
+  waitForProject: vi.fn(),
 }));
+vi.mock("../../state/environments", () => ({ useEnvironments: () => ({ environments: [] }) }));
+vi.mock("../../state/sourceControl", () => ({ sourceControlEnvironment: {} }));
+vi.mock("../../lib/uuid", () => ({ uuidv4: () => "uuid" }));
 vi.mock("../../state/vcs", () => ({
   vcsEnvironment: { status: mocks.status, listRefs: mocks.refs },
 }));
@@ -58,6 +62,7 @@ vi.mock("../../state/projects", () => ({
 }));
 vi.mock("../../state/session", () => ({
   environmentSession: { sessionStateAtom: mocks.session },
+  useEnvironmentsWithScope: () => new Set(),
 }));
 vi.mock("../../state/presentation", () => ({
   useEnvironmentPresentation: mocks.presentation,

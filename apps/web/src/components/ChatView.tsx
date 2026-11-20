@@ -2821,10 +2821,10 @@ export default function ChatView(props: ChatViewProps) {
         if (!canChangeEnvironment) return false;
         if (event.repeat) return;
         const currentId = readPendingEnvironmentChange()?.environmentId ?? environmentId;
-        const index = logicalProjectEnvironments.findIndex(
-          (env) => env.environmentId === currentId,
-        );
-        const next = logicalProjectEnvironments[(index + 1) % logicalProjectEnvironments.length];
+        // Cycling never clones: a machine that would is picked from the menu.
+        const cycle = logicalProjectEnvironments.filter((env) => !env.cloneRemoteUrl);
+        const index = cycle.findIndex((env) => env.environmentId === currentId);
+        const next = cycle[(index + 1) % cycle.length];
         if (next) onEnvironmentChangeStable(next.environmentId);
       },
       "thread.steerQueuedMessage": ({ event }) =>

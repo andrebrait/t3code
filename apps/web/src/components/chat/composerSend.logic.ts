@@ -1,4 +1,13 @@
-import type { EnvironmentId, ThreadContextRecord } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  type ProjectId,
+  type ProviderDriverKind,
+  type ProviderInstanceId,
+  resolveProjectProviderInstanceEnabled,
+  type ServerConfig,
+  type ServerProvider,
+  type ThreadContextRecord,
+} from "@t3tools/contracts";
 import { msg } from "gt-react";
 import { m, type MessageResolver } from "../../i18n/messages";
 import { collectInlineContextIds } from "../../lib/composerContextReferences";
@@ -34,6 +43,62 @@ export function referencedThreadContexts(draft: {
   if (draft.threadContexts.length === 0) return [];
   const referenced = new Set(collectInlineContextIds(draft.prompt));
   return draft.threadContexts.filter((record) => referenced.has(record.contextId));
+}
+
+/**
+ * Machines Auto balance may pick: connected, weighted above zero, able to read every attached
+ * thread, and running the selected provider. A machine that would clone checks the provider
+ * with the machine's own defaults, since the project has no settings there yet.
+ */
+export function loadBalancingCandidateIds(input: {
+  readonly candidates: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly projectId: ProjectId | null;
+  }>;
+  readonly environmentById: ReadonlyMap<
+    EnvironmentId,
+    {
+      readonly connection: { readonly phase: string };
+      readonly serverConfig: Pick<ServerConfig, "settings"> | null;
+    }
+  >;
+  readonly providersByEnvironment: ReadonlyMap<EnvironmentId, ReadonlyArray<ServerProvider>>;
+  readonly weights: Readonly<Record<string, number>>;
+  readonly referencedThreadContexts: ReadonlyArray<ThreadContextRecord>;
+  readonly activeProviderInstanceId: ProviderInstanceId | null;
+  readonly selectedProvider: ProviderDriverKind;
+}): EnvironmentId[] {
+  return input.candidates
+    .filter((candidate) => {
+      const environment = input.environmentById.get(candidate.environmentId);
+      return (
+        environment?.connection.phase === "connected" &&
+        (input.weights[candidate.environmentId] ?? 50) > 0 &&
+        input.referencedThreadContexts.every(
+          (record) => record.environmentId === candidate.environmentId,
+        ) &&
+        input.providersByEnvironment
+          .get(candidate.environmentId)
+          ?.some(
+            (provider) =>
+              (input.activeProviderInstanceId === null ||
+                provider.instanceId === input.activeProviderInstanceId) &&
+              provider.driver === input.selectedProvider &&
+              (environment.serverConfig?.settings
+                ? resolveProjectProviderInstanceEnabled(
+                    environment.serverConfig.settings,
+                    candidate.projectId,
+                    provider.instanceId,
+                  )
+                : provider.enabled) &&
+              provider.installed &&
+              provider.status !== "error" &&
+              provider.auth.status !== "unauthenticated" &&
+              provider.availability !== "unavailable",
+          )
+      );
+    })
+    .map((candidate) => candidate.environmentId);
 }
 
 /** Why a send waits for the user to pick a machine when no machine was chosen automatically. */

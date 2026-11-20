@@ -77,6 +77,8 @@ it.effect("a member keeps only its cluster host and loopback sessions after join
         });
       yield* agent("127.0.0.1");
       yield* agent("192.168.1.41");
+      // T3 Connect sessions reach this machine through the relay, so loopback says nothing about them.
+      yield* member.auth.issueSession({ subject: EnvironmentAuth.CLOUD_CONNECT_SUBJECT });
       const unspent = yield* member.auth.issuePairingCredential();
       yield* member.sql`
         INSERT INTO peer_environment_links (environment_id, secret_name, label, urls_json, access, linked_at, expires_at)

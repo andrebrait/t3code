@@ -1,4 +1,8 @@
 import { toServerClock } from "@t3tools/client-runtime/clock";
+import {
+  activeLoadBalancingPool,
+  type LoadBalancingPool,
+} from "@t3tools/client-runtime/load-balancing";
 import { msg } from "gt-react";
 import { m, type MessageResolver } from "../i18n/messages";
 import { type OrchestrationV2ProviderTurn, type RunAttemptId } from "@t3tools/contracts";
@@ -1662,6 +1666,21 @@ export function deriveAvailableRevertTurnCounts(projection: ThreadStructure | nu
 }
 
 /** An imported native session is bound before it has messages or runs, and its cwd is fixed. */
+/**
+ * The pool a draft balances in, and whether the picker offers pools. A cluster's pool is
+ * offered even while the draft sits on a machine outside it, where no pool is active.
+ */
+export function resolveDraftLoadBalancing(
+  pools: ReadonlyArray<LoadBalancingPool>,
+  chosenKey: string | null | undefined,
+  environmentId: EnvironmentId,
+) {
+  return {
+    activePool: activeLoadBalancingPool(pools, chosenKey, environmentId),
+    canAutoBalance: pools.length > 0,
+  };
+}
+
 export function isThreadEnvironmentLocked(input: {
   readonly messageCount: number;
   readonly hasRuntime: boolean;

@@ -47,7 +47,11 @@ import {
   threadErrorIsServerRuntime,
 } from "./ChatView.logic";
 import { useQueuedRunEdit } from "./chat/useQueuedRunEdit";
-import { recallCheckoutIsRepo, rememberCheckoutIsRepo } from "./ChatView.logic";
+import {
+  recallCheckoutIsRepo,
+  rememberCheckoutIsRepo,
+  resolveDraftLoadBalancing,
+} from "./ChatView.logic";
 import { useLogicalProjectEnvironments } from "../hooks/useLogicalProjectEnvironments";
 import { useStableCallback } from "../hooks/useStableCallback";
 import { useProjectScriptEditing } from "./chat/useProjectScriptEditing";
@@ -391,10 +395,7 @@ import {
   draftLoadBalancingPoolAtom,
   useDraftEnvironmentRouting,
 } from "./chat/useDraftEnvironmentRouting";
-import {
-  activeLoadBalancingPool,
-  loadBalancingPools,
-} from "@t3tools/client-runtime/load-balancing";
+import { loadBalancingPools } from "@t3tools/client-runtime/load-balancing";
 import { branchMismatchBannerItem, extensionStatusBannerItem } from "./chat/ThreadActivityBanners";
 import { ThreadNow } from "./chat/ThreadNow";
 import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
@@ -1278,14 +1279,14 @@ export default function ChatView(props: ChatViewProps) {
           ),
         })
       : [];
-  const activeLoadBalancingPoolValue = activeThread
-    ? activeLoadBalancingPool(
-        loadBalancingPoolList,
-        loadBalancingPoolChoice.chosen,
-        activeThread.environmentId,
-      )
-    : null;
-  const canAutoBalanceEnvironments = activeLoadBalancingPoolValue !== null;
+  const { activePool: activeLoadBalancingPoolValue, canAutoBalance: canAutoBalanceEnvironments } =
+    activeThread
+      ? resolveDraftLoadBalancing(
+          loadBalancingPoolList,
+          loadBalancingPoolChoice.chosen,
+          activeThread.environmentId,
+        )
+      : { activePool: null, canAutoBalance: false };
   const activeEnvironmentOption =
     logicalProjectEnvironments.find(
       (environment) => environment.environmentId === activeThread?.environmentId,
@@ -1378,7 +1379,7 @@ export default function ChatView(props: ChatViewProps) {
     clientSettingsHydrated &&
     draftId &&
     !envLocked &&
-    canAutoBalanceEnvironments &&
+    activeLoadBalancingPoolValue !== null &&
     draftThread?.environmentSelection !== "manual" &&
     (!composerHasAttachments || Boolean(draftThread?.loadBalancedEnvironmentId)) &&
     (!draftThread?.branch || draftThread.environmentSelection === "auto") &&

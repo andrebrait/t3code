@@ -29,6 +29,7 @@ import {
 import * as ConnectionCredentialStore from "../connection/credentialStore.ts";
 import { BearerConnectionTarget } from "../connection/model.ts";
 import * as ConnectionProfileStore from "../connection/profileStore.ts";
+import * as ClusterHosts from "../connection/clusterHosts.ts";
 import * as ConnectionResolver from "../connection/resolver.ts";
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
@@ -280,6 +281,7 @@ const prepareDirectBearer = Effect.fn("TestRemoteAuthorization.prepareDirectBear
     Layer.provide(
       Layer.mergeAll(
         harness.layer,
+        ClusterHosts.layer,
         Layer.succeed(ConnectionProfileStore.ConnectionProfileStore, {
           get: unused,
           put: unused,
@@ -679,6 +681,38 @@ describe("RemoteEnvironmentAuthorization", () => {
       expect(harness.fetch.calls.map(([url]) => String(url))).toEqual([
         "http://192.168.1.10:3773/.well-known/t3/environment",
         "http://192.168.1.10:3773/api/auth/websocket-ticket/rpc",
+      ]);
+    }),
+  );
+
+  it.effect("reaches a cluster member with the main host's token under its path", () =>
+    Effect.gen(function* () {
+      const memberId = EnvironmentId.make("environment-box");
+      const member = "https://environment.example.test/cluster/environment-box";
+      const harness = yield* makeHarness({
+        initialToken: persistedToken({ accessToken: "cached-access-token" }),
+        responses: [
+          Response.json({ ...DESCRIPTOR, environmentId: memberId }),
+          websocketTicket("member-ticket"),
+        ],
+      });
+
+      const authorized = yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        return yield* remote.authorizeDpop({
+          expectedEnvironmentId: ENVIRONMENT_ID,
+          clusterMemberId: memberId,
+          directEndpoint: { httpBaseUrl: member, wsBaseUrl: `${member.replace(/^http/, "ws")}/ws` },
+        });
+      }).pipe(Effect.provide(harness.layer));
+
+      expect(authorized.socketUrl).toMatch(
+        /^wss:\/\/environment\.example\.test\/cluster\/environment-box\/ws\?/,
+      );
+      expect(yield* Ref.get(harness.bootstrapCalls)).toBe(0);
+      expect(harness.fetch.calls.map(([url]) => String(url))).toEqual([
+        `${member}/.well-known/t3/environment`,
+        `${member}/api/auth/websocket-ticket/rpc`,
       ]);
     }),
   );

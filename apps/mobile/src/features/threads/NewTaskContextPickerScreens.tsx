@@ -33,6 +33,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { cn } from "../../lib/cn";
+import { CLUSTER_SYMBOL } from "../../lib/clusterSymbol";
 import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { vcsEnvironment } from "../../state/vcs";
@@ -61,6 +62,7 @@ function EnvironmentPickerRow(props: {
   selected: boolean;
   disabled: boolean;
   isLast: boolean;
+  clonesProject: boolean;
   onPress: () => void;
 }) {
   const gt = useGT();
@@ -96,7 +98,7 @@ function EnvironmentPickerRow(props: {
             <View className="flex-row items-center gap-1.5">
               <ConnectionStatusDot state={connection?.phase ?? "offline"} pulse={false} size={6} />
               <Text className="shrink text-xs text-foreground-muted" numberOfLines={2}>
-                {status}
+                {props.clonesProject ? gt("{status} · clones the project", { status }) : status}
               </Text>
             </View>
           </View>
@@ -206,11 +208,63 @@ export function NewTaskEnvironmentPickerRouteScreen() {
           showsVerticalScrollIndicator={false}
         >
           <PickerSurface>
+            {flow.autoPools.map((pool) => (
+              <Pressable
+                key={pool.key}
+                accessibilityRole="radio"
+                accessibilityLabel={
+                  pool.missingLabels.length > 0
+                    ? `${pool.label}, ${gt("Not on: {machines}", { machines: pool.missingLabels.join(", ") })}`
+                    : pool.label
+                }
+                accessibilityState={{ checked: pool.active }}
+                disabled={flow.switchingToEnvironmentId !== null}
+                onPress={() => {
+                  void Haptics.selectionAsync();
+                  flow.chooseAutoPool(pool.key);
+                  navigation.goBack();
+                }}
+                className="min-h-16 flex-row items-center gap-3 border-b border-border-subtle bg-grouped-card px-4 py-3 active:bg-subtle"
+              >
+                <SymbolView
+                  name={pool.cluster ? CLUSTER_SYMBOL : "slider.horizontal.3"}
+                  size={20}
+                  tintColorClassName="accent-icon-muted"
+                />
+                <View className="min-w-0 flex-1 gap-1">
+                  <Text className="text-base font-t3-medium text-foreground" numberOfLines={1}>
+                    {pool.label}
+                  </Text>
+                  {pool.missingLabels.length > 0 ? (
+                    <View className="flex-row items-start gap-1.5">
+                      <SymbolView
+                        name="exclamationmark.triangle"
+                        size={12}
+                        tintColorClassName="accent-warning-foreground"
+                      />
+                      <Text className="shrink text-xs text-warning-foreground" numberOfLines={3}>
+                        {gt("Balances only across machines with this project. Not on: {machines}", {
+                          machines: pool.missingLabels.join(", "),
+                        })}
+                      </Text>
+                    </View>
+                  ) : (
+                    <Text className="text-xs text-foreground-muted" numberOfLines={2}>
+                      {gt("Starts on the machine with the most free CPU and memory.")}
+                    </Text>
+                  )}
+                </View>
+                {pool.active ? (
+                  <SymbolView name="checkmark" size={16} tintColorClassName="accent-icon" />
+                ) : null}
+              </Pressable>
+            ))}
             {flow.environments.map((environment, index) => (
               <EnvironmentPickerRow
                 key={String(environment.environmentId)}
                 environmentId={environment.environmentId}
                 isLast={index === flow.environments.length - 1}
+                clonesProject={environment.cloneRemoteUrl !== undefined}
                 disabled={flow.switchingToEnvironmentId !== null}
                 onPress={() => {
                   void Haptics.selectionAsync();
@@ -218,7 +272,10 @@ export function NewTaskEnvironmentPickerRouteScreen() {
                     if (switched) navigation.goBack();
                   });
                 }}
-                selected={flow.selectedEnvironmentId === environment.environmentId}
+                selected={
+                  flow.autoBalance === null &&
+                  flow.selectedEnvironmentId === environment.environmentId
+                }
                 title={environment.environmentLabel}
               />
             ))}
@@ -341,6 +398,104 @@ export function NewTaskBranchPickerRouteScreen() {
           : undefined
       }
     />
+  );
+}
+
+export function NewTaskRepositoriesPickerRouteScreen() {
+  const gt = useGT();
+  const flow = useNewTaskFlow();
+  const navigation = useNavigation();
+  const insets = useSafeAreaInsets();
+  const choices = flow.worktreeRepositoryChoices;
+  const selection = flow.worktreeRepositorySelection;
+  const selected = new Set(selection.selected);
+  const toggle = (repositoryPath: string) => {
+    if (choices === null) return;
+    void Haptics.selectionAsync();
+    flow.setWorktreeRepositories(
+      choices.flatMap((choice) =>
+        (choice.repositoryPath === repositoryPath) !== selected.has(choice.repositoryPath)
+          ? [choice.repositoryPath]
+          : [],
+      ),
+    );
+  };
+  const header =
+    choices === null || choices.length === 0 ? null : (
+      <View className="gap-3 pb-3">
+        <Text textRole="footnote" className="px-1 text-foreground-muted">
+          {selection.needsChoice
+            ? gt("Choose the repositories this thread works on.")
+            : gt("Each gets its own worktree on the thread's branch.")}
+        </Text>
+        <View className="flex-row gap-2">
+          <Button
+            label={gt("Select all")}
+            size="compact"
+            disabled={selected.size === choices.length}
+            onPress={() =>
+              flow.setWorktreeRepositories(choices.map((choice) => choice.repositoryPath))
+            }
+          />
+          <Button
+            label={gt("Select none")}
+            size="compact"
+            disabled={!selection.needsChoice && selected.size === 0}
+            onPress={() => flow.setWorktreeRepositories([])}
+          />
+        </View>
+      </View>
+    );
+  return (
+    <View className="flex-1 bg-sheet" collapsable={false}>
+      <AppBar title={gt("Repositories")} hideBottomBorder onBack={() => navigation.goBack()} />
+      <ScreenContent>
+        {choices === null || choices.length === 0 ? (
+          <View className="flex-1 items-center justify-center gap-3 px-4">
+            {choices === null ? <AppActivityIndicator /> : null}
+            <Text className="text-center text-sm text-foreground-muted">
+              {choices === null
+                ? gt("Loading repositories…")
+                : gt("This project tracks no repositories")}
+            </Text>
+          </View>
+        ) : (
+          <LegendList
+            renderScrollComponent={NativeScrollView}
+            alwaysBounceVertical={false}
+            automaticallyAdjustsScrollIndicatorInsets
+            className="flex-1 bg-sheet android:bg-sheet-solid"
+            contentInsetAdjustmentBehavior="automatic"
+            contentContainerStyle={{
+              paddingBottom: Math.max(insets.bottom, 16) + 16,
+              paddingHorizontal: 16,
+              paddingTop: 16,
+            }}
+            data={choices}
+            extraData={selection.selected}
+            keyExtractor={(choice) => choice.repositoryPath}
+            ListHeaderComponent={header}
+            renderItem={({ item, index }) => (
+              <SelectionRow
+                icon="folder"
+                role="checkbox"
+                isFirst={index === 0}
+                isLast={index === choices.length - 1}
+                onPress={() => toggle(item.repositoryPath)}
+                selected={selected.has(item.repositoryPath)}
+                subtitle={
+                  item.relativePath !== undefined && item.relativePath !== item.name
+                    ? item.relativePath
+                    : undefined
+                }
+                title={item.name}
+              />
+            )}
+            showsVerticalScrollIndicator={false}
+          />
+        )}
+      </ScreenContent>
+    </View>
   );
 }
 

@@ -5,11 +5,16 @@ import { useAtomValue } from "@effect/atom-react";
 import { shortcutLabelForCommand } from "../keybindings";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { PlusIcon, ScaleIcon } from "lucide-react";
+import { PlusIcon, ScaleIcon, TriangleAlertIcon } from "lucide-react";
 import { memo } from "react";
 import { T, useGT } from "gt-react";
 
-import { ADD_TO_MACHINE_LABEL_CLASS, type EnvironmentOption } from "./BranchToolbar.logic";
+import {
+  ADD_TO_MACHINE_LABEL_CLASS,
+  type AutoEnvironmentOption,
+  type EnvironmentOption,
+} from "./BranchToolbar.logic";
+import { ClusterIcon } from "./ClusterIcon";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { useComposerMenuProps } from "./chat/composerEventScope";
 import {
@@ -23,7 +28,8 @@ import {
 
 interface BranchToolbarEnvironmentSelectorProps {
   autoEnvironmentLabel?: string | undefined;
-  onAutoEnvironment?: (() => void) | undefined;
+  onAutoEnvironment?: ((key: string) => void) | undefined;
+  autoEnvironments?: ReadonlyArray<AutoEnvironmentOption> | undefined;
   envLocked: boolean;
   environmentId: EnvironmentId;
   availableEnvironments: readonly EnvironmentOption[];
@@ -32,13 +38,14 @@ interface BranchToolbarEnvironmentSelectorProps {
 }
 
 // Action values cannot collide with server-minted environment IDs.
-const AUTO_VALUE = "action:auto";
+const AUTO_PREFIX = "action:auto:";
 const ADD_MACHINE_VALUE = "action:add-machine";
 const environmentValue = (id: EnvironmentId) => `env:${id}`;
 
 export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvironmentSelector({
   autoEnvironmentLabel,
   onAutoEnvironment,
+  autoEnvironments,
   envLocked,
   environmentId,
   availableEnvironments,
@@ -54,9 +61,15 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
   const activeEnvironment =
     availableEnvironments.find((env) => env.environmentId === environmentId) ?? null;
 
+  const activeAuto = autoEnvironmentLabel
+    ? autoEnvironments?.find((option) => option.active)
+    : undefined;
   const environmentItems = [
     ...(onAutoEnvironment
-      ? [{ value: AUTO_VALUE, label: autoEnvironmentLabel ?? gt("Auto balance") }]
+      ? (autoEnvironments ?? []).map((option) => ({
+          value: `${AUTO_PREFIX}${option.key}`,
+          label: option.label,
+        }))
       : []),
     ...availableEnvironments.map((env) => ({
       value: environmentValue(env.environmentId),
@@ -91,12 +104,12 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
   return (
     <Select
       modal={false}
-      value={autoEnvironmentLabel ? AUTO_VALUE : environmentValue(environmentId)}
+      value={activeAuto ? `${AUTO_PREFIX}${activeAuto.key}` : environmentValue(environmentId)}
       onValueChange={(value) => {
         if (value === ADD_MACHINE_VALUE) {
           onAddToMachine?.();
-        } else if (value === AUTO_VALUE) {
-          onAutoEnvironment?.();
+        } else if (value?.startsWith(AUTO_PREFIX)) {
+          onAutoEnvironment?.(value.slice(AUTO_PREFIX.length));
         } else if (value?.startsWith("env:")) {
           onEnvironmentChange?.(value.slice(4) as EnvironmentId);
         }
@@ -115,8 +128,8 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
             />
           }
         >
-          {autoEnvironmentLabel ? (
-            <ScaleIcon className="size-3 shrink-0" aria-hidden="true" />
+          {activeAuto ? (
+            <AutoEnvironmentIcon option={activeAuto} className="size-3 shrink-0" />
           ) : (
             <EnvironmentMachineIcon
               kind={activeEnvironment?.machine ?? "server"}
@@ -137,19 +150,18 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
           <SelectGroupLabel>
             <T>Run on</T>
           </SelectGroupLabel>
-          {onAutoEnvironment && (
-            <SelectItem
-              value={AUTO_VALUE}
-              onClick={() => {
-                if (autoEnvironmentLabel) onAutoEnvironment?.();
-              }}
-            >
-              <span className="inline-flex items-center gap-1.5">
-                <ScaleIcon className="size-3" aria-hidden="true" />
-                {autoEnvironmentLabel ?? gt("Auto balance")}
-              </span>
-            </SelectItem>
-          )}
+          {onAutoEnvironment &&
+            autoEnvironments?.map((option) => (
+              <SelectItem
+                key={option.key}
+                value={`${AUTO_PREFIX}${option.key}`}
+                onClick={() => {
+                  if (option.active) onAutoEnvironment(option.key);
+                }}
+              >
+                <AutoEnvironmentItem option={option} />
+              </SelectItem>
+            ))}
           {availableEnvironments.map((env) => (
             <SelectItem
               key={env.environmentId}
@@ -159,6 +171,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
               <span className="inline-flex items-center gap-1.5">
                 <EnvironmentMachineIcon kind={env.machine} className="size-3" />
                 {env.label}
+                {env.cloneRemoteUrl ? <CloneHint /> : null}
               </span>
             </SelectItem>
           ))}
@@ -175,3 +188,46 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
     </Select>
   );
 });
+
+/** Marks a cluster machine that clones the project before its first thread. */
+export function CloneHint() {
+  return (
+    <span className="shrink-0 text-muted-foreground text-xs">
+      <T>clones the project</T>
+    </span>
+  );
+}
+
+export function AutoEnvironmentIcon(props: {
+  readonly option: AutoEnvironmentOption;
+  readonly className: string;
+}) {
+  return props.option.cluster ? (
+    <ClusterIcon className={props.className} aria-hidden="true" />
+  ) : (
+    <ScaleIcon className={props.className} aria-hidden="true" />
+  );
+}
+
+/** An Auto choice, warning when some of its machines lack the project. */
+export function AutoEnvironmentItem({ option }: { readonly option: AutoEnvironmentOption }) {
+  const gt = useGT();
+  return (
+    <span className="flex min-w-0 flex-col gap-0.5">
+      <span className="inline-flex min-w-0 items-center gap-1.5">
+        <AutoEnvironmentIcon option={option} className="size-3 shrink-0" />
+        <span className="min-w-0 truncate">{option.label}</span>
+        {option.missingLabels.length > 0 ? (
+          <TriangleAlertIcon className="size-3 shrink-0 text-warning" aria-hidden="true" />
+        ) : null}
+      </span>
+      {option.missingLabels.length > 0 ? (
+        <span className="text-muted-foreground text-xs">
+          {gt("Balances only across machines with this project. Not on: {machines}", {
+            machines: option.missingLabels.join(", "),
+          })}
+        </span>
+      ) : null}
+    </span>
+  );
+}

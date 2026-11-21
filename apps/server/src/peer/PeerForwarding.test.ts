@@ -3,17 +3,20 @@ import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  type ClusterMember,
   EnvironmentId,
   type OrchestrationV2Run,
   type OrchestrationV2ThreadShell,
   type SourceControlCloneRepositoryInput,
   ProjectId,
+  OrchestratorMcpFailure,
   ProviderInstanceId,
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -22,7 +25,16 @@ import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
 import { McpSchema, McpServer } from "effect/ai";
 
+import * as ClusterService from "../cluster/ClusterService.ts";
+import {
+  clusterHostToken,
+  layerRoutingMain,
+  layerRoutingMember,
+  type RoutedEnvironment,
+} from "../cluster/ClusterService.testkit.ts";
 import * as ServerConfig from "../config.ts";
+import type { ProjectionTimelinePageOptions } from "../orchestration-v2/ProjectionStore.ts";
+import * as ClusterHostRequests from "../mcp/ClusterHostRequests.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadSearch from "../orchestration-v2/ThreadSearch.ts";
@@ -47,6 +59,19 @@ import { descriptorOf, layerLinkingEnvironment, linkTo, servePeer } from "./Peer
 
 const laptop = descriptorOf("environment-laptop", "Laptop");
 const box = descriptorOf("environment-box", "Box");
+const studio = descriptorOf("environment-studio", "Studio");
+
+/** The laptop as its main host lists it. */
+const laptopMember: ClusterMember = {
+  environmentId: laptop.environmentId,
+  label: "Laptop",
+  transport: "https",
+  address: "https://laptop.local:3773",
+  status: "online",
+  joinedAt: DateTime.makeUnsafe(0),
+  lastReachedAt: null,
+  lastError: null,
+};
 const boxProject = ProjectId.make("project:box");
 const boxThread = ThreadId.make("thread:box-auto");
 const boxRun = RunId.make("run:box-auto");
@@ -55,6 +80,7 @@ const boxRun = RunId.make("run:box-auto");
 interface Seen {
   readonly sends: ReadonlyArray<ThreadManagement.ThreadManagementSendInput>;
   readonly waits: ReadonlyArray<ThreadManagement.ThreadManagementWaitInput>;
+  readonly reads: ReadonlyArray<ProjectionTimelinePageOptions>;
   readonly launches: ReadonlyArray<ThreadLaunch.ThreadLaunchInput>;
   readonly projects: ReadonlyArray<ProjectService.ProjectCreateInput>;
   readonly clones: ReadonlyArray<SourceControlCloneRepositoryInput>;
@@ -64,6 +90,7 @@ interface Seen {
 const nothingSeen: Seen = {
   sends: [],
   waits: [],
+  reads: [],
   launches: [],
   projects: [],
   clones: [],
@@ -85,17 +112,33 @@ const boxThreads = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) => {
   );
   const users = { ...liveThreadShell(usersThread, { runtimeMode: "auto" }), projectId: boxProject };
   const run = (status: OrchestrationV2Run["status"]) =>
-    ({ id: boxRun, status }) as unknown as OrchestrationV2Run;
+    ({
+      id: boxRun,
+      ordinal: 1,
+      status,
+      modelSelection: base.modelSelection,
+      requestedAt: base.createdAt,
+      startedAt: null,
+      completedAt: null,
+    }) as unknown as OrchestrationV2Run;
   const shellOf = (threadId: ThreadId): Effect.Effect<OrchestrationV2ThreadShell | null> =>
     threadId === boxThread ? linked : Effect.succeed(threadId === usersThread ? users : null);
   const projectionOf = (threadId: ThreadId) =>
     shellOf(threadId).pipe(
-      Effect.map((thread) => ({ thread, runs: [run("running")], runtimeRequests: [] }) as never),
+      Effect.map(
+        (thread) =>
+          ({ thread, runs: [run("running")], runtimeRequests: [], providerTurns: [] }) as never,
+      ),
     );
   return Layer.mock(ThreadManagement.ThreadManagementService)({
     getThreadShell: shellOf,
     getProjectThreadRecords: (input) => projectionOf(input.threadId),
     getThreadRecords: (threadId) => projectionOf(threadId),
+    getRunCount: () => Effect.succeed(1),
+    getTimelinePage: (_threadId, options) =>
+      Ref.update(seen, (current) => ({ ...current, reads: [...current.reads, options] })).pipe(
+        Effect.as({ items: [], totalItems: 0, hasMore: false, hasEarlier: false }),
+      ),
     listProjectThreads: () => linked.pipe(Effect.map((shell) => [shell] as never)),
     getShellSnapshot: () => linked.pipe(Effect.map((shell) => ({ threads: [shell] }) as never)),
     sendToThread: (input) =>
@@ -271,106 +314,131 @@ const mcpClient = McpSchema.McpServerClient.of({
  * Environment A: its own orchestrator toolkit with forwarding, and a thread
  * caller whose modes the test picks. Its local threads never matter here.
  */
-const makeLaptop = Effect.gen(function* () {
-  const linking = yield* layerLinkingEnvironment(laptop).pipe(Layer.build);
-  const layerHere = Layer.mergeAll(
-    McpHttpServer.layerOrchestratorToolkit,
-    McpHttpServer.layerProjectRegistration,
-    McpHttpServer.layerThreadToolkit,
-  ).pipe(
-    Layer.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
-    Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
-    Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
-    Layer.provide(Layer.mock(ThreadLaunch.ThreadLaunchService)({})),
-    Layer.provide(
-      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
-    ),
-    Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
-    Layer.provide(Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({})),
-    Layer.provide(
-      ServerConfig.layerTest(process.cwd(), { prefix: "t3-peer-forwarding-laptop-" }).pipe(
-        Layer.provide(NodeServices.layer),
+const makeLaptopWith = (
+  cluster?: Layer.Layer<ClusterService.ClusterService>,
+  descriptor = laptop,
+) =>
+  Effect.gen(function* () {
+    const linking = yield* layerLinkingEnvironment(descriptor).pipe(Layer.build);
+    const layerHere = Layer.mergeAll(
+      McpHttpServer.layerOrchestratorToolkit,
+      McpHttpServer.layerProjectRegistration,
+      McpHttpServer.layerThreadToolkit,
+    ).pipe(
+      Layer.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
+      Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+      Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
+      Layer.provide(Layer.mock(ThreadLaunch.ThreadLaunchService)({})),
+      Layer.provide(
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
       ),
-    ),
-    Layer.provide(NodeServices.layer),
-    Layer.provide(PeerForwarding.layer),
-    Layer.provide(Layer.succeedContext(linking)),
-    Layer.provide(NodeCrypto.layer),
-    Layer.provideMerge(
-      Layer.mock(ThreadManagement.ThreadManagementService)({
-        getThreadShell: (threadId) =>
-          Effect.succeed(
-            threadId === ThreadId.make("thread:laptop-from-desk")
-              ? {
-                  ...liveThreadShell(threadId, { runtimeMode: "full-access" }),
-                  // Work another environment's link started on this laptop.
-                  linkOrigin: { sessionId: "session:desk", label: "T3 Code · Desk" },
-                }
-              : liveThreadShell(
-                  threadId,
-                  threadId === ThreadId.make("thread:laptop-plan")
-                    ? { runtimeMode: "full-access", interactionMode: "plan" }
-                    : { runtimeMode: "full-access" },
-                ),
-          ),
-        getProjectThreadRecords: ({ threadId }) =>
-          Effect.succeed({
-            thread: liveThreadShell(threadId, { runtimeMode: "full-access" }),
-          } as never),
-      }),
-    ),
-    Layer.provide(
-      Layer.mergeAll(
-        Layer.mock(ProviderRegistry.ProviderRegistry)({}),
-        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({}),
-        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-        Layer.mock(ProjectService.ProjectService)({}),
-        Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({}),
-        Layer.mock(SecretRequests.SecretRequests)({}),
-        ServerSettings.layerTest(),
-        // No thread here delegated to the box, so a send there is no follow-up.
-        Layer.mock(RemoteDelegation.RemoteDelegation)({
-          followUp: (_scope, _environmentId, _request, sent) => Effect.succeed(sent),
-        }),
-        Layer.mock(PeerLinkRequests.PeerLinkRequests)({}),
-      ),
-    ),
-    Layer.fresh,
-  );
-  const here = yield* Layer.build(layerHere);
-  const server = Context.get(here, McpServer.McpServer);
-  const scopeOf = (
-    caller: string,
-    capabilities: ReadonlySet<McpInvocationContext.McpCapability> = new Set(["orchestration"]),
-  ): McpInvocationContext.McpInvocationScope => ({
-    environmentId: laptop.environmentId,
-    requestNamespace: `provider-session:${caller}`,
-    thread: {
-      threadId: ThreadId.make(caller),
-      providerSessionId: `provider-session:${caller}`,
-      providerInstanceId: ProviderInstanceId.make("codex"),
-    },
-    client: undefined,
-    capabilities,
-    issuedAt: 1,
-  });
-  const call = (
-    caller: string,
-    name: string,
-    args: Record<string, unknown>,
-    capabilities?: ReadonlySet<McpInvocationContext.McpCapability>,
-  ) =>
-    server
-      .callTool({ name, arguments: args })
-      .pipe(
-        Effect.provideService(
-          McpInvocationContext.McpInvocationContext,
-          scopeOf(caller, capabilities),
+      Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+      Layer.provide(Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({})),
+      Layer.provide(
+        ServerConfig.layerTest(process.cwd(), { prefix: "t3-peer-forwarding-laptop-" }).pipe(
+          Layer.provide(NodeServices.layer),
         ),
-        Effect.provideService(McpSchema.McpServerClient, mcpClient),
-      );
-  return { links: Context.get(linking, PeerLinks.PeerLinks), call };
-});
+      ),
+      Layer.provide(NodeServices.layer),
+      Layer.provideMerge(
+        cluster === undefined
+          ? PeerForwarding.layer
+          : PeerForwarding.layer.pipe(Layer.provide(cluster)),
+      ),
+      Layer.provide(Layer.succeedContext(linking)),
+      Layer.provide(NodeCrypto.layer),
+      Layer.provideMerge(
+        Layer.mock(ThreadManagement.ThreadManagementService)({
+          getThreadShell: (threadId) =>
+            Effect.succeed(
+              threadId === ThreadId.make("thread:laptop-from-desk")
+                ? {
+                    ...liveThreadShell(threadId, { runtimeMode: "full-access" }),
+                    // Work another environment's link started on this laptop.
+                    linkOrigin: { sessionId: "session:desk", label: "T3 Code · Desk" },
+                  }
+                : liveThreadShell(
+                    threadId,
+                    threadId === ThreadId.make("thread:laptop-plan")
+                      ? { runtimeMode: "full-access", interactionMode: "plan" }
+                      : { runtimeMode: "full-access" },
+                  ),
+            ),
+          getProjectThreadRecords: ({ threadId }) =>
+            Effect.succeed({
+              thread: liveThreadShell(threadId, { runtimeMode: "full-access" }),
+            } as never),
+        }),
+      ),
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+          Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({}),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+          Layer.mock(ProjectService.ProjectService)({}),
+          Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({}),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          ServerSettings.layerTest(),
+          // No thread here delegated to the box, so a send there is no follow-up.
+          Layer.mock(RemoteDelegation.RemoteDelegation)({
+            followUp: (_scope, _environmentId, _request, sent) => Effect.succeed(sent),
+          }),
+          Layer.mock(PeerLinkRequests.PeerLinkRequests)({}),
+        ),
+      ),
+      Layer.fresh,
+    );
+    const here = yield* Layer.build(layerHere);
+    const server = Context.get(here, McpServer.McpServer);
+    const scopeOf = (
+      caller: string,
+      capabilities: ReadonlySet<McpInvocationContext.McpCapability> = new Set(["orchestration"]),
+    ): McpInvocationContext.McpInvocationScope => ({
+      environmentId: descriptor.environmentId,
+      requestNamespace: `provider-session:${caller}`,
+      thread: {
+        threadId: ThreadId.make(caller),
+        providerSessionId: `provider-session:${caller}`,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+      },
+      client: undefined,
+      capabilities,
+      issuedAt: 1,
+    });
+    const callAs = (
+      scope: McpInvocationContext.McpInvocationScope,
+      name: string,
+      args: Record<string, unknown>,
+    ) =>
+      server
+        .callTool({ name, arguments: args })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+          Effect.provideService(McpSchema.McpServerClient, mcpClient),
+        );
+    const call = (
+      caller: string,
+      name: string,
+      args: Record<string, unknown>,
+      capabilities?: ReadonlySet<McpInvocationContext.McpCapability>,
+    ) => callAs(scopeOf(caller, capabilities), name, args);
+    const settings = Context.get(linking, ServerSettings.ServerSettingsService);
+    return {
+      links: Context.get(linking, PeerLinks.PeerLinks),
+      settings,
+      forwarding: Context.get(here, PeerForwarding.PeerForwarding),
+      /** What this environment runs for a member's agent, as a main host's control link does. */
+      serveHost: yield* ClusterHostRequests.make(descriptor.environmentId).pipe(
+        Effect.provideService(McpServer.McpServer, server),
+        Effect.provideService(ServerSettings.ServerSettingsService, settings),
+      ),
+      scopeOf,
+      call,
+      callAs,
+    };
+  });
+
+const makeLaptop = makeLaptopWith();
 
 const failureOf = (result: McpSchema.CallToolResult) => {
   const text = result.content[0];
@@ -627,6 +695,15 @@ it.effect("runs any tool that takes a linked environment there", () =>
       });
       expect(archived.isError).toBe(false);
       expect((yield* Ref.get(seen)).stops).toEqual([`thread.archive ${boxThread}`]);
+      // A cursorless read from an agent here gets the newest page there, as it does locally.
+      const read = yield* a.call("thread:laptop-full", "t3_thread_read", {
+        environmentId: box.environmentId,
+        threadId: boxThread,
+      });
+      expect(read.isError).toBe(false);
+      expect((yield* Ref.get(seen)).reads).toEqual([
+        { beforePosition: Number.MAX_SAFE_INTEGER, limit: 10, view: "messages" },
+      ]);
 
       // This environment's own id keeps the call here.
       const own = yield* a.call("thread:laptop-full", "t3_thread_configure", {
@@ -741,6 +818,314 @@ it.effect("refuses a launch there above the link's access, naming the link", () 
       // Once the link has expired, that is what the agent needs to hear.
       yield* TestClock.adjust(Duration.days(31));
       expect(failureOf(yield* launchAboveLink).message).toContain("expired");
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+const refusedRead = (message: string) =>
+  new OrchestratorMcpFailure({ code: "invalid_request", message });
+const beforePositionRefusal = refusedRead(
+  `Invalid parameters for tool 't3_thread_read': Unknown argument "beforePosition". Accepted arguments: limit, view.`,
+);
+
+it("recognizes only a validation refusal of beforePosition", () => {
+  const cases: Array<[OrchestratorMcpFailure, boolean]> = [
+    [beforePositionRefusal, true],
+    [
+      refusedRead(
+        `Invalid parameters for tool 't3_thread_read': Unknown arguments "runLimit", "beforePosition". Accepted arguments: limit.`,
+      ),
+      true,
+    ],
+    [refusedRead(`Invalid parameters for tool 't3_thread_read': Unknown argument "limit".`), false],
+    // A thread id can carry the same words; only the refusal's code and prefix count.
+    [
+      new OrchestratorMcpFailure({
+        code: "thread_not_found",
+        message: `Thread Unknown argument "beforePosition". Accepted arguments: x. is no longer available.`,
+      }),
+      false,
+    ],
+  ];
+  for (const [failure, expected] of cases) {
+    expect(PeerForwarding.refusesBeforePosition(failure)).toBe(expected);
+  }
+});
+
+it.effect("retries a newest-page read without its cursor when the peer refuses the cursor", () =>
+  Effect.gen(function* () {
+    const sent: Array<unknown> = [];
+    const olderPeer = (args: unknown): Effect.Effect<string, OrchestratorMcpFailure> => {
+      sent.push(args);
+      return "beforePosition" in (args as object)
+        ? Effect.fail(beforePositionRefusal)
+        : Effect.succeed("forward page");
+    };
+    const params = { threadId: "thread:box-auto", limit: 35 };
+    const newest = { ...params, beforePosition: Number.MAX_SAFE_INTEGER };
+
+    const page = yield* PeerForwarding.readNewestOrRetry(olderPeer, newest, params);
+
+    expect(page).toBe("forward page");
+    expect(sent).toEqual([newest, params]);
+  }),
+);
+
+it.effect(
+  "an agent on a cluster's main host works on a member's threads without links, unfenced",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const seen = yield* Ref.make<Seen>(nothingSeen);
+        const b = yield* serveBox(seen, yield* Ref.make(""));
+        const members = yield* Ref.make<ReadonlyArray<RoutedEnvironment>>([
+          { descriptor: box, url: b.url, token: yield* clusterHostToken(b.auth, "Laptop") },
+        ]);
+        const a = yield* makeLaptopWith(layerRoutingMain(members));
+        // A cluster needs neither a link nor the Linked environments beta.
+        yield* a.settings.updateSettings({ linkedEnvironmentsEnabled: false });
+        const asClustered = (caller: string) => ({
+          ...a.scopeOf(caller),
+          linkedEnvironments: false,
+          clustered: true,
+        });
+
+        // The box user's own thread: a link below full access could not touch it, the cluster can.
+        const sent = yield* a.callAs(asClustered("thread:laptop-full"), "t3_thread_send", {
+          environmentId: box.environmentId,
+          threadId: usersThread,
+          message: "Carry on there.",
+          clientRequestId: "send-1",
+        });
+        expect(sent.isError, JSON.stringify(sent.content)).toBe(false);
+        expect((yield* Ref.get(seen)).sends[0]).toMatchObject({
+          threadId: usersThread,
+          linkedSender: { environmentId: laptop.environmentId, threadId: "thread:laptop-full" },
+        });
+        const [member] = yield* Ref.get(members);
+        expect(yield* Ref.get(b.bearers)).toContain(`Bearer ${member!.token}`);
+
+        const waited = yield* a.callAs(asClustered("thread:laptop-full"), "t3_thread_wait", {
+          environmentId: box.environmentId,
+          threadId: boxThread,
+          timeoutMs: 600_000,
+        });
+        expect(waited.isError).toBe(false);
+        expect((yield* Ref.get(seen)).waits.map(({ timeoutMs }) => timeoutMs)).toEqual([45_000]);
+
+        // The caller's own modes still travel with the call.
+        const planned = yield* a.callAs(asClustered("thread:laptop-plan"), "t3_thread_send", {
+          environmentId: box.environmentId,
+          threadId: boxThread,
+          message: "Change course.",
+        });
+        expect(failureOf(planned)).toMatchObject({ code: "interaction_mode_escalation_denied" });
+
+        // The same box over an `auto` peer link is fenced away from the user's own thread.
+        const linked = yield* makeLaptop;
+        yield* linkTo(linked.links, b, "auto");
+        const fenced = yield* linked.call("thread:laptop-full", "t3_thread_send", {
+          environmentId: box.environmentId,
+          threadId: usersThread,
+          message: "Carry on there.",
+        });
+        expect(failureOf(fenced)).toMatchObject({ code: "capability_denied" });
+
+        const listed = yield* a.callAs(
+          asClustered("thread:laptop-full"),
+          "t3_environment_links",
+          {},
+        );
+        expect(listed.structuredContent).toEqual({
+          environmentId: laptop.environmentId,
+          links: [],
+          cluster: [
+            {
+              environmentId: box.environmentId,
+              label: "Box",
+              role: "member",
+              status: "online",
+              lastError: null,
+            },
+          ],
+          notListed:
+            "Not listed: this environment is in a cluster, which takes no links. The user adds machines on the main host, in Settings → Cluster.",
+        });
+
+        // Removed from the cluster: final, so a task there fails instead of retrying.
+        expect(yield* a.forwarding.routeLabel(box.environmentId)).toEqual(Option.some("Box"));
+        yield* Ref.set(members, []);
+        const removed = yield* a.callAs(asClustered("thread:laptop-full"), "t3_thread_read", {
+          environmentId: box.environmentId,
+          threadId: boxThread,
+        });
+        expect(failureOf(removed)).toMatchObject({
+          code: "capability_denied",
+          message:
+            "environment-box is not a member of this cluster. t3_environment_links lists this cluster's environments.",
+        });
+        expect(yield* a.forwarding.routeLabel(box.environmentId)).toEqual(Option.none());
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("a member reaches another member through the main host, which never loops", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const seen = yield* Ref.make<Seen>(nothingSeen);
+      const b = yield* serveBox(seen, yield* Ref.make(""));
+      const members = yield* Ref.make<ReadonlyArray<RoutedEnvironment>>([
+        { descriptor: box, url: b.url, token: yield* clusterHostToken(b.auth, "Studio") },
+      ]);
+      const main = yield* makeLaptopWith(layerRoutingMain(members), studio);
+      // The control link without its HTTP: ClusterService carries the same call and answer. Both
+      // hosts share this fiber, so the main host's own forwarding is pinned against the member's.
+      const hostCall = (call: ClusterService.ClusterHostCall) =>
+        main
+          .serveHost(laptopMember, { requestId: "link-request", ...call })
+          .pipe(Effect.provideService(PeerForwarding.PeerForwarding, main.forwarding));
+      const a = yield* makeLaptopWith(layerRoutingMember({ host: studio, hostCall }));
+
+      // The main host lists the calling member too; the member leaves itself out.
+      yield* Ref.update(members, (list) => [
+        ...list,
+        { descriptor: laptop, url: "http://127.0.0.1:1", token: "unused" },
+      ]);
+      const listed = yield* a.call("thread:laptop-full", "t3_environment_links", {});
+      expect(listed.structuredContent).toEqual({
+        environmentId: laptop.environmentId,
+        links: [],
+        cluster: [
+          {
+            environmentId: studio.environmentId,
+            label: "Studio",
+            role: "main-host",
+            status: "online",
+            lastError: null,
+          },
+          {
+            environmentId: box.environmentId,
+            label: "Box",
+            role: "member",
+            status: "online",
+            lastError: null,
+          },
+        ],
+        notListed:
+          "Not listed: this environment is in a cluster, which takes no links. The user adds machines on the main host, in Settings → Cluster.",
+      });
+
+      const send = (caller: string, clientRequestId: string) =>
+        a.call(caller, "t3_thread_send", {
+          environmentId: box.environmentId,
+          threadId: boxThread,
+          message: "Once.",
+          clientRequestId,
+        });
+      const first = yield* send("thread:laptop-full", "same-key");
+      expect(first.isError, JSON.stringify(first.content)).toBe(false);
+      yield* send("thread:laptop-full", "same-key");
+      yield* send("thread:laptop-other", "same-key");
+      const sends = (yield* Ref.get(seen)).sends;
+      const [firstId, retried, other] = sends.map((input) => input.commandId);
+      // Each hop scopes the key to its caller: a retry still matches at the box, another agent's does not.
+      expect(retried).toBe(firstId);
+      expect(other).not.toBe(firstId);
+      expect(firstId).not.toContain("same-key");
+      // The main host passes on which thread on the member sent it.
+      expect(sends[0]?.linkedSender).toEqual({
+        environmentId: laptop.environmentId,
+        threadId: "thread:laptop-full",
+        title: "thread:laptop-full",
+      });
+
+      yield* a.call("thread:laptop-full", "t3_thread_wait", {
+        environmentId: box.environmentId,
+        threadId: boxThread,
+        timeoutMs: 600_000,
+      });
+      expect((yield* Ref.get(seen)).waits.map(({ timeoutMs }) => timeoutMs)).toEqual([45_000]);
+      // The box only ever sees the main host's own credential.
+      const [boxRoute] = yield* Ref.get(members);
+      expect(new Set(yield* Ref.get(b.bearers))).toEqual(new Set([`Bearer ${boxRoute!.token}`]));
+
+      const nowhere = yield* a.call("thread:laptop-full", "t3_thread_read", {
+        environmentId: EnvironmentId.make("environment-nowhere"),
+        threadId: boxThread,
+      });
+      expect(failureOf(nowhere)).toMatchObject({
+        code: "capability_denied",
+        message:
+          "environment-nowhere is not a member of this cluster. t3_environment_links lists this cluster's environments.",
+      });
+
+      // The main host refuses a member's call that names that member...
+      const looped = yield* main.serveHost(laptopMember, {
+        requestId: "looped",
+        tool: "t3_thread_read",
+        arguments: { environmentId: laptop.environmentId, threadId: "thread:laptop-full" },
+        limits: { runtimeMode: "full-access", interactionMode: "default" },
+      });
+      expect(looped.isError).toBe(true);
+      expect(JSON.parse(looped.text)).toMatchObject({
+        code: "invalid_request",
+        message:
+          "That environmentId is the calling environment's own. Leave out environmentId to act there.",
+      });
+      // ...and a member never sends on a call its main host already forwarded.
+      const fromHost = {
+        ...a.scopeOf("thread:unused"),
+        thread: undefined,
+        client: {
+          sessionId: "cluster-host-session",
+          label: "Cluster host · Studio",
+          access: "full-access" as const,
+          cluster: true,
+        },
+      };
+      const bounced = yield* a.callAs(fromHost, "t3_thread_read", {
+        environmentId: box.environmentId,
+        threadId: boxThread,
+      });
+      expect(failureOf(bounced)).toMatchObject({ code: "invalid_request" });
+      // Listing asks the main host too, so its own call is refused the same way.
+      const relisted = yield* a.callAs(fromHost, "t3_environment_links", {});
+      expect(failureOf(relisted)).toMatchObject({ code: "invalid_request" });
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("a member hears why its main host cannot take a call", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const a = yield* makeLaptopWith(
+        layerRoutingMember({
+          host: studio,
+          hostCall: () => Effect.fail(ClusterService.clusterHostUnreachable("Studio")),
+        }),
+      );
+      const read = yield* a.call("thread:laptop-full", "t3_thread_read", {
+        environmentId: box.environmentId,
+        threadId: boxThread,
+      });
+      // Not final: a follower keeps trying until the link is back.
+      expect(failureOf(read)).toMatchObject({
+        code: "orchestration_error",
+        message:
+          'Cluster host unreachable: "Studio" is not connected, so other environments in the cluster cannot be reached. Work here continues.',
+      });
+      const listed = yield* a.call("thread:laptop-full", "t3_environment_links", {});
+      expect(listed.structuredContent).toMatchObject({
+        cluster: [
+          {
+            environmentId: studio.environmentId,
+            role: "main-host",
+            status: "offline",
+            lastError:
+              'Cluster host unreachable: "Studio" is not connected, so other environments in the cluster cannot be reached. Work here continues.',
+          },
+        ],
+      });
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

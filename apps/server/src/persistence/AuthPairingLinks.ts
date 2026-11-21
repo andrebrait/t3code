@@ -23,6 +23,9 @@ import {
 export const MCP_APPROVAL_SUBJECT_PREFIX = "mcp-approval:";
 export const PEER_LINK_PAIRING_SUBJECT_PREFIX = `${MCP_APPROVAL_SUBJECT_PREFIX}peer-link:`;
 
+/** A one-time code that lets a main host add this environment to its cluster. */
+export const CLUSTER_MEMBER_PAIRING_SUBJECT = `${MCP_APPROVAL_SUBJECT_PREFIX}cluster-member`;
+
 const SqliteFlag = Schema.Literals([0, 1]);
 
 export const AuthPairingLinkRecord = Schema.Struct({
@@ -65,6 +68,7 @@ export const ConsumeAuthPairingLinkInput = Schema.Struct({
   requiredScopes: Schema.optionalKey(AuthEnvironmentScopes),
   /** Allow a purpose-bound code only when its subject matches the request. */
   allowedSubject: Schema.optionalKey(Schema.String),
+  exactSubject: Schema.optionalKey(Schema.String),
   consumedAt: Schema.DateTimeUtcFromString,
   now: Schema.DateTimeUtcFromString,
 });
@@ -233,6 +237,7 @@ export const make = Effect.gen(function* () {
       requestedScopes,
       requiredScopes,
       allowedSubject,
+      exactSubject,
       consumedAt,
       now,
     }) =>
@@ -243,6 +248,7 @@ export const make = Effect.gen(function* () {
           AND revoked_at IS NULL
           AND consumed_at IS NULL
           AND expires_at > ${now}
+          AND (${exactSubject === undefined ? 1 : 0} OR subject = ${exactSubject ?? null})
           AND (
             subject NOT LIKE ${`${MCP_APPROVAL_SUBJECT_PREFIX}%`}
             OR subject = ${allowedSubject ?? null}

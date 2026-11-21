@@ -66,12 +66,14 @@ import {
   resolveServerUpdateProgressResult,
   serverUpdateStateForProgressEvent,
   serverUpdateStateAtom,
+  serverUpdateFailureText,
   serverUpdateStateForServerVersion,
   validateServerUpdateReadyEvent,
   waitForNextEnvironmentReconnect,
   waitForDesktopUpdateTarget,
   runDesktopCommitWithReconnectObserver,
 } from "./server.ts";
+import { errorDisplayMessage, errorI18nMessage } from "../errors/translatable.ts";
 import { runAtomCommand } from "./runtime.ts";
 import { applyServerConfigProjection } from "./serverConfigProjection.ts";
 
@@ -239,14 +241,21 @@ describe("accepted server update recovery", () => {
     { loss: "interrupt", resumes: true },
     { loss: "socket", resumes: true },
     { loss: "server_error", resumes: false },
+    { loss: "track_mismatch", method: "desktop-managed", resumes: false },
+    { loss: "track_mismatch", method: "desktop-managed", unary: true, resumes: false },
     { loss: "no_progress", resumes: false },
     { loss: "cancel", resumes: false },
     { loss: "socket", method: "respawn", resumes: true },
     { loss: "socket", method: "desktop-managed", resumes: false },
-  ] as const)("handles $loss with $method and recovery=$resumes", (scenario) =>
+  ] as const)("handles $loss with $method, unary=$unary and recovery=$resumes", (scenario) =>
     Effect.gen(function* () {
       const { loss, resumes } = scenario;
       const method = "method" in scenario ? scenario.method : "boot-service";
+      const trackMismatch = new ServerSelfUpdateError({
+        reason:
+          "This Stable build can't update from the Nightly track on its own. Switch the update track back to Stable, or use Review beside Update track to retry the switch to Nightly.",
+        trackMismatch: { buildChannel: "latest", savedChannel: "nightly" },
+      });
       const observing = yield* Deferred.make<void>();
       const cancelFiber = yield* Deferred.make<Fiber.Fiber<unknown, unknown>>();
       const oldReadyObserved = yield* Deferred.make<void>();
@@ -257,7 +266,10 @@ describe("accepted server update recovery", () => {
         environment: {
           ...CONFIG.environment,
           serverVersion: "0.0.30",
-          capabilities: { serverSelfUpdate: method, serverSelfUpdateProgress: true },
+          capabilities: {
+            serverSelfUpdate: method,
+            serverSelfUpdateProgress: !("unary" in scenario),
+          },
         },
       } as ServerConfig;
       const ready = (serverVersion: string) =>
@@ -283,6 +295,7 @@ describe("accepted server update recovery", () => {
                 ),
               )
             : Stream.make(ready("0.0.30")).pipe(Stream.concat(Stream.never)),
+        [WS_METHODS.serverUpdateServer]: () => Effect.fail(trackMismatch),
         [WS_METHODS.serverUpdateServerWithProgress]: () =>
           Stream.unwrap(
             Effect.sync(() => {
@@ -306,9 +319,11 @@ describe("accepted server update recovery", () => {
                           ? new ServerSelfUpdateError({
                               reason: "Archive verification failed.",
                             })
-                          : new RpcClientError.RpcClientError({
-                              reason: new Socket.SocketCloseError({ code: 1006 }),
-                            }),
+                          : loss === "track_mismatch"
+                            ? trackMismatch
+                            : new RpcClientError.RpcClientError({
+                                reason: new Socket.SocketCloseError({ code: 1006 }),
+                              }),
                       ),
               ),
             ),
@@ -322,6 +337,7 @@ describe("accepted server update recovery", () => {
         connect: Effect.void,
         disconnect: Effect.void,
         retryNow: Effect.void,
+        reprepare: Effect.void,
       });
       const run: EnvironmentRegistry.EnvironmentRegistry["Service"]["run"] = (_id, effect) =>
         Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor);
@@ -335,6 +351,7 @@ describe("accepted server update recovery", () => {
         followStream: runStream,
         stateChanges: () => Stream.never,
         retryNow: () => Effect.void,
+        reprepare: () => Effect.void,
       } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
       const runtime = Atom.runtime(
         Layer.mergeAll(
@@ -377,10 +394,22 @@ describe("accepted server update recovery", () => {
       );
       if (!resumes) {
         expect(first).toBe("settled");
-        expect(AsyncResult.isFailure(yield* Effect.promise(() => pending))).toBe(true);
-        expect(registry.get(serverUpdateStateAtom(TARGET.environmentId))).toMatchObject({
-          status: "failed",
-        });
+        const failure = yield* Effect.promise(() => pending);
+        expect(AsyncResult.isFailure(failure)).toBe(true);
+        const failed = registry.get(serverUpdateStateAtom(TARGET.environmentId));
+        expect(failed).toMatchObject({ status: "failed" });
+        if (
+          loss === "track_mismatch" &&
+          AsyncResult.isFailure(failure) &&
+          failed.status === "failed"
+        ) {
+          const cause = Cause.squash(failure.cause);
+          const marked = errorI18nMessage(cause);
+          expect(marked).toHaveLength(2);
+          expect(failed.i18nMessage).toEqual(marked);
+          expect(errorDisplayMessage(cause)).toBe(trackMismatch.message);
+          expect(serverUpdateFailureText(failed)).toBe(trackMismatch.message);
+        }
         return;
       }
       expect(first).toBe("observing");
@@ -418,6 +447,7 @@ const makeConfigPersistenceHarness = Effect.fn("test.makeConfigPersistenceHarnes
     connect: Effect.void,
     disconnect: Effect.void,
     retryNow: Effect.void,
+    reprepare: Effect.void,
   });
   const cache = Persistence.EnvironmentCacheStore.of({
     loadShell: () => Effect.succeedNone,
@@ -1013,6 +1043,7 @@ describe("server state projection", () => {
         connect: Effect.void,
         disconnect: Effect.void,
         retryNow: Effect.void,
+        reprepare: Effect.void,
       } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
       const staleWelcome = {
         environment: {} as ServerLifecycleWelcomePayload["environment"],
@@ -1068,6 +1099,7 @@ describe("server state projection", () => {
         connect: Effect.void,
         disconnect: Effect.void,
         retryNow: Effect.void,
+        reprepare: Effect.void,
       } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
 
       yield* Effect.scoped(
@@ -1126,6 +1158,7 @@ describe("server state projection", () => {
         connect: Effect.void,
         disconnect: Effect.void,
         retryNow: Effect.void,
+        reprepare: Effect.void,
       } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
       const firstWelcome = {
         environment: {} as ServerLifecycleWelcomePayload["environment"],
@@ -1340,6 +1373,7 @@ describe("server state projection", () => {
         connect: Effect.void,
         disconnect: Effect.void,
         retryNow: Effect.void,
+        reprepare: Effect.void,
       } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
       const savedConfigs = yield* Queue.unbounded<ServerConfig>();
       const cache = Persistence.EnvironmentCacheStore.of({
@@ -1404,6 +1438,7 @@ describe("server state projection", () => {
         connect: Effect.void,
         disconnect: Effect.void,
         retryNow: Effect.void,
+        reprepare: Effect.void,
       } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
       const savedConfigs = yield* Queue.unbounded<ServerConfig>();
       const cache = Persistence.EnvironmentCacheStore.of({
@@ -1543,6 +1578,7 @@ describe("launcher update resume", () => {
       connect: Effect.void,
       disconnect: Effect.void,
       retryNow: Effect.void,
+      reprepare: Effect.void,
     } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
     type Environments = EnvironmentRegistry.EnvironmentRegistry["Service"];
     const run: Environments["run"] = (_environmentId, effect) =>
@@ -1555,6 +1591,7 @@ describe("launcher update resume", () => {
       followStream: runStream,
       stateChanges: () => Stream.never,
       retryNow: () => Effect.void,
+      reprepare: () => Effect.void,
     } as unknown as Environments);
     const cache = Persistence.EnvironmentCacheStore.of({
       loadShell: () => Effect.succeedNone,
@@ -1726,6 +1763,7 @@ describe("provider setup commands", () => {
         connect: Effect.void,
         disconnect: Effect.void,
         retryNow: Effect.void,
+        reprepare: Effect.void,
       } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
       const runtime = Atom.runtime(
         Layer.merge(
@@ -1797,6 +1835,7 @@ describe("provider setup commands", () => {
         connect: Effect.void,
         disconnect: Effect.void,
         retryNow: Effect.void,
+        reprepare: Effect.void,
       } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
       const runtime = Atom.runtime(
         Layer.merge(
@@ -1888,6 +1927,7 @@ describe("resource telemetry history", () => {
                 connect: Effect.void,
                 disconnect: Effect.void,
                 retryNow: Effect.void,
+                reprepare: Effect.void,
               });
               const environments = EnvironmentRegistry.EnvironmentRegistry.of({
                 run: (_id, effect) =>

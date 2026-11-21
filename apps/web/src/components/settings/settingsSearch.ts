@@ -71,6 +71,7 @@ export interface SettingsSearchItem {
   readonly wslAvailableOnly?: boolean;
   readonly managedTunnelOnly?: boolean;
   readonly peerLinksOnly?: boolean;
+  readonly clusterOnly?: boolean;
   readonly fastWorktreeCheckoutOnly?: boolean;
   readonly textGeneratorsOnly?: boolean;
   readonly secondary?: boolean;
@@ -87,6 +88,7 @@ export interface SettingsSearchAvailability {
   readonly hasThreadAutoSettlement: boolean;
   readonly managedTunnelActive?: boolean;
   readonly hasPeerLinkHost?: boolean;
+  readonly hasClusterHost?: boolean;
   readonly hasFastWorktreeCheckoutEnvironment?: boolean;
   /** An environment without a provider allow-list, which hides text generators. */
   readonly hasTextGeneratorsEnvironment?: boolean;
@@ -546,6 +548,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("beta link another machine vps peer agents work there delegate")],
   },
   {
+    id: "cluster-beta",
+    title: msg("Cluster"),
+    to: "/settings/labs",
+    scope: "environment",
+    searchTerms: [msg("beta cluster main host members group machines proxy join code")],
+  },
+  {
     id: "prompt-suggestions-beta",
     title: msg("Suggest next prompt"),
     to: "/settings/labs",
@@ -804,6 +813,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: msg("Follow-up behavior"),
     to: "/settings/chat",
     searchTerms: [msg("queue steer running turn send default behavior composer")],
+  },
+  {
+    id: "side-thread-open-target",
+    title: msg("Open subagents and side chats in"),
+    to: "/settings/chat",
+    searchTerms: [
+      msg(
+        "subagent side chat linked thread click right panel side panel main view command ctrl middle click",
+      ),
+    ],
   },
   {
     id: "provider-update-checks",
@@ -1307,6 +1326,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("commands scripts setup run dev server checkout worktree t3.json import")],
   },
   {
+    id: "project-repositories",
+    title: msg("Repositories"),
+    to: "/settings/projects",
+    searchTerms: [msg("tracked folders multi repo workspace code-workspace rescan add folder")],
+  },
+  {
     id: "environment-icon",
     title: msg("Environment icon"),
     to: "/settings/access",
@@ -1373,6 +1398,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     managedTunnelOnly: true,
   },
   {
+    id: "network-plain-http",
+    title: msg("Redirect network HTTP to HTTPS"),
+    to: "/settings/access",
+    targetId: "connections-environment",
+    searchTerms: [msg("https tls certificate self-signed plain http redirect secure lan network")],
+  },
+  {
     id: "hold-webhooks-while-offline",
     localEnvironmentOnly: true,
     title: msg("Hold webhooks while offline"),
@@ -1417,6 +1449,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/connections",
     targetId: "linked-environments",
     searchTerms: [msg("link peer another machine vps agents work there handoff pairing code")],
+  },
+  {
+    id: "cluster",
+    clusterOnly: true,
+    title: msg("Cluster"),
+    to: "/settings/connections",
+    targetId: "cluster",
+    searchTerms: [msg("cluster main host member join code fingerprint ssh leave remove")],
   },
   {
     id: "remote-environments",
@@ -1626,6 +1666,7 @@ export function filterAvailableSettingsSearchItems(
       (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement) &&
       (!item.managedTunnelOnly || availability.managedTunnelActive === true) &&
       (!item.peerLinksOnly || availability.hasPeerLinkHost === true) &&
+      (!item.clusterOnly || availability.hasClusterHost === true) &&
       (!item.fastWorktreeCheckoutOnly ||
         availability.hasFastWorktreeCheckoutEnvironment === true) &&
       (!item.textGeneratorsOnly || availability.hasTextGeneratorsEnvironment === true),

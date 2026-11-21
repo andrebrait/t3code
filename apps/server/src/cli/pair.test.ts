@@ -337,6 +337,55 @@ describe("t3 pair", () => {
     ),
   );
 
+  it.effect("pairs through the address --url names", () =>
+    withDescriptorServer((origin) =>
+      Effect.gen(function* () {
+        const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-url-test-"));
+        yield* persistServerRuntimeState({
+          path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
+          state: yield* makePersistedServerRuntimeState({
+            config: { host: "127.0.0.1", devUrl: undefined },
+            port: Number(new URL(origin).port),
+          }),
+        });
+
+        const output = yield* captureStdout(
+          runCli(["pair", "--base-dir", baseDir, "--url", "https://t3.example.com"]),
+        );
+        assert.include(output, "Pairing URL: https://t3.example.com/pair#token=");
+        assert.notInclude(output, "only reachable from this machine");
+
+        for (const flags of [
+          ["--url", "ftp://t3.example.com"],
+          ["--url", "https://t3.example.com", "--tailscale"],
+        ]) {
+          const exit = yield* provideCliTestLayers(
+            runCli(["pair", "--base-dir", baseDir, ...flags]).pipe(Effect.exit),
+          );
+          assert.isTrue(Exit.isFailure(exit));
+          if (Exit.isFailure(exit)) {
+            assert.include(String(Cause.squash(exit.cause)), "InvalidPairUrlError");
+          }
+        }
+      }),
+    ).pipe(
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      Effect.provideService(HostProcess.Environment, {
+        ...process.env,
+        [SERVICE_LAUNCHER_CONTEXT_ENV]: JSON.stringify({
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          childVersion: packageJson.version,
+        }),
+      }),
+      Effect.provideService(ServiceLauncherClient.ServiceLauncherHostProcess, {
+        connected: false,
+        send: () => false,
+        on: () => undefined,
+        off: () => undefined,
+      }),
+    ),
+  );
+
   it.effect("pairs through the recorded dev web URL for dev servers", () =>
     withDescriptorServer((origin) =>
       Effect.gen(function* () {

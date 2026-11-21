@@ -29,7 +29,10 @@ export function previewPdfAssetUrl(rawUrl: string, httpBaseUrl: string | null): 
     }
     // The browser may run on the host's loopback address. Fetch signed bytes
     // through this client's environment connection, including remote routes.
-    return new URL(`${url.pathname}${url.search}${url.hash}`, baseUrl).href;
+    return new URL(
+      `${baseUrl.pathname.replace(/\/+$/, "")}${url.pathname}${url.search}${url.hash}`,
+      baseUrl,
+    ).href;
   } catch {
     return null;
   }

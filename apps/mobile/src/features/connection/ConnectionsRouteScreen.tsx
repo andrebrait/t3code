@@ -10,7 +10,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppBar } from "../../components/ui/AppBar";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
 import { LocalEnvironmentList } from "./LocalEnvironmentList";
+import { LoadBalancingSettings } from "./LoadBalancingSettings";
 import { PullRequestRoutingSettings } from "./PullRequestRoutingSettings";
+import { useClusterHosts, useClusterMemberIds } from "../../state/cluster";
+import { ClusterSection } from "./ClusterSection";
 import { LinkedEnvironmentsSection } from "./LinkedEnvironmentsSection";
 import { LinkSeveralEnvironmentsAction } from "./LinkSeveralEnvironments";
 
@@ -25,6 +28,8 @@ export function ConnectionsRouteScreen() {
   } = useRemoteConnections();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
+  const clusterHosts = useClusterHosts();
+  const clusterMemberIds = useClusterMemberIds();
   const [expandedId, setExpandedId] = useState<EnvironmentId | null>(null);
   const handleToggle = (environmentId: EnvironmentId) => {
     setExpandedId((prev) => (prev === environmentId ? null : environmentId));
@@ -55,7 +60,9 @@ export function ConnectionsRouteScreen() {
         }}
       >
         <LocalEnvironmentList
-          environments={connectedEnvironments}
+          environments={connectedEnvironments.filter(
+            (environment) => !clusterMemberIds.has(environment.environmentId),
+          )}
           expandedId={expandedId}
           onToggle={handleToggle}
           onReconnect={onReconnectEnvironment}
@@ -77,7 +84,15 @@ export function ConnectionsRouteScreen() {
               />
             </Fragment>
           ))}
+        {clusterHosts.map((environment) => (
+          <ClusterSection
+            key={environment.environmentId}
+            environmentId={environment.environmentId}
+            environmentLabel={environment.label}
+          />
+        ))}
         <PullRequestRoutingSettings />
+        <LoadBalancingSettings />
       </ScrollView>
     </View>
   );

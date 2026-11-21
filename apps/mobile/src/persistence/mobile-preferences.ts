@@ -18,7 +18,7 @@ import {
   PullRequestMergeMethod,
   type SidebarProjectGroupingMode,
 } from "@t3tools/contracts";
-import { ToolCallVisibility } from "@t3tools/contracts/settings";
+import { LoadBalancingWeights, ToolCallVisibility } from "@t3tools/contracts/settings";
 import type { AndroidNavigationStyle } from "../lib/androidNavigationStyle";
 import type { ComposerEnterBehavior } from "../lib/composerEnterBehavior";
 import type { FollowUpBehavior } from "../lib/followUpBehavior";
@@ -164,6 +164,11 @@ export interface Preferences {
   readonly followUpBehavior?: FollowUpBehavior;
   /** The client `language` setting: a locale code or "system". Unset means English. */
   readonly language?: string;
+  readonly loadBalancingEnabled?: boolean;
+  /** Per-machine weight, keyed by environment id; unset means 50. */
+  readonly loadBalancingWeights?: Readonly<Record<string, number>>;
+  /** Projects (by repository) whose "Load balance across fewer machines?" confirm is skipped. */
+  readonly loadBalancingConfirmSkippedProjects?: readonly string[];
   readonly microphones?: ReadonlyArray<MicrophoneEntry>;
   readonly projectGroupingEnabled?: boolean;
   readonly projectGroupingMode?: SidebarProjectGroupingMode;
@@ -225,6 +230,7 @@ export class MobilePreferencesStore extends Context.Service<
 >()("@t3tools/mobile/persistence/mobile-preferences/MobilePreferencesStore") {}
 
 const isToolCallVisibility = Schema.is(ToolCallVisibility);
+const isLoadBalancingWeights = Schema.is(LoadBalancingWeights);
 const isPullRequestMergeMethod = Schema.is(PullRequestMergeMethod);
 
 function sanitizePreferences(parsed: Preferences): Preferences {
@@ -254,6 +260,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     composerEnterBehavior?: ComposerEnterBehavior;
     followUpBehavior?: FollowUpBehavior;
     language?: string;
+    loadBalancingEnabled?: boolean;
+    loadBalancingWeights?: Readonly<Record<string, number>>;
+    loadBalancingConfirmSkippedProjects?: readonly string[];
     microphones?: ReadonlyArray<MicrophoneEntry>;
     projectGroupingEnabled?: boolean;
     projectGroupingMode?: SidebarProjectGroupingMode;
@@ -369,6 +378,18 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     preferences.followUpBehavior = parsed.followUpBehavior;
   }
   if (typeof parsed.language === "string") preferences.language = parsed.language;
+  if (typeof parsed.loadBalancingEnabled === "boolean") {
+    preferences.loadBalancingEnabled = parsed.loadBalancingEnabled;
+  }
+  if (isLoadBalancingWeights(parsed.loadBalancingWeights)) {
+    preferences.loadBalancingWeights = parsed.loadBalancingWeights;
+  }
+  if (Array.isArray(parsed.loadBalancingConfirmSkippedProjects)) {
+    preferences.loadBalancingConfirmSkippedProjects =
+      parsed.loadBalancingConfirmSkippedProjects.filter(
+        (key): key is string => typeof key === "string",
+      );
+  }
   if (Array.isArray(parsed.microphones)) {
     preferences.microphones = parsed.microphones.flatMap((entry): MicrophoneEntry[] => {
       if (typeof entry !== "object" || entry === null || !isMicrophoneKind(entry.kind)) return [];

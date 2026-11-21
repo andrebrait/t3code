@@ -1,4 +1,5 @@
-import { T, useGT, useMessages } from "gt-react-native";
+import { msg, T, useGT, useMessages, Var } from "gt-react-native";
+import { m as resolveMessage } from "../../i18n/messages";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { DraftEnvironmentControl } from "./DraftEnvironmentControl";
 import { NativeScrollEdgeEffectsContext } from "../../native/NativeScrollViewMarker";
@@ -13,11 +14,12 @@ import { scopedProjectKey } from "../../lib/scopedEntities";
 import { connectionTone } from "../connection/connectionTone";
 import { runtimeConnectionErrorText } from "../connection/environmentStatusText";
 import { AppBar } from "../../components/ui/AppBar";
-import { ThreadId } from "@t3tools/contracts";
+import { type MessageId, ThreadId } from "@t3tools/contracts";
 
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
+import { loadBalancingConfirmKey } from "@t3tools/client-runtime/load-balancing";
 import { AsyncResult } from "effect/reactivity";
 import { pickableProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -98,7 +100,7 @@ import { newTaskFlowKey } from "./new-task-flow-state";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ConnectionStatusDot } from "../connection/ConnectionStatusDot";
 import { appAtomRegistry } from "../../state/atom-registry";
-import { mobilePreferencesAtom } from "../../state/preferences";
+import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
 
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 
@@ -152,6 +154,41 @@ function NewTaskWorkspaceIcon(props: {
   );
 }
 
+// Native alerts have no checkbox, so "Don't ask again" is a third button.
+function confirmFewerMachines(
+  pool: string,
+  machines: ReadonlyArray<string>,
+): Promise<"cancel" | "continue" | "always"> {
+  return new Promise((resolve) =>
+    Dialog.alert(
+      resolveMessage(msg("Load balance across fewer machines?")),
+      resolveMessage(
+        msg(
+          "{machines} don't have this project, so {pool} only picks among the machines that do. To start on one of them, go back and choose it.",
+          { machines: machines.join(", "), pool },
+        ),
+      ),
+      [
+        {
+          text: resolveMessage(msg("Go back", { $context: "return to the draft without sending" })),
+          style: "cancel",
+          onPress: () => resolve("cancel"),
+        },
+        {
+          text: resolveMessage(msg("Don't ask again for this project")),
+          onPress: () => resolve("always"),
+        },
+        {
+          text: resolveMessage(msg("Continue", { $context: "load balance across fewer machines" })),
+          onPress: () => resolve("continue"),
+        },
+      ],
+      // Android dismisses on an outside tap without pressing a button.
+      { cancelable: true, onDismiss: () => resolve("cancel") },
+    ),
+  );
+}
+
 export function NewTaskDraftScreen(props: {
   readonly initialProjectRef?: {
     readonly environmentId?: string;
@@ -174,7 +211,7 @@ export function NewTaskDraftScreen(props: {
   const currentRoute = useRoute();
   const flowKey = newTaskFlowKey(currentRoute);
   const { getShare, isLoading: isIncomingShareInboxLoading } = useIncomingShare();
-  const { projectScopes, selectedProject, selectedProjectKey, setProject } = flow;
+  const { pinEnvironment, projectScopes, selectedProject, selectedProjectKey, setProject } = flow;
   // selectedProject falls back to the environment's first project; remember only a chosen one.
   useRememberThreadProject(
     selectedProject &&
@@ -235,6 +272,7 @@ export function NewTaskDraftScreen(props: {
     }
   };
   const deleteProject = useAtomCommand(projectEnvironment.delete, { reportFailure: false });
+  const savePreferences = useAtomCommand(saveMobilePreferences);
   const removeClonedProject = async () => {
     if (!selectedProject) return;
     const removed = selectedProject;
@@ -372,7 +410,11 @@ export function NewTaskDraftScreen(props: {
   const { environments, selectedEnvironmentId, switchEnvironment, switchingToEnvironmentId } = flow;
   const cycleEnvironment = () => {
     if (isComposerInteractionLocked) return true;
-    const next = nextEnvironmentId(environments, switchingToEnvironmentId ?? selectedEnvironmentId);
+    // Cycling never clones: a machine that would is picked from the list.
+    const next = nextEnvironmentId(
+      environments.filter((environment) => !environment.cloneRemoteUrl),
+      switchingToEnvironmentId ?? selectedEnvironmentId,
+    );
     if (next !== null) void switchEnvironment(next);
     return true;
   };
@@ -452,6 +494,7 @@ export function NewTaskDraftScreen(props: {
             return;
           }
           // Checkout completed before mount; local mode reuses it while worktree mode would create another.
+          pinEnvironment();
           updateComposerDraftSettings(flow.draftKey, {
             workspaceSelection: {
               mode: "local",
@@ -519,6 +562,7 @@ export function NewTaskDraftScreen(props: {
     selectedProject,
     selectedProjectKey,
     setProject,
+    pinEnvironment,
   ]);
 
   const { loadBranches } = flow;
@@ -618,7 +662,7 @@ export function NewTaskDraftScreen(props: {
       !modelSelection ||
       (initialMessageText.length === 0 && draft.attachments.length === 0) ||
       flow.submitting ||
-      (workspaceMode === "worktree" && !selectedBranchName)
+      (workspaceMode === "worktree" && flow.isGitRepo && !selectedBranchName)
     ) {
       return null;
     }
@@ -718,6 +762,48 @@ export function NewTaskDraftScreen(props: {
     return message.messageId;
   }
 
+  async function handleSend(): Promise<MessageId | null> {
+    const auto = flow.autoBalance;
+    if (auto && !isComposerInteractionLocked) {
+      // Machines free up, so a pick that found none is tried again before warning.
+      const picked = auto.status === "failed" ? await flow.retryAutoBalance() : null;
+      if (auto.status !== "resolved" && picked === null) {
+        const warning = flow.autoBalanceWarning();
+        Dialog.alert(warning.title, warning.description);
+        return null;
+      }
+      // The draft moved; this render still holds the old machine, so the next send starts it.
+      if (picked !== null && picked !== flow.selectedEnvironmentId) return null;
+      const preferences = appAtomRegistry.get(mobilePreferencesAtom);
+      const skipped = AsyncResult.isSuccess(preferences)
+        ? (preferences.value.loadBalancingConfirmSkippedProjects ?? [])
+        : [];
+      const projectKey = flow.selectedProject
+        ? loadBalancingConfirmKey(flow.selectedProject)
+        : null;
+      if (
+        auto.missingLabels.length > 0 &&
+        !auto.acknowledged &&
+        (projectKey === null || !skipped.includes(projectKey))
+      ) {
+        const answer = await confirmFewerMachines(auto.label, auto.missingLabels);
+        if (answer === "cancel") return null;
+        flow.acknowledgeAutoBalance();
+        if (answer === "always" && projectKey !== null) {
+          void savePreferences({
+            transform: (current) => ({
+              loadBalancingConfirmSkippedProjects: [
+                ...(current.loadBalancingConfirmSkippedProjects ?? []),
+                projectKey,
+              ],
+            }),
+          });
+        }
+      }
+    }
+    return handleStart();
+  }
+
   // Keep the current surface until the local draft selection is ready. Publishing
   // an empty loading surface here flashes between two already-cached threads.
   if (!selectedProject) return null;
@@ -728,7 +814,8 @@ export function NewTaskDraftScreen(props: {
         ? gt("Wait for the project clone to finish.")
         : flow.submitting
           ? gt("Starting the thread…")
-          : flow.workspaceMode === "worktree" && (!flow.selectedBranchName || !flow.isGitRepoKnown)
+          : flow.workspaceMode === "worktree" &&
+              (!flow.isGitRepoKnown || (flow.isGitRepo && !flow.selectedBranchName))
             ? gt("Choose a base branch before creating a worktree.")
             : null
       : gt("Wait for shared content to finish importing.");
@@ -740,7 +827,9 @@ export function NewTaskDraftScreen(props: {
     void KeyboardController.dismiss({ animated: true });
     navigation.navigate("NewTaskProject", { incomingShareId: props.incomingShareId });
   };
-  const openContextPicker = (routeName: "NewTaskBranch" | "NewTaskEnvironment") => {
+  const openContextPicker = (
+    routeName: "NewTaskBranch" | "NewTaskEnvironment" | "NewTaskRepositories",
+  ) => {
     if (isComposerInteractionLocked) {
       return;
     }
@@ -752,7 +841,7 @@ export function NewTaskDraftScreen(props: {
   const environmentControl = (
     <DraftEnvironmentControl
       connectionState={connectionState}
-      label={selectedEnvironmentLabel}
+      label={flow.autoBalance?.label ?? selectedEnvironmentLabel}
       machineKind={resolveEnvironmentMachineKind(selectedEnvironmentServerConfig)}
       disabled={isComposerInteractionLocked}
       onChooseEnvironment={() => openContextPicker("NewTaskEnvironment")}
@@ -908,8 +997,11 @@ export function NewTaskDraftScreen(props: {
     </View>
   );
 
+  const startsNewWorktree = flow.workspaceMode === "worktree";
+  const offersRepositoryChoice =
+    startsNewWorktree && (flow.worktreeRepositoryChoices?.length ?? 0) > 0;
   const workspaceControls = (
-    <View className="flex-row items-center gap-1 px-2">
+    <View className="flex-row flex-wrap items-center gap-x-1 px-2">
       <ComposerInlineControl
         accessibilityHint={
           flow.workspaceMode === "local"
@@ -917,7 +1009,7 @@ export function NewTaskDraftScreen(props: {
             : gt("Switches to the current checkout")
         }
         accessibilityLabel={workspaceLabel}
-        disabled={isComposerInteractionLocked || !flow.isGitRepo}
+        disabled={isComposerInteractionLocked || !(flow.isGitRepo || flow.tracksGitRepositories)}
         renderIcon={(size) => (
           <NewTaskWorkspaceIcon
             workspaceMode={flow.workspaceMode}
@@ -931,21 +1023,46 @@ export function NewTaskDraftScreen(props: {
         showChevron={false}
       />
 
-      <View className="min-w-0 shrink">
-        <ComposerInlineControl
-          accessibilityLabel={
-            flow.workspaceMode === "worktree"
-              ? gt("Base branch: {branch}", { branch: selectedBranchLabel })
-              : gt("Branch: {branch}", { branch: selectedBranchLabel })
-          }
-          chevronDirection="right"
-          disabled={isComposerInteractionLocked || !flow.isGitRepo}
-          icon="arrow.triangle.branch"
-          label={showBranchLoading ? gt("Loading branches…") : selectedBranchLabel}
-          maxWidth="100%"
-          onPress={() => openContextPicker("NewTaskBranch")}
-        />
-      </View>
+      {offersRepositoryChoice ? (
+        <View className="min-w-0 shrink">
+          <ComposerInlineControl
+            accessibilityHint={gt("Chooses the repositories the new worktree holds")}
+            accessibilityLabel={gt("Repositories in the new worktree: {selection}", {
+              selection: flow.worktreeRepositorySelection.label,
+            })}
+            chevronDirection="right"
+            disabled={isComposerInteractionLocked}
+            icon="folder.badge.plus"
+            label={flow.worktreeRepositorySelection.label}
+            maxWidth="100%"
+            onPress={() => openContextPicker("NewTaskRepositories")}
+            {...(flow.worktreeRepositorySelection.needsChoice ? { tone: "warning" as const } : {})}
+          />
+        </View>
+      ) : null}
+      {startsNewWorktree && !flow.isGitRepo ? (
+        <View className="min-h-8 min-w-0 shrink justify-center px-2">
+          <Text className="text-sm text-foreground-muted" numberOfLines={1}>
+            <T>Each repository starts from its own default branch</T>
+          </Text>
+        </View>
+      ) : (
+        <View className="min-w-0 shrink">
+          <ComposerInlineControl
+            accessibilityLabel={
+              startsNewWorktree
+                ? gt("Base branch: {branch}", { branch: selectedBranchLabel })
+                : gt("Branch: {branch}", { branch: selectedBranchLabel })
+            }
+            chevronDirection="right"
+            disabled={isComposerInteractionLocked || !flow.isGitRepo}
+            icon="arrow.triangle.branch"
+            label={showBranchLoading ? gt("Loading branches…") : selectedBranchLabel}
+            maxWidth="100%"
+            onPress={() => openContextPicker("NewTaskBranch")}
+          />
+        </View>
+      )}
     </View>
   );
 
@@ -986,10 +1103,17 @@ export function NewTaskDraftScreen(props: {
         <View className="flex-1 justify-end gap-3 p-4">
           {environmentControl}
           <Text className="text-foreground-muted">
-            <T>
-              Your draft is saved on this device. Connect to an environment to choose its first
-              model.
-            </T>
+            {environmentConnected && selectedEnvironmentServerConfig ? (
+              <T>
+                Your draft is saved on this device. <Var>{selectedEnvironmentLabel}</Var> has no
+                model available. Install or sign in to a provider there to choose one.
+              </T>
+            ) : (
+              <T>
+                Your draft is saved on this device. Connect to an environment to choose its first
+                model.
+              </T>
+            )}
           </Text>
           <ComposerEditor
             draftKey={flow.draftKey}
@@ -1084,7 +1208,7 @@ export function NewTaskDraftScreen(props: {
         onRemoveDraftImage={flow.removeAttachment}
         onStopThread={() => {}}
         onResumeQueue={null}
-        onSendMessage={handleStart}
+        onSendMessage={handleSend}
         offersSideChat={false}
         onSendCommand={async () => null}
         onReconnectEnvironment={() => onReconnectEnvironment(selectedProject.environmentId)}

@@ -18,6 +18,9 @@ import { WS_METHODS } from "./rpc.ts";
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.providerAuthRemoveMethod]: AuthProvidersManageScope,
+  // An MCP sign-in stores a credential for the agent, as an account sign-in does.
+  [WS_METHODS.providerMcpSignInStart]: AuthProvidersManageScope,
+  [WS_METHODS.providerMcpSignInComplete]: AuthProvidersManageScope,
   [WS_METHODS.previewClose]: AuthPreviewOperateScope,
   // Stopping a server signals its processes, as closing a terminal does.
   [WS_METHODS.previewStopLocalServer]: AuthTerminalOperateScope,
@@ -66,6 +69,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.gitPreparePullRequestThread]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsCreateWorktree]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsRemoveWorktree]: AuthSourceControlWriteScope,
+  [WS_METHODS.workspaceAddTaskFolderRepository]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsCreateRef]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsSwitchRef]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsInit]: AuthSourceControlWriteScope,
@@ -86,6 +90,16 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.peerLinksUnlink]: AuthAccessWriteScope,
   // A link lets every agent here reach the other environment: Settings' bar.
   [WS_METHODS.peerLinksAnswerRequest]: AuthAccessWriteScope,
+  [WS_METHODS.peerLinksPairClient]: AuthAccessWriteScope,
+  [WS_METHODS.peerLinksPairLink]: AuthAccessWriteScope,
+  // Membership hands this environment to another host, or another host's to this one.
+  [WS_METHODS.clusterCreateJoinCode]: AuthAccessWriteScope,
+  [WS_METHODS.clusterAddMember]: AuthAccessWriteScope,
+  [WS_METHODS.clusterRemoveMember]: AuthAccessWriteScope,
+  [WS_METHODS.clusterRenameMember]: AuthAccessWriteScope,
+  [WS_METHODS.clusterLeave]: AuthAccessWriteScope,
+  // Names the main host's private key files, never their contents.
+  [WS_METHODS.clusterSshKeys]: AuthAccessWriteScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 

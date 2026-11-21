@@ -31,6 +31,7 @@ import {
   createAssetEnvironmentAtoms,
   createProjectFaviconUrlAtomFamily,
   makeRevisionedAssetUrlFamily,
+  resolveAssetUrl,
 } from "./assets.ts";
 
 describe("project favicon URL cache", () => {
@@ -132,6 +133,7 @@ const makeAssetUrlHarness = Effect.fn("TestAssetUrl.makeHarness")(function* (
         connect: Effect.void,
         disconnect: Effect.void,
         retryNow: Effect.void,
+        reprepare: Effect.void,
       } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]),
     );
   }
@@ -274,6 +276,7 @@ describe("desktop-local media fallback", () => {
           connect: Effect.void,
           disconnect: Effect.void,
           retryNow: Effect.void,
+          reprepare: Effect.void,
         } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
       });
     const supervisors = new Map([
@@ -477,4 +480,13 @@ describe("makeRevisionedAssetUrlFamily", () => {
     expect(url("mutation-4")).toBe("/a/5");
     edited();
   });
+});
+
+it("keeps a cluster member's path prefix on root-relative asset URLs", () => {
+  expect(
+    resolveAssetUrl("https://studio.example.test/cluster/environment-box", "/api/assets/t/a.png"),
+  ).toBe("https://studio.example.test/cluster/environment-box/api/assets/t/a.png");
+  expect(resolveAssetUrl("https://studio.example.test/", "/api/assets/t/a.png")).toBe(
+    "https://studio.example.test/api/assets/t/a.png",
+  );
 });

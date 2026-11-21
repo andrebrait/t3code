@@ -33,6 +33,7 @@ import * as Schema from "effect/Schema";
 import { HttpServerRequest } from "effect/http";
 
 import { hostedAppUrlConfig } from "../cloud/publicConfig.ts";
+import * as ClusterRole from "../cluster/ClusterRole.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
@@ -265,6 +266,7 @@ const make = Effect.gen(function* () {
   const random = yield* SecureRandom.SecureRandom;
   const digester = yield* Digest.Digest;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const clusterRole = yield* ClusterRole.ClusterRole;
   const linksEnabled = serverSettings.getSettings.pipe(
     Effect.map((settings) => settings.linkedEnvironmentsEnabled),
     Effect.orElseSucceed(() => false),
@@ -347,11 +349,22 @@ const make = Effect.gen(function* () {
       }
       // RFC 7591 allows ignoring unsupported registration options; all clients use public PKCE.
       const peerLink = metadata.software_id === MCP_PEER_LINK_SOFTWARE_ID;
+      if (peerLink) {
+        yield* clusterRole.refuseIfClustered("Linking to this environment").pipe(
+          Effect.mapError(
+            (error) =>
+              new AuthMcpRegistrationError({
+                error: "invalid_client_metadata",
+                error_description: error.message,
+              }),
+          ),
+        );
+      }
       if (peerLink && !(yield* linksEnabled)) {
         return yield* new AuthMcpRegistrationError({
           error: "invalid_client_metadata",
           error_description:
-            "Linked environments is off on that machine. Turn it on in its Settings → Labs.",
+            'Linked environments is off on that machine. Turn it on in its Settings → Labs, or without a desktop, set "linkedEnvironmentsEnabled": true in userdata/settings.json in its T3 home (~/.t3 by default).',
         });
       }
       const clientId = yield* signClientId(name, redirectUris, peerLink);
@@ -632,7 +645,9 @@ export const layerMcpClientAuthenticator = Layer.effect(
                     access: client.access,
                     linked: client.peerLink,
                     linkExpiresAt: client.linkExpiresAt,
-                    ...(client.peerLink ? {} : { hostedAppUrl }),
+                    ...(client.cluster === true ? { cluster: true } : {}),
+                    // Another T3 Code environment renders t3-thread links itself.
+                    ...(client.peerLink || client.cluster === true ? {} : { hostedAppUrl }),
                   },
                   capabilities: new Set<McpInvocationContext.McpCapability>([
                     "orchestration",

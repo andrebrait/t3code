@@ -2,10 +2,10 @@ import {
   AuthSessionId,
   AuthAdministrativeClientScopes,
   AuthStandardClientScopes,
+  AuthEnvironmentScope,
   AuthEnvironmentScopes,
   type AuthClientMetadata,
   type AuthClientSession,
-  type AuthEnvironmentScope,
   AuthWebSocketTicketUse,
   RuntimeMode,
   type ServerAuthSessionMethod,
@@ -449,6 +449,8 @@ export class SessionStore extends Context.Service<
         readonly ttl?: Duration.Duration;
         readonly audience?: AuthWebSocketTicketUse;
         readonly proofKeyThumbprint?: string;
+        /** Narrows the session's scopes for this ticket only. */
+        readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
       },
     ) => Effect.Effect<
       {
@@ -516,6 +518,7 @@ const WebSocketClaims = Schema.Struct({
   sid: AuthSessionId,
   aud: Schema.optionalKey(AuthWebSocketTicketUse),
   jkt: Schema.optionalKey(Schema.String),
+  scp: Schema.optionalKey(Schema.Array(AuthEnvironmentScope)),
   iat: Schema.Number,
   exp: Schema.Number,
 });
@@ -1059,6 +1062,7 @@ const make = Effect.gen(function* () {
       sid: sessionId,
       ...(input?.audience ? { aud: input.audience } : {}),
       ...(input?.proofKeyThumbprint ? { jkt: input.proofKeyThumbprint } : {}),
+      ...(input?.scopes ? { scp: input.scopes } : {}),
       iat: issuedAt.epochMilliseconds,
       exp: expiresAt.epochMilliseconds,
     };
@@ -1149,7 +1153,9 @@ const make = Effect.gen(function* () {
       client: toClientMetadata(row.value.client),
       expiresAt: row.value.expiresAt,
       subject: row.value.subject,
-      scopes: row.value.scopes,
+      scopes: claims.scp
+        ? row.value.scopes.filter((scope) => claims.scp?.includes(scope))
+        : row.value.scopes,
       ...(claims.aud ? { audience: claims.aud } : {}),
       ...(claims.jkt ? { proofKeyThumbprint: claims.jkt } : {}),
     } satisfies VerifiedWebSocketTicket;

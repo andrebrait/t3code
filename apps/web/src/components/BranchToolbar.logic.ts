@@ -1,10 +1,12 @@
-import type {
-  EnvironmentId,
-  EnvironmentMachineKind,
-  VcsRef,
-  ProjectId,
-  WorktreeSubmodules,
+import {
+  GitCommandError,
+  type EnvironmentId,
+  type EnvironmentMachineKind,
+  type VcsRef,
+  type ProjectId,
+  type WorktreeSubmodules,
 } from "@t3tools/contracts";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import type { ThreadStructureRuntime } from "@t3tools/client-runtime/state/shell";
 import * as Schema from "effect/Schema";
 import { msg } from "gt-react";
@@ -15,12 +17,35 @@ import { m, type MessageResolver } from "../i18n/messages";
 import { deriveCanInterruptRunningThread } from "../session-logic";
 export { deriveLocalBranchNameFromRemoteRef, sanitizeNewRefName } from "@t3tools/shared/git";
 
+const isGitCommandError = Schema.is(GitCommandError);
+
+// A toast clamps to a few lines, so Git failures show their sanitized detail
+// rather than the message's operation and cwd prefix.
+export function toBranchActionErrorMessage(error: unknown): string {
+  if (isGitCommandError(error)) {
+    return error.reason === undefined ? error.detail : `${error.detail} (${error.reason})`;
+  }
+  return thrownErrorMessage(error, m) ?? m(msg("An error occurred."));
+}
+
 export interface EnvironmentOption {
   environmentId: EnvironmentId;
   projectId: ProjectId | null;
   label: string;
   isPrimary: boolean;
   machine: EnvironmentMachineKind;
+  /** A cluster machine without the project, which offers to clone it from this remote when picked. */
+  cloneRemoteUrl?: string;
+}
+
+/** An Auto choice: every machine, or one cluster's machines. */
+export interface AutoEnvironmentOption {
+  readonly key: string;
+  readonly label: string;
+  readonly cluster: boolean;
+  /** Machines in the pool without the project, which Auto skips. */
+  readonly missingLabels: ReadonlyArray<string>;
+  readonly active: boolean;
 }
 
 /** "Add to another machine" stays muted until hovered: easy to find, quieter than the machines. */

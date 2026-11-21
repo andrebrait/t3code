@@ -13,7 +13,7 @@ import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environ
 import type { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { m as resolveMessage } from "../i18n/messages";
-import { FolderGit2Icon, FolderGitIcon, FolderIcon, PlusIcon, ScaleIcon } from "lucide-react";
+import { FolderGit2Icon, FolderGitIcon, FolderIcon, PlusIcon } from "lucide-react";
 import {
   type Ref,
   type MouseEvent as ReactMouseEvent,
@@ -30,6 +30,7 @@ import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { useProject, useThreadShellsForProjectRefs } from "../state/entities";
 import {
   ADD_TO_MACHINE_LABEL_CLASS,
+  type AutoEnvironmentOption,
   type EnvMode,
   type EnvironmentOption,
   resolveContextStripLabelsCompact,
@@ -44,11 +45,21 @@ import {
   BranchToolbarBranchSelector,
   type BranchToolbarBranchSelectorHandle,
 } from "./BranchToolbarBranchSelector";
-import { BranchToolbarEnvironmentSelector } from "./BranchToolbarEnvironmentSelector";
+import {
+  AutoEnvironmentIcon,
+  AutoEnvironmentItem,
+  BranchToolbarEnvironmentSelector,
+  CloneHint,
+} from "./BranchToolbarEnvironmentSelector";
+
+// Menu values for Auto choices cannot collide with server-minted environment IDs.
+const AUTO_MENU_PREFIX = "action:auto:";
 import { openAddProjectToMachine } from "./AddProjectToMachineDialog";
 import { type AddProjectTarget, useAddProjectTargets } from "../hooks/useAddProjectTargets";
 import { BranchToolbarEnvModeSelector } from "./BranchToolbarEnvModeSelector";
 import { PreviousWorktreeItemContent } from "./PreviousWorktreeItemContent";
+import { WorktreeRepositoriesControl } from "./WorktreeRepositoriesControl";
+import { useWorktreeBaseBranch } from "../worktreeRepositoryChoiceStore";
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
 import {
   THREAD_DETAILS_PANEL_ICON_CLASS,
@@ -96,7 +107,10 @@ interface BranchToolbarProps {
   projectId: ProjectId;
   worktreePath: string | null;
   isServerThread: boolean;
+  /** Offers the workspace choice: the project folder is a repository or tracks one. */
   showGitControls: boolean;
+  /** False when the project folder has no branch of its own to pick. Defaults to `showGitControls`. */
+  showBranchControls?: boolean;
   draftId?: DraftId;
   onEnvModeChange: (mode: EnvMode) => void;
   envMode: EnvMode;
@@ -105,7 +119,8 @@ interface BranchToolbarProps {
   startFromOrigin: boolean;
   onStartFromOriginChange: (startFromOrigin: boolean) => void;
   autoEnvironmentLabel?: string | undefined;
-  onAutoEnvironment?: (() => void) | undefined;
+  onAutoEnvironment?: ((key: string) => void) | undefined;
+  autoEnvironments?: ReadonlyArray<AutoEnvironmentOption> | undefined;
   envLocked: boolean;
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest?: () => void;
@@ -154,7 +169,8 @@ interface RunContextSelectorProps {
   workspaceRoot?: string;
   forceNewWorktree: boolean;
   autoEnvironmentLabel?: string | undefined;
-  onAutoEnvironment?: (() => void) | undefined;
+  onAutoEnvironment?: ((key: string) => void) | undefined;
+  autoEnvironments?: ReadonlyArray<AutoEnvironmentOption> | undefined;
   envLocked: boolean;
   envModeLocked: boolean;
   environmentId: EnvironmentId;
@@ -178,6 +194,7 @@ const RunContextSelector = memo(function RunContextSelector({
   forceNewWorktree,
   autoEnvironmentLabel,
   onAutoEnvironment,
+  autoEnvironments,
   envLocked,
   envModeLocked,
   environmentId,
@@ -237,13 +254,16 @@ const RunContextSelector = memo(function RunContextSelector({
       </TooltipPopup>
     </Tooltip>
   );
+  const activeAuto = autoEnvironmentLabel
+    ? autoEnvironments?.find((option) => option.active)
+    : undefined;
   const environmentIcon = (
     <Tooltip>
       <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
-        {autoEnvironmentLabel ? (
-          <ScaleIcon
+        {activeAuto ? (
+          <AutoEnvironmentIcon
+            option={activeAuto}
             className={isPanel ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3 shrink-0"}
-            aria-hidden="true"
           />
         ) : (
           <EnvironmentMachineIcon
@@ -348,30 +368,27 @@ const RunContextSelector = memo(function RunContextSelector({
                 <T>Run on</T>
               </MenuGroupLabel>
               <MenuRadioGroup
-                value={autoEnvironmentLabel ? "auto" : environmentId}
+                value={activeAuto ? `${AUTO_MENU_PREFIX}${activeAuto.key}` : environmentId}
                 onValueChange={(value) =>
-                  value === "auto"
-                    ? onAutoEnvironment?.()
+                  typeof value === "string" && value.startsWith(AUTO_MENU_PREFIX)
+                    ? onAutoEnvironment?.(value.slice(AUTO_MENU_PREFIX.length))
                     : onEnvironmentChange?.(value as EnvironmentId)
                 }
               >
-                {onAutoEnvironment && (
-                  <MenuRadioItem
-                    value="auto"
-                    disabled={envLocked}
-                    closeOnClick
-                    onClick={() => {
-                      if (autoEnvironmentLabel) onAutoEnvironment?.();
-                    }}
-                  >
-                    <span className="flex min-w-0 items-center gap-1.5">
-                      <ScaleIcon className="size-3" aria-hidden="true" />
-                      <span className="min-w-0 truncate">
-                        {autoEnvironmentLabel ?? gt("Auto balance")}
-                      </span>
-                    </span>
-                  </MenuRadioItem>
-                )}
+                {onAutoEnvironment &&
+                  autoEnvironments?.map((option) => (
+                    <MenuRadioItem
+                      key={option.key}
+                      value={`${AUTO_MENU_PREFIX}${option.key}`}
+                      disabled={envLocked}
+                      closeOnClick
+                      onClick={() => {
+                        if (option.active) onAutoEnvironment(option.key);
+                      }}
+                    >
+                      <AutoEnvironmentItem option={option} />
+                    </MenuRadioItem>
+                  ))}
                 {availableEnvironments.map((env) => (
                   <MenuRadioItem
                     key={env.environmentId}
@@ -384,6 +401,7 @@ const RunContextSelector = memo(function RunContextSelector({
                     <span className="flex min-w-0 items-center gap-1.5">
                       <EnvironmentMachineIcon kind={env.machine} className="size-3" />
                       <span className="min-w-0 truncate">{env.label}</span>
+                      {env.cloneRemoteUrl ? <CloneHint /> : null}
                     </span>
                   </MenuRadioItem>
                 ))}
@@ -631,6 +649,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   worktreePath,
   isServerThread,
   showGitControls,
+  showBranchControls = showGitControls,
   draftId,
   onEnvModeChange,
   envMode,
@@ -640,6 +659,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   onStartFromOriginChange,
   autoEnvironmentLabel,
   onAutoEnvironment,
+  autoEnvironments,
   envLocked,
   onCheckoutPullRequestRequest,
   onComposerFocusRequest,
@@ -703,7 +723,10 @@ export const BranchToolbar = memo(function BranchToolbar({
   const onAddToMachine = (targetEnvironmentId: EnvironmentId | null) =>
     openAddProjectToMachine({ projectRef: activeProjectRef, targetEnvironmentId });
   // A project on one machine still gets the picker when it can be added to another.
-  const hasMultipleEnvironments = (availableEnvironments?.length ?? 0) > 1 || addTargets.length > 0;
+  const hasMultipleEnvironments =
+    (availableEnvironments?.length ?? 0) > 1 ||
+    addTargets.length > 0 ||
+    (onAutoEnvironment !== undefined && (autoEnvironments?.length ?? 0) > 0);
   const showEnvironmentPicker = hasMultipleEnvironments && onEnvironmentChange !== undefined;
   const activeEnvironmentOption =
     availableEnvironments?.find((env) => env.environmentId === environmentId) ?? null;
@@ -714,8 +737,17 @@ export const BranchToolbar = memo(function BranchToolbar({
     canPickEnvironment: hasMultipleEnvironments,
   });
   const [attachStrip, labelsOverflow] = useLabelsOverflow();
+  const plainProjectBaseBranch = useWorktreeBaseBranch(activeProject ?? null);
 
   if (!activeProject) return null;
+
+  const startsNewWorktree =
+    showGitControls && effectiveEnvMode === "worktree" && activeWorktreePath === null;
+  const offersRepositoryChoice =
+    startsNewWorktree &&
+    !isServerThread &&
+    !envModeLocked &&
+    (activeProject.trackedFolders?.length ?? 0) > 0;
 
   if (layout === "panel") {
     return (
@@ -727,6 +759,7 @@ export const BranchToolbar = memo(function BranchToolbar({
             forceNewWorktree={forceNewWorktree}
             autoEnvironmentLabel={autoEnvironmentLabel}
             onAutoEnvironment={onAutoEnvironment}
+            autoEnvironments={autoEnvironments}
             envLocked={envLocked}
             envModeLocked={envModeLocked}
             environmentId={environmentId}
@@ -777,6 +810,7 @@ export const BranchToolbar = memo(function BranchToolbar({
             forceNewWorktree={forceNewWorktree}
             autoEnvironmentLabel={autoEnvironmentLabel}
             onAutoEnvironment={onAutoEnvironment}
+            autoEnvironments={autoEnvironments}
             envLocked={envLocked}
             envModeLocked={envModeLocked}
             environmentId={environmentId}
@@ -808,6 +842,7 @@ export const BranchToolbar = memo(function BranchToolbar({
               <BranchToolbarEnvironmentSelector
                 autoEnvironmentLabel={autoEnvironmentLabel}
                 onAutoEnvironment={onAutoEnvironment}
+                autoEnvironments={autoEnvironments}
                 envLocked={envLocked}
                 environmentId={environmentId}
                 availableEnvironments={availableEnvironments}
@@ -838,7 +873,29 @@ export const BranchToolbar = memo(function BranchToolbar({
         </div>
       ) : null}
 
-      {showGitControls ? (
+      {offersRepositoryChoice ? (
+        <WorktreeRepositoriesControl
+          project={activeProject}
+          draftTarget={draftId ?? threadRef}
+          offersBaseBranch={!showBranchControls}
+        />
+      ) : null}
+      {!showGitControls ? null : !showBranchControls ? (
+        startsNewWorktree ? (
+          <span
+            className="min-w-0 flex-initial truncate px-1.75 @xl/composer-surface:ml-auto"
+            data-composer-context-control
+          >
+            {plainProjectBaseBranch === ""
+              ? m(msg("Each repository starts from its own default branch"))
+              : m(
+                  msg("Repositories start from {branch} where they have it", {
+                    branch: plainProjectBaseBranch,
+                  }),
+                )}
+          </span>
+        ) : null
+      ) : (
         <BranchToolbarBranchSelector
           forceNewWorktree={forceNewWorktree}
           ref={branchSelectorRef}
@@ -855,7 +912,7 @@ export const BranchToolbar = memo(function BranchToolbar({
           {...(onCheckoutPullRequestRequest ? { onCheckoutPullRequestRequest } : {})}
           {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
         />
-      ) : null}
+      )}
       {trailing}
     </ComposerSurface.ContextStrip>
   );

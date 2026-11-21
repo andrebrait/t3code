@@ -2,6 +2,7 @@ import { msg } from "gt-react";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
 import { isClearComposerCommand, parseSideChatCommand } from "@t3tools/shared/composerTrigger";
+import { readWorktreeBaseBranch } from "../../worktreeRepositoryChoiceStore";
 import { armFreshSession, disarmFreshSession, readFreshSessionArm } from "./freshSessionArms";
 import {
   mergeDirectPreviewAnnotation,
@@ -99,10 +100,10 @@ import { runMobileComposerTransition } from "./draftHeroTransition";
 import { useClientSettingsHydrated } from "../../hooks/useSettings";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { environmentPresentations } from "../../state/presentation";
+import { loadBalancingSendWarning } from "@t3tools/client-runtime/load-balancing";
 import {
   approvalRedirectNotice,
   composerDraftContentChanged,
-  loadBalancingSendWarning,
   multipleModelSendBlock,
   referencedThreadContexts,
 } from "./composerSend.logic";
@@ -214,6 +215,8 @@ interface ComposerSendInput {
   readonly phase: SessionPhase;
   readonly runtimeMode: RuntimeMode;
   readonly sendEnvMode: DraftThreadEnvMode;
+  /** Tracked repositories a new worktree takes; undefined leaves the choice to the server. */
+  readonly worktreeRepositories: ReadonlyArray<{ readonly path: string }> | undefined;
   readonly startFromOrigin: boolean;
   readonly localCheckoutBranchMismatch: {
     readonly threadBranch: string;
@@ -248,6 +251,7 @@ interface ComposerSendInput {
   readonly needsLoadBalancing: boolean;
   readonly loadBalancing: DraftEnvironmentRouting["loadBalancing"];
   readonly refreshBeforeSend: DraftEnvironmentRouting["refreshBeforeSend"];
+  readonly confirmAutoBalance: DraftEnvironmentRouting["confirmAutoBalance"];
   readonly readPendingEnvironmentChange: DraftEnvironmentRouting["readPendingEnvironmentChange"];
   readonly pendingApprovals: PendingThreadRequests["pendingApprovals"];
   readonly respondingRequestIds: PendingThreadRequests["respondingRequestIds"];
@@ -315,6 +319,7 @@ export function useComposerSend(input: ComposerSendInput) {
     phase,
     runtimeMode,
     sendEnvMode,
+    worktreeRepositories,
     startFromOrigin,
     localCheckoutBranchMismatch,
     logicalProjectEnvironments,
@@ -345,6 +350,7 @@ export function useComposerSend(input: ComposerSendInput) {
     needsLoadBalancing,
     loadBalancing,
     refreshBeforeSend,
+    confirmAutoBalance,
     readPendingEnvironmentChange,
     pendingApprovals,
     respondingRequestIds,
@@ -392,6 +398,7 @@ export function useComposerSend(input: ComposerSendInput) {
     promptRef,
     runtimeMode,
     startFromOrigin,
+    worktreeRepositories,
     resetLocalDispatch,
     setThreadError,
   });
@@ -496,13 +503,16 @@ export function useComposerSend(input: ComposerSendInput) {
       const draft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
       toastManager.add({
         type: "warning",
-        ...loadBalancingSendWarning({
-          pending: loadBalancing.pending,
-          threadContexts: draft ? referencedThreadContexts(draft) : [],
-          candidateEnvironmentIds: logicalProjectEnvironments.map(
-            (candidate) => candidate.environmentId,
-          ),
-        }),
+        ...loadBalancingSendWarning(
+          {
+            pending: loadBalancing.pending,
+            threadContexts: draft ? referencedThreadContexts(draft) : [],
+            candidateEnvironmentIds: logicalProjectEnvironments.map(
+              (candidate) => candidate.environmentId,
+            ),
+          },
+          m,
+        ),
       });
       return;
     }
@@ -975,6 +985,8 @@ export function useComposerSend(input: ComposerSendInput) {
       sendEnvMode,
       worktreePath: activeThread.worktreePath,
       activeThreadBranch,
+      projectIsGitRepo: isGitRepo,
+      plainProjectBaseBranch: readWorktreeBaseBranch(activeProject),
       isScratchProject: activeProjectIsScratch,
       resumeCompactionTokens,
       keepFullHistory,
@@ -1459,6 +1471,7 @@ export function useComposerSend(input: ComposerSendInput) {
                       projectCwd: activeProject.workspaceRoot,
                       baseBranch: baseBranchForWorktree,
                       ...(startFromOrigin ? { startFromOrigin: true } : {}),
+                      ...(worktreeRepositories ? { repositories: worktreeRepositories } : {}),
                     },
                     runSetupScript: true,
                   }
@@ -1694,10 +1707,9 @@ export function useComposerSend(input: ComposerSendInput) {
   const onSendLatest = useStableCallback(onSend);
   const onSendWithRouting = async (...args: Parameters<typeof onSend>) => {
     args[0]?.preventDefault();
-    const refresh =
-      args[3] || sendInFlightRef.current || readPendingEnvironmentChange() !== null
-        ? null
-        : refreshBeforeSend();
+    const routed = !args[3] && !sendInFlightRef.current && readPendingEnvironmentChange() === null;
+    if (routed && !(await confirmAutoBalance())) return;
+    const refresh = routed ? refreshBeforeSend() : null;
     if (refresh === null) return onSend(...args);
     sendInFlightRef.current = true;
     const ready = await refresh.finally(() => {

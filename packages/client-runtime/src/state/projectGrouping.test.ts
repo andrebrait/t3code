@@ -8,6 +8,7 @@ import {
   deriveLogicalProjectKeyFromSettings,
   pickableProjectGroups,
   derivePhysicalProjectKey,
+  resolveGroupDefaultProject,
   resolveScratchProjectScopeKey,
   sortProjectsByGroupOrder,
   type ProjectGroupingSettings,
@@ -265,6 +266,54 @@ describe("buildProjectGroups", () => {
     }
   });
 
+  it("represents a repository group by its root checkout, even when it was added last", () => {
+    const remoteEnvironmentId = EnvironmentId.make("remote");
+    const local = { ...repositoryIdentity, rootPath: "/work/workspace" };
+    const remote = { ...repositoryIdentity, rootPath: "/srv/workspace" };
+    const archivedTool = makeProject("old-tool", "/work/workspace/_archive/old-tool", {
+      repositoryIdentity: local,
+    });
+    const app = makeProject("app-a", "/work/workspace/app-a", { repositoryIdentity: local });
+    const remoteApp = makeProject("remote-app", "/srv/workspace/app-a", {
+      environmentId: remoteEnvironmentId,
+      repositoryIdentity: remote,
+    });
+    const remoteRoot = makeProject("remote-root", "/srv/workspace", {
+      environmentId: remoteEnvironmentId,
+      repositoryIdentity: remote,
+    });
+    const root = makeProject("workspace", "/work/workspace", { repositoryIdentity: local });
+    const representativeOf = (
+      projects: ReadonlyArray<EnvironmentProject>,
+      preferredEnvironmentId: EnvironmentId | null = null,
+    ) =>
+      buildProjectGroups({ projects, settings: settings("repository"), preferredEnvironmentId })[0]
+        ?.representative.id;
+
+    expect(representativeOf([archivedTool, app, root])).toBe("workspace");
+    expect(representativeOf([archivedTool, app, remoteApp, remoteRoot, root], environmentId)).toBe(
+      "workspace",
+    );
+    expect(
+      representativeOf([archivedTool, app, remoteApp, remoteRoot, root], remoteEnvironmentId),
+    ).toBe("remote-root");
+    // A local root is not worth leaving the current environment for.
+    expect(representativeOf([archivedTool, root, remoteApp], remoteEnvironmentId)).toBe(
+      "remote-app",
+    );
+    expect(representativeOf([archivedTool, app])).toBe("old-tool");
+
+    // A new thread with no current or last-used project starts from the first project's group.
+    const all = [archivedTool, app, remoteApp, remoteRoot, root];
+    expect(resolveGroupDefaultProject(archivedTool, all, settings("repository")).id).toBe(
+      "workspace",
+    );
+    expect(resolveGroupDefaultProject(remoteApp, all, settings("repository")).id).toBe(
+      "remote-root",
+    );
+    expect(resolveGroupDefaultProject(archivedTool, all, settings("separate")).id).toBe("old-tool");
+  });
+
   it("keeps a fork apart from its upstream checkout and labels it by its own remote", () => {
     const fork = makeProject("fork", "/work/t3code-fork", {
       repositoryIdentity: {
@@ -287,6 +336,25 @@ describe("buildProjectGroups", () => {
     ]);
     expect(groups[1]?.members.map((member) => member.project.id)).toEqual(["fork", "fork-2"]);
     expect(groups[1]?.label).toBe("julius/t3code-fork");
+
+    // A clone of the fork's origin has only that remote, and still groups with the fork.
+    const clone = makeProject("fork-clone", "/box/t3code-fork", {
+      environmentId: EnvironmentId.make("box"),
+      repositoryIdentity: {
+        ...repositoryIdentity,
+        canonicalKey: "github.com/julius/t3code-fork",
+        locator: {
+          source: "git-remote",
+          remoteName: "origin",
+          remoteUrl: "git@github.com:julius/t3code-fork.git",
+        },
+      },
+    });
+    for (const mode of ["repository", "repository_path"] as const) {
+      expect(deriveLogicalProjectKeyFromSettings(clone, settings(mode))).toBe(
+        deriveLogicalProjectKeyFromSettings(fork, settings(mode)),
+      );
+    }
   });
 
   // regression: #15049 a rename to the repository name snapped back to the display path

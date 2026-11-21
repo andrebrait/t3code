@@ -28,6 +28,7 @@ import {
   PullRequestRoutingPermissions,
   StoredPullRequestRoutingPermission,
   pullRequestRoutingConnectionKey,
+  pullRequestRoutingOwnerId,
   pullRequestRoutingPermissionFor,
 } from "@t3tools/client-runtime/connection";
 import { EnvironmentQueryStore } from "@t3tools/client-runtime/state/query-persistence";
@@ -674,7 +675,7 @@ export function makeBrowserPullRequestRoutingPermissions(
   return PullRequestRoutingPermissions.of({
     get: Effect.fn("PullRequestRoutingPermissions.get")(function (entry) {
       return Effect.sync(() => {
-        const value = read(`${PULL_REQUEST_ROUTING_KEY_PREFIX}${entry.target.environmentId}`);
+        const value = read(`${PULL_REQUEST_ROUTING_KEY_PREFIX}${pullRequestRoutingOwnerId(entry)}`);
         return pullRequestRoutingPermissionFor(entry, value === null ? [] : [value]);
       });
     }),
@@ -701,21 +702,21 @@ export function makeBrowserPullRequestRoutingPermissions(
       ).pipe(Effect.asVoid),
     ),
     set: Effect.fn("PullRequestRoutingPermissions.set")(function* (entry, permission) {
+      if (entry.target._tag === "ClusterConnectionTarget")
+        return yield* new ConnectionBlockedError({
+          reason: "configuration",
+          detail: m(msg("A cluster member follows its main host's permission.")),
+        });
       const connectionKey = pullRequestRoutingConnectionKey(entry);
       if (connectionKey === null)
         return yield* new ConnectionBlockedError({
           reason: "configuration",
           detail: m(msg("This environment does not have a saved connection endpoint.")),
         });
+      const environmentId = entry.target.environmentId;
       return yield* write(
-        entry.target.environmentId,
-        permission === "off"
-          ? null
-          : {
-              environmentId: entry.target.environmentId,
-              connectionKey,
-              permission,
-            },
+        environmentId,
+        permission === "off" ? null : { environmentId, connectionKey, permission },
       );
     }),
     forget: Effect.fn("PullRequestRoutingPermissions.forget")(function (environmentId) {

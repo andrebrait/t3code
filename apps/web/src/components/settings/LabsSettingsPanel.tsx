@@ -24,6 +24,7 @@ export function LabsSettingsPanel() {
         {/* Clerk is only mounted when this build has T3 Connect. */}
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
         <LinkedEnvironmentsRow />
+        <ClusterRow />
         <PromptSuggestionsRow />
         <SimlockHostsRow />
         <FastWorktreeCheckoutRow />
@@ -180,6 +181,38 @@ function LinkedEnvironmentsRow() {
             updateSettings({ linkedEnvironmentsEnabled: Boolean(checked) })
           }
           aria-label={gt("Linked environments")}
+        />
+      }
+    />
+  );
+}
+
+function ClusterRow() {
+  const searchableSetting = useSearchableSetting();
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const gt = useGT();
+  return (
+    <SettingsRow
+      serverScoped
+      {...searchableSetting("cluster-beta")}
+      settingKeys={["clusterEnabled"]}
+      description={
+        <T>
+          Drive your other machines through this one. Turn it on here and on each machine you add,
+          then set it up in{" "}
+          <Link to="/settings/connections" className="underline underline-offset-2">
+            Environments
+          </Link>
+          . While off, this machine adds no members and forwards nothing to them.
+        </T>
+      }
+      control={
+        <ScopedSwitch
+          settingKeys={["clusterEnabled"]}
+          checked={settings.clusterEnabled}
+          onCheckedChange={(checked) => updateSettings({ clusterEnabled: Boolean(checked) })}
+          aria-label={gt("Cluster")}
         />
       }
     />

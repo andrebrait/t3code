@@ -1,8 +1,9 @@
 import { msg } from "gt-i18n";
 import { translatableDetail } from "../errors/translatable.ts";
-import type {
-  AuthClientPresentationMetadata,
-  ExecutionEnvironmentDescriptor,
+import {
+  clusterMemberBaseUrl,
+  type AuthClientPresentationMetadata,
+  type ExecutionEnvironmentDescriptor,
 } from "@t3tools/contracts";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import * as Context from "effect/Context";
@@ -38,13 +39,19 @@ import {
 } from "./pullRequestRoutingPermissions.ts";
 import type {
   BearerConnectionTarget,
+  ClusterConnectionTarget,
   ConnectionTarget,
   PreparedConnection,
   PrimaryConnectionTarget,
   RelayConnectionTarget,
   SshConnectionTarget,
 } from "./model.ts";
-import { ConnectionBlockedError, type ConnectionAttemptError } from "./model.ts";
+import {
+  ConnectionBlockedError,
+  ConnectionTransientError,
+  type ConnectionAttemptError,
+} from "./model.ts";
+import * as ClusterHosts from "./clusterHosts.ts";
 import * as ConnectionProfileStore from "./profileStore.ts";
 import {
   appendOrchestrationProtocol,
@@ -278,12 +285,84 @@ const makeSshBroker = Effect.fn("clientRuntime.connection.broker.makeSsh")(funct
   });
 });
 
+const makeClusterBroker = Effect.fn("clientRuntime.connection.broker.makeCluster")(function* () {
+  const hosts = yield* ClusterHosts.ClusterHosts;
+  const presentation = yield* ClientCapabilities.ClientPresentation;
+  const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+
+  return Effect.fn("clientRuntime.connection.broker.cluster")(function* (
+    target: ClusterConnectionTarget,
+  ) {
+    const host = yield* hosts.get(target.hostEnvironmentId);
+    if (Option.isNone(host)) {
+      return yield* new ConnectionTransientError({
+        reason: "remote-unavailable",
+        ...translatableDetail(msg("Waiting for {host} to connect.", { host: target.hostLabel })),
+        hop: "server",
+      });
+    }
+    const httpBaseUrl = clusterMemberBaseUrl(host.value.httpBaseUrl, target.environmentId);
+    const wsBaseUrl = `${httpBaseUrl.replace(/^http/, "ws")}/ws`;
+    const hostAuthorization = host.value.httpAuthorization;
+    if (hostAuthorization === null) {
+      const socketUrl = new URL(wsBaseUrl);
+      appendClientConnectionParams(
+        socketUrl,
+        presentation.metadata,
+        "direct",
+        yield* readClientOwnerParams,
+      );
+      return {
+        environmentId: target.environmentId,
+        label: target.label,
+        httpBaseUrl,
+        socketUrl: socketUrl.toString(),
+        httpAuthorization: null,
+        target,
+      } satisfies PreparedConnection;
+    }
+    const authorized =
+      hostAuthorization._tag === "Bearer"
+        ? yield* remote.authorizeBearer({
+            expectedEnvironmentId: target.environmentId,
+            httpBaseUrl,
+            wsBaseUrl,
+            bearerToken: hostAuthorization.token,
+            connectionMethod: "direct",
+          })
+        : hostAuthorization.directConnection !== undefined
+          ? yield* remote.authorizeDirectDpop({
+              expectedEnvironmentId: target.environmentId,
+              connectionId: hostAuthorization.directConnection.connectionId,
+              credentialHttpBaseUrl: hostAuthorization.directConnection.httpBaseUrl,
+              httpBaseUrl,
+              wsBaseUrl,
+            })
+          : yield* remote.authorizeDpop({
+              expectedEnvironmentId: target.hostEnvironmentId,
+              clusterMemberId: target.environmentId,
+              directEndpoint: { httpBaseUrl, wsBaseUrl },
+            });
+    return {
+      ...authorized,
+      environmentId: target.environmentId,
+      label: target.label,
+      httpAuthorization:
+        authorized.httpAuthorization._tag === "Dpop"
+          ? { ...authorized.httpAuthorization, issuedFor: target.hostEnvironmentId }
+          : authorized.httpAuthorization,
+      target,
+    } satisfies PreparedConnection & { readonly descriptor?: ExecutionEnvironmentDescriptor };
+  });
+});
+
 /** @public */
 export const make = Effect.gen(function* () {
   const primary = yield* makePrimaryBroker();
   const bearer = yield* makeBearerBroker();
   const relay = yield* makeRelayBroker();
   const ssh = yield* makeSshBroker();
+  const cluster = yield* makeClusterBroker();
   const httpClient = yield* HttpClient.HttpClient;
 
   const authorize = Effect.fn("clientRuntime.connection.broker.authorize")(function* (
@@ -306,6 +385,8 @@ export const make = Effect.gen(function* () {
           return relay(target);
         case "SshConnectionTarget":
           return ssh({ ...entry, target });
+        case "ClusterConnectionTarget":
+          return cluster(target);
       }
     })();
     const { descriptor: authorizedDescriptor, ...prepared } = authorized;

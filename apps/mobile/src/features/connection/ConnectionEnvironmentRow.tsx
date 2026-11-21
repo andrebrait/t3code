@@ -26,6 +26,7 @@ import { environmentPresentations } from "../../state/presentation";
 import { ConnectionDiagnosisDetails, useConnectionDiagnosis } from "./ConnectionDiagnosisDetails";
 import { ConnectionFormField } from "./ConnectionFormField";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
+import { NetworkPlainHttpRow } from "./NetworkPlainHttpRow";
 import { environmentStatusText } from "./environmentStatusText";
 import type { MessageResolver } from "../../i18n/messages";
 
@@ -107,23 +108,23 @@ export function ConnectionEnvironmentRow(props: {
     );
   };
 
+  const toggleLabel = props.opensDetails
+    ? gt("Manage {environment}", { environment: props.environment.environmentLabel })
+    : props.expanded
+      ? gt("Collapse details for {environment}", {
+          environment: props.environment.environmentLabel,
+        })
+      : gt("Expand details for {environment}", {
+          environment: props.environment.environmentLabel,
+        });
+
   return (
     <Animated.View layout={LinearTransition.duration(250)} className="bg-grouped-card">
       <View className="flex-row items-center gap-3 px-4 py-3.5">
         <Pressable
           className="min-w-0 flex-1 gap-0.5 active:opacity-70"
           accessibilityRole="button"
-          accessibilityLabel={
-            props.opensDetails
-              ? gt("Manage {environment}", { environment: props.environment.environmentLabel })
-              : props.expanded
-                ? gt("Collapse details for {environment}", {
-                    environment: props.environment.environmentLabel,
-                  })
-                : gt("Expand details for {environment}", {
-                    environment: props.environment.environmentLabel,
-                  })
-          }
+          accessibilityLabel={toggleLabel}
           onPress={props.onToggle}
         >
           <View className="flex-row items-center gap-1.5">
@@ -197,18 +198,9 @@ export function ConnectionEnvironmentRow(props: {
           value={enabled}
         />
         <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={
-            props.opensDetails
-              ? gt("Manage {environment}", { environment: props.environment.environmentLabel })
-              : props.expanded
-                ? gt("Collapse details for {environment}", {
-                    environment: props.environment.environmentLabel,
-                  })
-                : gt("Expand details for {environment}", {
-                    environment: props.environment.environmentLabel,
-                  })
-          }
+          accessible={false}
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
           onPress={props.onToggle}
           style={{
             minWidth: 44,
@@ -239,6 +231,7 @@ export function ConnectionEnvironmentRow(props: {
               diagnosis={diagnosis}
             />
           ) : null}
+          <NetworkPlainHttpRow environmentId={props.environment.environmentId} />
           {props.environment.isRelayManaged ? (
             <Text className="text-sm text-foreground-muted">
               {gt("Managed by {product}. Tunnel details update automatically.", {

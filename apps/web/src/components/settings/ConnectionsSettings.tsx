@@ -4,7 +4,7 @@ import { managedCapabilityDenial } from "@t3tools/client-runtime/contract-labels
 import { SessionPermissions } from "./SessionPermissions";
 import { useSearch } from "@tanstack/react-router";
 import { ChevronRightIcon, EllipsisIcon } from "lucide-react";
-import { useAtomValue } from "@effect/atom-react";
+import { useAtom, useAtomValue } from "@effect/atom-react";
 import { type ReactNode, useState } from "react";
 import { T, useGT, useMessages, Var } from "gt-react";
 import {
@@ -49,8 +49,15 @@ import { useSearchableSetting } from "./settingsSearch";
 import { ConnectDeviceApprovalSettings } from "./ConnectDeviceApprovalSettings";
 import { EnvironmentIconMenu } from "./EnvironmentIconPicker";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
+import { EnvironmentsMap } from "./EnvironmentsMap";
 import { LinkedEnvironmentsSettings } from "./LinkedEnvironmentsSettings";
+import { addEnvironmentPrefillAtom } from "~/state/linkedThreadView";
+import { Toggle, ToggleGroup } from "../ui/toggle-group";
+import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { usePeerLinkHosts } from "~/state/peerLinks";
+import { offersCluster } from "@t3tools/client-runtime/state/cluster";
+import { ClusterSettings } from "./ClusterSettings";
+import { useClusterHosts } from "~/state/cluster";
 import { LoadBalancingSettings } from "./LoadBalancingSettings";
 import { PullRequestRoutingSettings } from "./PullRequestRoutingSettings";
 import { Input } from "../ui/input";
@@ -271,6 +278,7 @@ function ConnectionsSettingsContent({
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
   const peerLinkHosts = usePeerLinkHosts();
+  const clusterHosts = useClusterHosts();
   const removeEnvironment = useAtomCommand(environmentCatalog.remove, { reportFailure: false });
   const setEnvironmentEnabled = useAtomCommand(environmentCatalog.setEnabled, {
     reportFailure: false,
@@ -286,7 +294,9 @@ function ConnectionsSettingsContent({
     : null;
   const currentAuthPolicy = desktopBridge ? null : (accessSessionState.data?.auth.policy ?? null);
   const savedEnvironments = environments.filter(
-    (environment) => environment.entry.target._tag !== "PrimaryConnectionTarget",
+    (environment) =>
+      environment.entry.target._tag !== "PrimaryConnectionTarget" &&
+      environment.entry.target._tag !== "ClusterConnectionTarget",
   );
   const listedEnvironments = savedEnvironments.filter(
     (environment) => !isDesktopLocalConnectionTarget(environment.entry.target),
@@ -328,10 +338,20 @@ function ConnectionsSettingsContent({
       ];
     },
   );
-  const loadBalancingEnvironments = [
+  const pullRequestRoutingEnvironments = [
     ...(primaryEnvironment ? [primaryEnvironment] : []),
     ...savedEnvironments.filter((environment) => environment.entry.enabled),
   ].filter((environment) => environment.connection.phase !== "unsupported");
+  // Members run threads like any machine, so each gets its own share of the load.
+  const loadBalancingEnvironments = [
+    ...pullRequestRoutingEnvironments,
+    ...environments.filter(
+      (environment) =>
+        environment.entry.target._tag === "ClusterConnectionTarget" &&
+        environment.entry.enabled &&
+        environment.connection.phase !== "unsupported",
+    ),
+  ];
   const [desktopServerExposureMutationError, setDesktopServerExposureMutationError] = useState<
     string | null
   >(null);
@@ -355,15 +375,37 @@ function ConnectionsSettingsContent({
   const [isRevokingOtherDesktopClients, setIsRevokingOtherDesktopClients] = useState(false);
   const [addBackendDialogOpen, setAddBackendDialogOpen] = useState(false);
   const [routeTarget, setRouteTarget] = useState<EnvironmentPresentation | null>(null);
+  // An address the map already knows for the machine being added; remounts the dialog with it.
+  const [addBackendHost, setAddBackendHost] = useState("");
   const [savedBackendError, setSavedBackendError] = useState<string | null>(null);
+  // Set by a read-only linked thread whose machine this client is about to pair with.
+  const [addPrefill, setAddPrefill] = useAtom(addEnvironmentPrefillAtom);
   const handleAddBackendDialogOpenChange = (open: boolean) => {
     setAddBackendDialogOpen(open);
     if (open) {
       setRouteTarget(null);
+      setAddBackendHost("");
     } else {
       setSavedBackendError(null);
+      setAddPrefill(null);
     }
   };
+  const openAddRoute = (target: EnvironmentPresentation) => {
+    setRouteTarget(target);
+    setAddBackendHost("");
+    setSavedBackendError(null);
+    setAddBackendDialogOpen(true);
+  };
+  const openAddEnvironment = (host = "") => {
+    setRouteTarget(null);
+    setAddBackendHost(host);
+    setSavedBackendError(null);
+    setAddBackendDialogOpen(true);
+  };
+  // The map is the page's main view where there is room; the list is its equivalent everywhere.
+  const roomForMap = useMediaQuery("md");
+  const [pickedEnvironmentsView, setPickedEnvironmentsView] = useState<"map" | "list" | null>(null);
+  const environmentsView = roomForMap ? (pickedEnvironmentsView ?? "map") : "list";
   const [removingSavedEnvironmentId, setRemovingSavedEnvironmentId] =
     useState<EnvironmentId | null>(null);
   const [isUpdatingDesktopServerExposure, setIsUpdatingDesktopServerExposure] = useState(false);
@@ -1370,6 +1412,24 @@ function ConnectionsSettingsContent({
             ) : canManageLocalBackend ? (
               renderDisabledNetworkAccessRow()
             ) : null}
+            {accessServerConfig?.settings.networkPlainHttp === undefined ? null : (
+              <SettingsRow
+                {...searchableSetting("network-plain-http")}
+                description={gt(
+                  "Browsers on your network switch to HTTPS, and apps on your network must use it. This device, Tailscale, and T3 Connect are unaffected.",
+                )}
+                control={
+                  <Switch
+                    checked={accessServerConfig.settings.networkPlainHttp === "redirect"}
+                    disabled={!canWriteAccess}
+                    onCheckedChange={(checked) =>
+                      updateAccessSettings({ networkPlainHttp: checked ? "redirect" : "allow" })
+                    }
+                    aria-label={gt("Redirect network HTTP to HTTPS")}
+                  />
+                }
+              />
+            )}
             {canReadRelay || canManageRelay ? (
               <CloudLinkRow
                 environmentId={accessEnvironmentId}
@@ -1808,14 +1868,37 @@ function ConnectionsSettingsContent({
       <SettingsSection
         {...searchableSetting("remote-environments")}
         title={gt("Environments")}
+        titleAction={
+          roomForMap ? (
+            <ToggleGroup
+              aria-label={gt("Show environments as")}
+              value={[environmentsView]}
+              onValueChange={(next) => {
+                const value = next[0];
+                if (value === "map" || value === "list") setPickedEnvironmentsView(value);
+              }}
+            >
+              <Toggle value="map">
+                {gt("Map", { $context: "view switch: show machines as a diagram" })}
+              </Toggle>
+              <Toggle value="list">
+                {gt("List", { $context: "view switch: show items as a list" })}
+              </Toggle>
+            </ToggleGroup>
+          ) : null
+        }
         headerAction={
           <div className="flex items-center gap-1">
             {savedServerUpdateTargets.length > 0 ? (
               <ServerUpdatesAction targets={savedServerUpdateTargets} variant="ghost-muted" />
             ) : null}
+            {/* Actions on several machines at once, such as linking several, go here. */}
             <AddEnvironmentDialog
-              open={addBackendDialogOpen}
+              key={`${addPrefill?.environmentId ?? "any"}:${addBackendHost}`}
+              open={addBackendDialogOpen || addPrefill !== null}
+              prefill={addPrefill}
               routeTarget={routeTarget}
+              initialHost={addBackendHost}
               error={savedBackendError}
               savedEnvironments={savedEnvironments}
               onOpenChange={handleAddBackendDialogOpenChange}
@@ -1824,24 +1907,51 @@ function ConnectionsSettingsContent({
           </div>
         }
       >
-        {listedEnvironments.map((environment) => (
-          <SavedBackendListRow
-            key={environment.environmentId}
-            environment={environment}
-            removingEnvironmentId={removingSavedEnvironmentId}
-            onSetEnabled={handleSetSavedBackendEnabled}
-            onRemove={handleRemoveSavedBackend}
-            onAddRoute={(target) => {
-              setRouteTarget(target);
-              setSavedBackendError(null);
-              setAddBackendDialogOpen(true);
-            }}
+        {environmentsView === "map" ? (
+          <EnvironmentsMap
+            footerId={searchableSetting("linked-environments").id}
+            onAddEnvironment={openAddEnvironment}
+            renderSavedEnvironment={(environment) =>
+              listedEnvironments.some(
+                (listed) => listed.environmentId === environment.environmentId,
+              ) ? (
+                <SavedBackendListRow
+                  key={environment.environmentId}
+                  environment={environment}
+                  initialRoutesOpen
+                  removingEnvironmentId={removingSavedEnvironmentId}
+                  onSetEnabled={handleSetSavedBackendEnabled}
+                  onRemove={handleRemoveSavedBackend}
+                  onAddRoute={openAddRoute}
+                />
+              ) : null
+            }
+            renderConnectMachine={(environmentId) => (
+              <CloudRemoteEnvironmentRows
+                only={environmentId}
+                primaryEnvironmentId={primaryEnvironmentId}
+                savedEnvironments={savedEnvironments}
+              />
+            )}
           />
-        ))}
-        <CloudRemoteEnvironmentRows
-          primaryEnvironmentId={primaryEnvironmentId}
-          savedEnvironments={savedEnvironments}
-        />
+        ) : (
+          <>
+            {listedEnvironments.map((environment) => (
+              <SavedBackendListRow
+                key={environment.environmentId}
+                environment={environment}
+                removingEnvironmentId={removingSavedEnvironmentId}
+                onSetEnabled={handleSetSavedBackendEnabled}
+                onRemove={handleRemoveSavedBackend}
+                onAddRoute={openAddRoute}
+              />
+            ))}
+            <CloudRemoteEnvironmentRows
+              primaryEnvironmentId={primaryEnvironmentId}
+              savedEnvironments={savedEnvironments}
+            />
+          </>
+        )}
       </SettingsSection>
       {hasCloudPublicConfig() ? (
         <RemoveT3ConnectEnvironmentDialog
@@ -1855,16 +1965,30 @@ function ConnectionsSettingsContent({
           }}
         />
       ) : null}
-      {peerLinkHosts.map((environment, index) => (
-        <LinkedEnvironmentsSettings
-          key={environment.environmentId}
-          environmentId={environment.environmentId}
-          environmentLabel={peerLinkHosts.length > 1 ? environment.label : null}
-          isSearchTarget={index === 0}
-        />
-      ))}
+      {environmentsView === "list" ? (
+        <>
+          {peerLinkHosts.map((environment, index) => (
+            <LinkedEnvironmentsSettings
+              key={environment.environmentId}
+              environmentId={environment.environmentId}
+              environmentLabel={peerLinkHosts.length > 1 ? environment.label : null}
+              isSearchTarget={index === 0}
+            />
+          ))}
+          {clusterHosts.map((environment, index) => (
+            <ClusterSettings
+              key={environment.environmentId}
+              environmentId={environment.environmentId}
+              label={environment.label}
+              enabled={offersCluster(environment.serverConfig)}
+              showLabel={clusterHosts.length > 1}
+              isSearchTarget={index === 0}
+            />
+          ))}
+        </>
+      ) : null}
       <LoadBalancingSettings environments={loadBalancingEnvironments} />
-      <PullRequestRoutingSettings environments={loadBalancingEnvironments} />
+      <PullRequestRoutingSettings environments={pullRequestRoutingEnvironments} />
     </SettingsPageContainer>
   );
 }

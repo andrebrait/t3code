@@ -87,11 +87,15 @@ export class RemoteEnvironmentAuthorization extends Context.Service<
        * environment's LAN or tailnet address.
        */
       readonly directEndpoint?: { readonly httpBaseUrl: string; readonly wsBaseUrl: string };
+      /** The member behind `expectedEnvironmentId`'s cluster proxy that `directEndpoint` reaches. */
+      readonly clusterMemberId?: EnvironmentId;
     }) => Effect.Effect<AuthorizedRemoteEnvironment, ConnectionAttemptError>;
     /** A saved address paired with this device's DPoP key, which renews with the host itself. */
     readonly authorizeDirectDpop: (input: {
       readonly expectedEnvironmentId: EnvironmentId;
       readonly connectionId: string;
+      /** Where the credential renews when it differs from `httpBaseUrl`, as for a cluster member. */
+      readonly credentialHttpBaseUrl?: string;
       readonly httpBaseUrl: string;
       readonly wsBaseUrl: string;
     }) => Effect.Effect<AuthorizedRemoteEnvironment, ConnectionAttemptError>;
@@ -625,7 +629,10 @@ export const make = Effect.gen(function* () {
         httpBaseUrl: input.httpBaseUrl,
         connectionMethod: "direct",
       });
-      const connection = { connectionId: input.connectionId, httpBaseUrl: input.httpBaseUrl };
+      const connection = {
+        connectionId: input.connectionId,
+        httpBaseUrl: input.credentialHttpBaseUrl ?? input.httpBaseUrl,
+      };
       const openSocket = (credential: DpopConnectionCredential) =>
         resolveRemoteDpopWebSocketConnectionUrl({
           wsBaseUrl: input.wsBaseUrl,
@@ -688,7 +695,7 @@ export const make = Effect.gen(function* () {
       endpoint === undefined
         ? undefined
         : yield* verifyDirectEndpoint({
-            expectedEnvironmentId: input.expectedEnvironmentId,
+            expectedEnvironmentId: input.clusterMemberId ?? input.expectedEnvironmentId,
             httpBaseUrl: endpoint.httpBaseUrl,
             connectionMethod: "direct",
           });

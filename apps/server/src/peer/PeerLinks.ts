@@ -9,6 +9,7 @@ import {
   type PeerLink,
   type PeerLinkCreateInput,
   PeerLinkError,
+  type PeerLinkName,
   type PeerLinkSummary,
 } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -36,6 +37,7 @@ import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 import { isLocalLoopbackHost, isTailnetHost } from "@t3tools/shared/hostClassification";
 
+import * as ClusterRole from "../cluster/ClusterRole.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -79,7 +81,12 @@ export interface ResolvedPeerLink {
   /** The first address that answered as this peer. */
   readonly url: string;
   readonly token: string;
+  /** What the peer said it can do when it answered. */
+  readonly capabilities: ExecutionEnvironmentCapabilities;
 }
+
+/** What a link's session is called in the peer's Connections, before this environment's label. */
+export const LINK_CLIENT_NAME_PREFIX = "T3 Code · ";
 
 export const LINKED_ENVIRONMENTS_OFF =
   "Linked environments is off on this machine. Turn it on in Settings → Labs.";
@@ -104,12 +111,16 @@ export class PeerLinks extends Context.Service<
       input: PeerLinkCreateInput,
     ) => Effect.Effect<{ readonly link: PeerLink; readonly alreadyLinked: boolean }, PeerLinkError>;
     readonly list: Effect.Effect<ReadonlyArray<PeerLinkSummary>, PeerLinkError>;
+    /** The unexpired links' names, from what is stored, without asking any peer. */
+    readonly names: Effect.Effect<ReadonlyArray<PeerLinkName>, PeerLinkError>;
     /** The stored link, without asking the peer whether it answers. */
     readonly get: (
       environmentId: EnvironmentId,
     ) => Effect.Effect<Option.Option<PeerLink>, PeerLinkError>;
     /** Forgets the link here. The peer still lists the session until it is revoked there. */
     readonly unlink: (environmentId: EnvironmentId) => Effect.Effect<boolean, PeerLinkError>;
+    /** Forgets every link here, as joining or hosting a cluster does. */
+    readonly unlinkAll: Effect.Effect<number, PeerLinkError>;
     /** An address that answers as the linked peer, with its token, ready to call. */
     readonly resolve: (
       environmentId: EnvironmentId,
@@ -241,6 +252,7 @@ const make = Effect.gen(function* () {
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const isOwnLoopback = yield* LoopbackHost;
+  const clusterRole = yield* ClusterRole.ClusterRole;
   const enabled = serverSettings.getSettings.pipe(
     Effect.map((settings) => settings.linkedEnvironmentsEnabled),
     Effect.orElseSucceed(() => false),
@@ -504,6 +516,13 @@ const make = Effect.gen(function* () {
     if (!(yield* enabled)) {
       return yield* new PeerLinkError({ reason: "disabled", message: LINKED_ENVIRONMENTS_OFF });
     }
+    yield* clusterRole
+      .refuseIfClustered("Linking environments")
+      .pipe(
+        Effect.mapError(
+          (error) => new PeerLinkError({ reason: "clustered", message: error.message }),
+        ),
+      );
     const urls = [input.url, ...(input.alternateUrls ?? [])];
     // The user picked a machine: link through the addresses that answer as
     // it, so one that now answers as another never receives the pairing code.
@@ -547,7 +566,7 @@ const make = Effect.gen(function* () {
         message: `${peer.label} runs a T3 Code version that cannot keep a linked agent's limits. Update it, then link again.`,
       });
     }
-    const issued = yield* signIn(primary, input, `T3 Code · ${self.label}`);
+    const issued = yield* signIn(primary, input, `${LINK_CLIENT_NAME_PREFIX}${self.label}`);
     const now = yield* DateTime.now;
     const linked: PeerLink = {
       environmentId: peer.environmentId,
@@ -637,6 +656,16 @@ const make = Effect.gen(function* () {
     });
   });
 
+  const names: PeerLinks["Service"]["names"] = Effect.gen(function* () {
+    const links = yield* Effect.forEach(yield* readRows, toLink);
+    const now = yield* DateTime.now;
+    return links.flatMap((link) =>
+      DateTime.isGreaterThan(link.expiresAt, now)
+        ? [{ environmentId: link.environmentId, label: link.label }]
+        : [],
+    );
+  });
+
   const get: PeerLinks["Service"]["get"] = (environmentId) =>
     readRow(environmentId).pipe(
       Effect.flatMap(
@@ -659,6 +688,16 @@ const make = Effect.gen(function* () {
       return deleted.length > 0;
     },
   );
+
+  const unlinkAll: PeerLinks["Service"]["unlinkAll"] = Effect.gen(function* () {
+    const deleted = yield* sql<{ secret_name: string }>`
+      DELETE FROM peer_environment_links RETURNING secret_name
+    `.pipe(Effect.catch(failStorage));
+    for (const row of deleted) {
+      yield* secrets.remove(row.secret_name).pipe(Effect.catch(failStorage));
+    }
+    return deleted.length;
+  }).pipe(Effect.withSpan("PeerLinks.unlinkAll"));
 
   const resolve: PeerLinks["Service"]["resolve"] = Effect.fn("PeerLinks.resolve")(
     function* (environmentId) {
@@ -717,6 +756,7 @@ const make = Effect.gen(function* () {
         link: yield* withLabel(link, peer.label),
         url,
         token: new TextDecoder().decode(stored.value),
+        capabilities: peer.capabilities,
       };
     },
   );
@@ -750,8 +790,10 @@ const make = Effect.gen(function* () {
     link,
     linkUnlessLinked,
     list,
+    names,
     get,
     unlink,
+    unlinkAll,
     resolve,
     recordOutcome,
     recordExpiry,

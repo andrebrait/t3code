@@ -66,6 +66,12 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import {
+  clusterHostToken,
+  layerRoutingMain,
+  type RoutedEnvironment,
+} from "../cluster/ClusterService.testkit.ts";
+import type * as ClusterService from "../cluster/ClusterService.ts";
 import * as PeerForwarding from "./PeerForwarding.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 import { descriptorOf, layerLinkingEnvironment, linkTo, servePeer } from "./PeerLinks.testkit.ts";
@@ -674,6 +680,8 @@ const makeLaptop = (
   kept?: Context.Context<Layer.Success<ReturnType<typeof layerLinkingEnvironment>>>,
   /** Runs as each follow attempt here starts, on its follower's fiber. */
   beforeFollow: Effect.Effect<void, Orchestrator.OrchestratorV2Error> = Effect.void,
+  /** The cluster this laptop is the main host of, if any. */
+  cluster: Layer.Layer<ClusterService.ClusterService> | Layer.Layer<never> = Layer.empty,
 ) =>
   Effect.gen(function* () {
     const linking = kept ?? (yield* layerLinkingEnvironment(laptop).pipe(Layer.build));
@@ -715,7 +723,7 @@ const makeLaptop = (
               }),
             ),
           ),
-          Layer.provideMerge(PeerForwarding.layer),
+          Layer.provideMerge(PeerForwarding.layer.pipe(Layer.provide(cluster))),
           Layer.provide(
             Layer.mock(ProjectService.ProjectService)({
               // A cold enrichment cache: the project itself reports no identity yet.
@@ -1833,7 +1841,7 @@ it.effect.each([
         const pages = reads.filter((read) => read.itemId === undefined && read.limit === 100);
         // The thread's final page starts at its canonical 100-item boundary.
         const tailPosition = Math.floor((timeline.length - 1) / 100) * 100 - 1;
-        expect(pages.at(0)?.afterPosition).toBeUndefined();
+        expect(pages.at(0)?.afterPosition).toBe(-1);
         expect(
           pages.every(
             (read) =>
@@ -1931,6 +1939,83 @@ it.effect("fails the task when its thread there is gone, or the link here is", (
       const unlinked = yield* taskResult(a, forgotten.taskId);
       expect(unlinked?.status).toBe("failed");
       expect(unlinked?.result).toContain("not linked to");
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("a task delegated to a cluster member is followed again after the laptop restarts", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const b = yield* serveBox(thread);
+      const members = yield* Ref.make<ReadonlyArray<RoutedEnvironment>>([
+        { descriptor: box, url: b.url, token: yield* clusterHostToken(b.auth, "Laptop") },
+      ]);
+      const cluster = layerRoutingMain(members);
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const delegated = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const before = yield* makeLaptop(database, offers, undefined, Effect.void, cluster);
+          // No link, and the Linked environments beta off: the cluster needs neither.
+          yield* before.settings.updateSettings({ linkedEnvironmentsEnabled: false });
+          yield* seedParent(before);
+          return yield* delegateToBox(before);
+        }),
+      );
+      expect(delegated.remoteChild).toMatchObject({
+        environmentId: box.environmentId,
+        label: "Box",
+      });
+      // Full trust: the box records no link origin, so nothing fences the thread there.
+      expect(yield* Ref.get(thread.linkOrigin)).toBeNull();
+      yield* Ref.set(thread.reply, "Finished while you were away.");
+      yield* Ref.set(thread.status, "completed");
+      yield* Deferred.succeed(thread.finished, undefined);
+
+      const after = yield* makeLaptop(database, offers, undefined, Effect.void, cluster);
+      yield* after.settings.updateSettings({ linkedEnvironmentsEnabled: false });
+      yield* after.remote.start();
+      expect(yield* taskResult(after, delegated.taskId)).toMatchObject({
+        status: "completed",
+        result: "Finished while you were away.",
+      });
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("a task delegated to a removed cluster member fails and says why", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const b = yield* serveBox(thread);
+      const members = yield* Ref.make<ReadonlyArray<RoutedEnvironment>>([
+        { descriptor: box, url: b.url, token: yield* clusterHostToken(b.auth, "Laptop") },
+      ]);
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const a = yield* makeLaptop(
+        database,
+        offers,
+        undefined,
+        Effect.void,
+        layerRoutingMain(members),
+      );
+      yield* seedParent(a);
+      const delegated = yield* delegateToBox(a);
+
+      yield* Ref.set(members, []);
+      yield* Ref.set(thread.status, "completed");
+      yield* Deferred.succeed(thread.finished, undefined);
+      const failed = yield* taskResult(a, delegated.taskId);
+      expect(failed?.status).toBe("failed");
+      expect(failed?.result).toBe(
+        "environment-box is not a member of this cluster. t3_environment_links lists this cluster's environments.",
+      );
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

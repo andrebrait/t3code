@@ -4,6 +4,7 @@ import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import {
   connectionCatalogDisplayUrl,
+  connectionRouteLabelText,
   pullRequestRoutingConnectionKey,
   pullRequestRoutingPermissionFor,
   type PullRequestRoutingPermission,
@@ -49,12 +50,16 @@ export function PullRequestRoutingSettings() {
   const update = useAtomCommand(environmentCatalog.setPullRequestRoutingPermission);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  if (catalog.entries.size === 0) return null;
+  // Cluster members follow their main host's permission.
+  const entries = [...catalog.entries.values()].filter(
+    (entry) => entry.target._tag !== "ClusterConnectionTarget",
+  );
+  if (entries.length === 0) return null;
 
   return (
     <View className="mt-5 gap-3">
       <SettingsSection title={gt("Pull request routing")}>
-        {[...catalog.entries.values()].map((entry) => {
+        {entries.map((entry) => {
           const environmentId = entry.target.environmentId;
           const selected = pullRequestRoutingPermissionFor(entry, permissions);
           const disabled =
@@ -75,7 +80,8 @@ export function PullRequestRoutingSettings() {
                     {entry.target.label}
                   </Text>
                   <Text className="text-xs text-foreground-muted" numberOfLines={1}>
-                    {connectionCatalogDisplayUrl(entry) ?? "T3 Connect"}
+                    {connectionCatalogDisplayUrl(entry) ??
+                      connectionRouteLabelText({ target: entry.target, profile: entry.profile }, m)}
                   </Text>
                 </View>
                 <Text className="text-sm text-foreground-muted">

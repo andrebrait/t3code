@@ -1,8 +1,10 @@
+import type { ConnectionCatalogEntry } from "../connection/catalog.ts";
 import type { EnvironmentConnectionPhase } from "../connection/presentation.ts";
 import type {
   CommandId,
   EnvironmentId,
   ProjectMutation,
+  ProjectTrackedFolder,
   ProjectId,
   ServerConfig,
   ServerSettings,
@@ -281,6 +283,86 @@ export function getCloneDestinationPath(
   return `${base}${base.endsWith("\\") ? name.replaceAll("/", "\\") : name}`;
 }
 
+/** Where a clone lands by default: the machine's Add Project base folder, then the repository. */
+export function getDefaultCloneDestinationPath(
+  remoteUrl: string,
+  settings: Pick<ServerSettings, "addProjectBaseDirectory" | "ghqCloneLayout"> | undefined,
+): string {
+  return getCloneDestinationPath(
+    getAddProjectInitialQuery(settings?.addProjectBaseDirectory),
+    getCloneDirectoryPath(remoteUrl, settings?.ghqCloneLayout === true),
+  );
+}
+
+/**
+ * Where a copy of a project goes on another machine: under the source machine's home, the same
+ * `~/…` path, so it maps onto a machine whose home differs. Anywhere else (another drive, a
+ * mounted volume) may not exist on the target, so it falls back to the target's default.
+ */
+export function getSourceCloneDestinationPath(input: {
+  readonly remoteUrl: string;
+  readonly sourceWorkspaceRoot: string | null | undefined;
+  readonly sourceHomeDirectory: string | null | undefined;
+  readonly targetSettings:
+    | Pick<ServerSettings, "addProjectBaseDirectory" | "ghqCloneLayout">
+    | undefined;
+}): string {
+  const root = input.sourceWorkspaceRoot?.trim() ?? "";
+  const home = input.sourceHomeDirectory?.trim().replace(/[\\/]+$/, "") ?? "";
+  const separator = root[home.length];
+  if (home && root.startsWith(home) && (separator === "/" || separator === "\\")) {
+    return `~/${root.slice(home.length + 1).replaceAll("\\", "/")}`;
+  }
+  return getDefaultCloneDestinationPath(input.remoteUrl, input.targetSettings);
+}
+
+/**
+ * The remote a clone of the project comes from, or null when it has none. Projects group by
+ * their origin remote, so a clone from it groups with the project; an origin without a known
+ * URL gives null rather than a clone that would group apart.
+ */
+export function projectCloneRemoteUrl(
+  project: Pick<EnvironmentProject, "repositoryIdentity">,
+): string | null {
+  const identity = project.repositoryIdentity;
+  if (!identity) return null;
+  return identity.origin ? (identity.origin.remoteUrl ?? null) : identity.locator.remoteUrl;
+}
+
+/**
+ * Cluster machines that can clone a project living on `projectEnvironmentId`: the online
+ * members of that machine's cluster, plus its main host when the project lives on a member.
+ * Machines in `hasProject` are left out. Callers check the project has a remote to clone.
+ */
+export function clusterCloneEnvironmentIds(input: {
+  readonly project: Pick<EnvironmentProject, "environmentId">;
+  readonly environments: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly entry: Pick<ConnectionCatalogEntry, "enabled" | "target">;
+    readonly connection: { readonly phase: EnvironmentConnectionPhase };
+  }>;
+  readonly hasProject: ReadonlySet<EnvironmentId>;
+}): EnvironmentId[] {
+  const projectTarget = input.environments.find(
+    (environment) => environment.environmentId === input.project.environmentId,
+  )?.entry.target;
+  if (!projectTarget) return [];
+  const hostId =
+    projectTarget._tag === "ClusterConnectionTarget"
+      ? projectTarget.hostEnvironmentId
+      : projectTarget.environmentId;
+  return input.environments
+    .filter(({ environmentId, entry, connection }) => {
+      if (!entry.enabled || connection.phase !== "connected") return false;
+      if (input.hasProject.has(environmentId) || environmentId === input.project.environmentId)
+        return false;
+      return entry.target._tag === "ClusterConnectionTarget"
+        ? entry.target.hostEnvironmentId === hostId && entry.target.status === "online"
+        : environmentId === hostId;
+    })
+    .map((environment) => environment.environmentId);
+}
+
 export function getNewProjectPathPreview(newProjectsRoot: string, name: string): string {
   return getCloneDestinationPath(newProjectsRoot, newProjectFolderName(name));
 }
@@ -408,6 +490,7 @@ export function buildProjectCreateCommand(input: {
   readonly commandId: CommandId;
   readonly projectId: ProjectId;
   readonly workspaceRoot: string;
+  readonly trackedFolders?: ReadonlyArray<ProjectTrackedFolder>;
 }): Extract<ProjectMutation, { type: "project.create" }> {
   return {
     type: "project.create",
@@ -417,5 +500,8 @@ export function buildProjectCreateCommand(input: {
     workspaceRoot: input.workspaceRoot,
     createWorkspaceRootIfMissing: true,
     defaultModelSelection: null,
+    ...(input.trackedFolders === undefined || input.trackedFolders.length === 0
+      ? {}
+      : { trackedFolders: input.trackedFolders }),
   };
 }

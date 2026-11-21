@@ -77,7 +77,10 @@ The result is an ordinary session with subject `mcp-client`. A read-only
 grant holds `orchestration:read` alone. On `/mcp` it passes only tools
 declared as reads in [McpToolAccess](../../apps/server/src/mcp/McpToolAccess.ts),
 where every tool must declare who may call it to compile. Any other grant adds
-`orchestration:operate` and a signed ceiling. Only `/mcp` accepts these sessions. Every other HTTP and WebSocket
+`orchestration:operate` and a signed ceiling. Only `/mcp` accepts these sessions, and for a
+[peer link](remote.md#peer-links)'s session alone the thread routes in
+[linkThreadHttp](../../apps/server/src/peer/linkThreadHttp.ts), which only read, and the
+client pairing described below. Every other HTTP and WebSocket
 path rejects that subject, because the RPC surface would let the agent act
 above its ceiling. Inside MCP the credential sets the limits and tool
 parameters only pick targets; see
@@ -88,6 +91,17 @@ act as one, such as `request_secret` or `delegate_task`. Hiding is only
 discovery: the handlers still refuse such a call with
 `thread_credential_required`. A secret card belongs to a thread's run, so an
 outside agent that needs a secret starts a thread and lets that agent ask.
+
+A full-access [peer link](../../apps/server/src/peer/PeerClientPairing.ts) may
+mint a one-time pairing for a client of the environment that holds it. Its
+agents already run as this machine's user and could run `t3 auth pairing create`,
+so this adds no authority; a narrower link would gain some, so it is refused
+here, on the linked side, whatever the linking side sent. The pairing carries
+the client's scopes on the linking environment intersected with a normal
+pairing's. A person starts it: the linking environment exposes it as a WebSocket
+RPC behind `access:write`, and the linked side as an HTTP route that accepts only
+a link's session. It is not an MCP tool, because a tool is reachable by whatever
+holds a thread credential, and hiding one from tool listings is only discovery.
 
 Issuer and resource URLs come from the request's Host and
 `X-Forwarded-Proto`, so one server answers over loopback, Tailscale Serve and a
@@ -128,6 +142,66 @@ Revocation and insertion share a [database
 transaction](../../apps/server/src/persistence/AuthSessions.ts); a failed
 replacement must leave the old credential usable. Pairing and browser sessions
 do not follow this replacement rule.
+
+### A cluster member trusts only its main host
+
+A member's one remote client is its main host's `cluster-host` session, minted
+by spending a cluster join code ([ClusterService](../../apps/server/src/cluster/ClusterService.ts)).
+Join codes use the purpose-bound `mcp-approval:` subject prefix, so ordinary token
+exchange, Connections and older servers never spend or list them. Join checks the code before any role check, so a caller without a valid join code
+learns nothing about this environment's role. One transaction holds the spend,
+the session and the membership; a role refusal rolls the spend back. Revoking
+every remote session, ordinary code and peer link runs after the commit, and
+again on member start, because revocation events must publish only once the
+revocation is committed: the code that reacts to them re-reads committed state.
+Afterwards the member mints only
+join codes and its startup link, so exclusivity needs no per-request address check.
+
+The main host forwards each client request with its own `cluster-host` token and
+`x-t3-cluster-scopes` naming the client's scopes. The member intersects its
+session with that header, only for `cluster-host` sessions, and always drops
+`access:write`: a proxied client could otherwise mint join codes, pairing links,
+guest shares or MCP approvals on the member that outlive its revocation on the
+main host, so a member's access is managed only on the member itself. The proxy
+always overwrites a client-sent value, and an unparseable header grants nothing.
+WebSocket tickets from a `cluster-host` session carry the capped scopes in a
+`scp` claim. The proxy refuses `/api/cluster/*`, `/mcp` and `/oauth/mcp/*`, and
+strips hop-by-hop and origin-affecting headers; `/api/cluster/leave` also refuses
+any request carrying the scopes header.
+
+The proxy decides on a canonical path (cut at `;`, decoded, slashes collapsed,
+trailing slash trimmed, lowercased) and forwards that same cut path. The
+member's FindMyWay router normalizes the same way; forwarding the raw path would
+let a request pass the decision as one route and reach another.
+
+The main host opens every connection, including the control link, an SSE
+doorbell that is the member's status. It carries only request ids, so no
+payload waits behind another and a member needs no address or credential for
+the main host. Only the session recorded at join may use it.
+
+### Agents cross the cluster through the main host
+
+[PeerForwarding](../../apps/server/src/peer/PeerForwarding.ts) is the one seam
+that sends an `environmentId` call to a peer link or through the cluster. The
+main host calls a member's `/mcp` with its `cluster-host` token. A member's
+agent calls ride the control link back, and the main host runs each one with its
+own MCP tools as that member's client ([ClusterHostRequests](../../apps/server/src/mcp/ClusterHostRequests.ts)),
+forwarding it on when it names another member. Each call is time-bounded and
+capped in flight per member. Each hop scopes `clientRequestId` to its caller, so
+an agent's retry after "cluster host unreachable" lands once.
+
+Cluster calls are not `linkOrigin`-fenced because the main host treats members
+as full trust. Peer-link callers stay fenced and are refused on clustered
+environments.
+
+Loop guards: the main host sends calls on without `environmentId`, so a call
+from it that names another environment is refused. A member's call that names
+that member (A to main to A) is refused.
+
+A member's agent calls run on the main host as a full-access client. The modes a
+member reports narrow honest callers only, since the member sets them; the main
+host's managed ceiling is the only limit a compromised member cannot choose.
+Treat a member as trusted as the main host.
 
 ### Reusable dev credential
 

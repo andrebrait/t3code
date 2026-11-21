@@ -3,6 +3,7 @@ import type * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
+import * as HttpApiError from "effect/http-api/HttpApiError";
 import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
 import * as HttpApiMiddleware from "effect/http-api/HttpApiMiddleware";
 import * as HttpApiSchema from "effect/http-api/HttpApiSchema";
@@ -70,6 +71,15 @@ import {
   EnvironmentSpeechStatus,
   EnvironmentSpeechTranscriptionResult,
 } from "./speech.ts";
+import {
+  ClusterError,
+  ClusterHostReplyInput,
+  ClusterHostRequest,
+  ClusterJoinRequest,
+  ClusterJoinResult,
+  ClusterLeaveResult,
+} from "./cluster.ts";
+import { PeerLinkClientPairingCredential, PeerLinkClientPairingRequest } from "./peerLink.ts";
 import { SecretReference } from "./secretReference.ts";
 import {
   OrchestrationV2ShellHttpSnapshot,
@@ -1052,6 +1062,23 @@ class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
     }),
   ) {}
 
+/**
+ * What a linking environment asks of this one over its link, outside `/mcp`. The handler accepts
+ * only a peer link's own session, so no agent's tool list ever carries it.
+ */
+class EnvironmentPeerLinkHttpApi extends HttpApiGroup.make("peerLink").add(
+  HttpApiEndpoint.post("clientPairing", "/api/peer-link/client-pairing", {
+    headers: OptionalBearerHeaders,
+    payload: PeerLinkClientPairingRequest,
+    success: PeerLinkClientPairingCredential,
+    error: [
+      EnvironmentHttpUnauthorizedError,
+      EnvironmentHttpForbiddenError,
+      EnvironmentHttpInternalServerError,
+    ],
+  }),
+) {}
+
 // Path tokens and optional body signatures authenticate webhooks; read raw bytes to verify signatures.
 const WebhookParams = Schema.Struct({
   hookId: TrimmedNonEmptyString,
@@ -1070,7 +1097,41 @@ class EnvironmentWebhooksHttpApi extends HttpApiGroup.make("webhooks")
   .add(HttpApiEndpoint.post("webhookPost", WEBHOOK_PATH, webhookEndpoint))
   .add(HttpApiEndpoint.put("webhookPut", WEBHOOK_PATH, webhookEndpoint))
   .add(HttpApiEndpoint.patch("webhookPatch", WEBHOOK_PATH, webhookEndpoint))
-  .add(HttpApiEndpoint.get("webhookGet", WEBHOOK_PATH, webhookEndpoint)) {}
+  .add(HttpApiEndpoint.get("webhookGet", WEBHOOK_PATH, webhookEndpoint))
+  .annotate(HttpApi.RedactedNames, { params: ["token"] }) {}
+
+class EnvironmentClusterHttpApi extends HttpApiGroup.make("cluster")
+  .add(
+    HttpApiEndpoint.post("join", "/api/cluster/join", {
+      payload: ClusterJoinRequest,
+      success: ClusterJoinResult,
+      error: ClusterError,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post("leave", "/api/cluster/leave", {
+      headers: OptionalBearerHeaders,
+      success: ClusterLeaveResult,
+      error: [ClusterError, EnvironmentHttpForbiddenError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    // The main host fetches each call its control link announced; a call is taken once.
+    HttpApiEndpoint.get("hostRequest", "/api/cluster/host-request/:requestId", {
+      headers: OptionalBearerHeaders,
+      params: Schema.Struct({ requestId: Schema.String }),
+      success: ClusterHostRequest,
+      error: [EnvironmentHttpForbiddenError, HttpApiError.NotFound],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    // The main host's answer to one call: its own request, so no answer waits behind another.
+    HttpApiEndpoint.post("hostReply", "/api/cluster/host-reply", {
+      headers: OptionalBearerHeaders,
+      payload: ClusterHostReplyInput,
+      error: [EnvironmentHttpForbiddenError, HttpApiError.NotFound],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
 
 export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMetadataHttpApi)
@@ -1081,4 +1142,6 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentProjectsHttpApi)
   .add(EnvironmentVoiceHttpApi)
   .add(EnvironmentConnectHttpApi)
-  .add(EnvironmentWebhooksHttpApi) {}
+  .add(EnvironmentWebhooksHttpApi)
+  .add(EnvironmentPeerLinkHttpApi)
+  .add(EnvironmentClusterHttpApi) {}

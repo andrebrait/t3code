@@ -11,10 +11,13 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { CloudEnvironmentRows } from "../connection/CloudEnvironmentRows";
 import { LocalEnvironmentList } from "../connection/LocalEnvironmentList";
+import { LoadBalancingSettings } from "../connection/LoadBalancingSettings";
 import { PullRequestRoutingSettings } from "../connection/PullRequestRoutingSettings";
 import { splitEnvironmentSections } from "../connection/environmentSections";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
+import { useClusterHosts, useClusterMemberIds } from "../../state/cluster";
+import { ClusterSection } from "../connection/ClusterSection";
 import { relayEnvironmentDiscovery } from "../../state/relay";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
@@ -37,8 +40,12 @@ export function SettingsEnvironmentsRouteScreen() {
   } = useRemoteConnections();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
+  const clusterHosts = useClusterHosts();
+  const clusterMemberIds = useClusterMemberIds();
   const environmentSections = splitEnvironmentSections({
-    connectedEnvironments,
+    connectedEnvironments: connectedEnvironments.filter(
+      (environment) => !clusterMemberIds.has(environment.environmentId),
+    ),
     cloudEnvironments: null,
   });
   const localEnvironments = SHOWCASE_ENABLED
@@ -154,7 +161,15 @@ export function SettingsEnvironmentsRouteScreen() {
               }
             : {})}
         />
+        {clusterHosts.map((environment) => (
+          <ClusterSection
+            key={environment.environmentId}
+            environmentId={environment.environmentId}
+            environmentLabel={environment.label}
+          />
+        ))}
         <PullRequestRoutingSettings />
+        <LoadBalancingSettings />
       </ScrollView>
     </SettingsScreen>
   );

@@ -47,6 +47,8 @@ function routeConnectionKey(
   if (target._tag === "RelayConnectionTarget")
     return JSON.stringify([target._tag, target.environmentId]);
   const profile = Option.getOrNull(entry.profile);
+  // A member is reached through its main host, so it shares the host's trust.
+  if (target._tag === "ClusterConnectionTarget") return target.hostConnectionKey;
   if (target._tag === "SshConnectionTarget") {
     if (profile?._tag !== "SshConnectionProfile") return null;
     const { alias, hostname, username, port } = profile.target;
@@ -76,6 +78,12 @@ function routeConnectionKey(
     return null;
   }
 }
+
+/** A cluster is one trust domain, so its members follow the main host's permission. */
+export const pullRequestRoutingOwnerId = (entry: ConnectionCatalogEntry) =>
+  entry.target._tag === "ClusterConnectionTarget"
+    ? entry.target.hostEnvironmentId
+    : entry.target.environmentId;
 
 export function pullRequestRoutingPermissionFor(
   entry: ConnectionCatalogEntry,
@@ -146,6 +154,13 @@ export const makePullRequestRoutingPermissions = Effect.fn("makePullRequestRouti
       }),
       changes: SubscriptionRef.changes(state),
       set: Effect.fn("PullRequestRoutingPermissions.set")(function (entry, permission) {
+        if (entry.target._tag === "ClusterConnectionTarget")
+          return Effect.fail(
+            new ConnectionBlockedError({
+              reason: "configuration",
+              ...translatableDetail(msg("A cluster member follows its main host's permission.")),
+            }),
+          );
         const connectionKey = pullRequestRoutingConnectionKey(entry);
         if (connectionKey === null)
           return Effect.fail(
@@ -156,11 +171,10 @@ export const makePullRequestRoutingPermissions = Effect.fn("makePullRequestRouti
               ),
             }),
           );
+        const environmentId = entry.target.environmentId;
         return update((current) => [
-          ...current.filter((value) => value.environmentId !== entry.target.environmentId),
-          ...(permission === "off"
-            ? []
-            : [{ environmentId: entry.target.environmentId, connectionKey, permission }]),
+          ...current.filter((value) => value.environmentId !== environmentId),
+          ...(permission === "off" ? [] : [{ environmentId, connectionKey, permission }]),
         ]);
       }),
       forget: Effect.fn("PullRequestRoutingPermissions.forget")(function (environmentId) {

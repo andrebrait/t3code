@@ -63,6 +63,7 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.providerInstallSubscribe
   | typeof ORCHESTRATION_V2_WS_METHODS.subscribeShell
   | typeof ORCHESTRATION_V2_WS_METHODS.subscribeThread
+  | typeof WS_METHODS.peerLinksSubscribeThread
   | typeof ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput
   | typeof ORCHESTRATION_V2_WS_METHODS.subscribePromptSuggestion
   | typeof ORCHESTRATION_V2_WS_METHODS.searchThreadStream
@@ -78,6 +79,7 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.subscribeDeviceState
   | typeof WS_METHODS.subscribeResourceTelemetry
   | typeof WS_METHODS.pullRequestsSubscribeRefreshes
+  | typeof WS_METHODS.clusterMembers
   | typeof WS_METHODS.pullRequestsSubscribeLinkedThreadRefreshes
   | typeof WS_METHODS.subscribeVcsStatus
   | typeof WS_METHODS.subscribeVcsBranch

@@ -5,7 +5,7 @@ import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { useNowMinuteMs } from "../../lib/clock";
 import { m, type MessageResolver } from "../../i18n/messages";
 import * as Dialog from "../../components/ui/Dialog";
-import React, { useRef, useState } from "react";
+import React, { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import type {
   EnvironmentId,
@@ -13,20 +13,45 @@ import type {
   ProviderOptionSelection,
   RuntimeMode,
   ServerProvider,
+  ThreadContextRecord,
 } from "@t3tools/contracts";
 import {
+  AuthSourceControlWriteScope,
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   MessageId,
+  ProjectId,
   repositoryGroupingKeyOf,
   ThreadId,
 } from "@t3tools/contracts";
-import { threadContextsOutsideEnvironment } from "@t3tools/shared/composerContextReferences";
+import {
+  collectComposerContextReferences,
+  threadContextsOutsideEnvironment,
+} from "@t3tools/shared/composerContextReferences";
+import {
+  activeLoadBalancingPool,
+  type LoadBalancingPool,
+  loadBalancingCandidateIds,
+  loadBalancingPools,
+  loadBalancingSendWarning,
+  pickLoadBalancedEnvironment,
+  sortEnvironmentOptionsByCluster,
+} from "@t3tools/client-runtime/load-balancing";
+import { AsyncResult } from "effect/reactivity";
 import { isTriagePrompt, replaceTriagePlaybookLink } from "@t3tools/shared/triagePrompt";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 
-import { useProjects, useServerConfigs, useThreadShells } from "../../state/entities";
+import {
+  useProjects,
+  useServerConfigs,
+  useThreadShells,
+  waitForProject,
+} from "../../state/entities";
+import { useEnvironments } from "../../state/environments";
+import { useEnvironmentsWithScope } from "../../state/session";
+import { sourceControlEnvironment } from "../../state/sourceControl";
+import { uuidv4 } from "../../lib/uuid";
 import type { TurnCommandMetadata } from "../../lib/commandMetadata";
 import type { DraftComposerAttachment } from "../../lib/composerImages";
 import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
@@ -41,13 +66,16 @@ import {
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { useAtomValue } from "@effect/atom-react";
 import { appAtomRegistry } from "../../state/atom-registry";
+import { mobilePreferencesAtom } from "../../state/preferences";
 import { projectEnvironment } from "../../state/projects";
+import { serverEnvironment } from "../../state/server";
 import { useLinkedEnvironments } from "../../state/peerLinks";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
   appendComposerDraftAttachments,
   type ComposerDraftInsertion,
+  type ComposerDraftLoadBalancing,
   type ComposerDraftWorkspaceSelection,
   composerDraftsLoadedAtom,
   createNewTaskDraft,
@@ -74,7 +102,12 @@ import {
   useRemoteConnectionStatus,
   useSavedRemoteConnections,
 } from "../../state/use-remote-environment-registry";
-import { availableScratchWorkspaceRoot } from "@t3tools/client-runtime/operations/projects";
+import {
+  availableScratchWorkspaceRoot,
+  clusterCloneEnvironmentIds,
+  getSourceCloneDestinationPath,
+  projectCloneRemoteUrl,
+} from "@t3tools/client-runtime/operations/projects";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -108,6 +141,12 @@ import {
 } from "./new-task-flow-state";
 import { usePrepareTriage } from "../triage/usePrepareTriage";
 import { useEnvironmentShellReadiness } from "../../state/shell";
+import { useWorktreeRepositoryChoices } from "../../state/use-worktree-repository-choices";
+import {
+  resolveWorktreeRepositorySelection,
+  type WorktreeRepositoryChoice,
+  type WorktreeRepositorySelection,
+} from "@t3tools/client-runtime/state/thread-repositories";
 import { useConnectionsReady, useWorkspaceEnvironments } from "../../state/workspace";
 
 type WorkspaceMode = "local" | "worktree";
@@ -134,6 +173,118 @@ export function branchBadgeLabel(
   return null;
 }
 
+// Outside the component: the React compiler's purity check flags this read inside it.
+const nowIso = () => new Date().toISOString();
+
+function confirmClone(names: {
+  readonly repository: string;
+  readonly machine: string;
+  readonly path: string;
+}): Promise<boolean> {
+  return new Promise((resolve) =>
+    Dialog.confirm({
+      title: m(msg("Clone {repository} onto {machine}?", names)),
+      message: m(msg("It will be cloned into {path} before the thread starts.", names)),
+      confirmText: m(msg("Clone", { $context: "clone a repository" })),
+      onConfirm: () => resolve(true),
+      onCancel: () => resolve(false),
+    }),
+  );
+}
+
+export interface AutoPoolOption {
+  readonly key: string;
+  readonly label: string;
+  readonly cluster: boolean;
+  /** Machines in the pool without the project, which Auto skips. */
+  readonly missingLabels: ReadonlyArray<string>;
+  readonly active: boolean;
+}
+
+/**
+ * The Auto choices for the selected project. A hook so the compiler treats its inputs as
+ * frozen: deriving pools in the provider body stops it caching the machine list.
+ */
+function useAutoPools(input: {
+  readonly environments: ReturnType<typeof useEnvironments>["environments"];
+  readonly isScratchDraft: boolean;
+  readonly selectedProject: EnvironmentProject | null;
+  readonly projects: ReadonlyArray<EnvironmentProject>;
+  readonly flowState: NewTaskFlowState;
+  readonly loadBalancing: ComposerDraftLoadBalancing | undefined;
+  readonly workspaceSelection: ComposerDraftWorkspaceSelection | undefined;
+}) {
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const { selectedProject, flowState } = input;
+  const preferences = AsyncResult.isSuccess(preferencesResult) ? preferencesResult.value : {};
+  const loadBalancingWeights = preferences.loadBalancingWeights ?? {};
+  // Auto balances only across clones of the same repository; weaker matches stay manual.
+  const sameRepository = new Set<EnvironmentId>(
+    selectedProject ? [selectedProject.environmentId] : [],
+  );
+  for (const project of input.projects) {
+    if (isSameRepository(project, selectedProject)) sameRepository.add(project.environmentId);
+  }
+  const pools = input.isScratchDraft
+    ? []
+    : loadBalancingPools({
+        environments: input.environments,
+        weights: loadBalancingWeights,
+        hasProject: sameRepository,
+        autoEnabled: preferences.loadBalancingEnabled === true,
+      });
+  // Read from the saved draft, so a reopened draft stays where its branch or worktree lives.
+  // A pull request checkout is recreated on whichever machine Auto picks.
+  const selection = input.workspaceSelection;
+  const pinnedByWorkspace =
+    selection !== undefined &&
+    selection.pullRequestReference === undefined &&
+    (selection.branch !== null ||
+      (selection.worktreePath !== null &&
+        selection.worktreePath !== selectedProject?.workspaceRoot));
+  const activePool =
+    selectedProject && !input.loadBalancing?.manual && !pinnedByWorkspace
+      ? activeLoadBalancingPool(pools, input.loadBalancing?.pool, selectedProject.environmentId)
+      : null;
+  return {
+    loadBalancingWeights,
+    activePool,
+    autoPools: autoPoolOptions(pools, activePool),
+    autoBalance: activePool
+      ? {
+          label: autoPoolLabel(activePool),
+          missingLabels: activePool.missingLabels,
+          status:
+            flowState.autoPick === null
+              ? ("pending" as const)
+              : flowState.autoPick.environmentId === null
+                ? ("failed" as const)
+                : ("resolved" as const),
+          acknowledged: input.loadBalancing?.acknowledged === activePool.key,
+        }
+      : null,
+  };
+}
+
+function autoPoolLabel(pool: LoadBalancingPool): string {
+  return pool.cluster
+    ? m(msg("{cluster} (load balanced)", { cluster: pool.cluster.label }))
+    : m(msg("Auto balance"));
+}
+
+function autoPoolOptions(
+  pools: ReadonlyArray<LoadBalancingPool>,
+  activePool: LoadBalancingPool | null,
+): AutoPoolOption[] {
+  return pools.map((pool) => ({
+    key: pool.key,
+    label: autoPoolLabel(pool),
+    cluster: pool.cluster !== null,
+    missingLabels: pool.missingLabels,
+    active: pool.key === activePool?.key,
+  }));
+}
+
 type NewTaskFlowContextValue = {
   readonly activeNewTask: { readonly pendingKey: string | null } | null;
   readonly projectScopes: ReadonlyArray<HomeProjectScope>;
@@ -143,6 +294,12 @@ type NewTaskFlowContextValue = {
   readonly workspaceMode: WorkspaceMode;
   readonly isGitRepo: boolean;
   readonly isGitRepoKnown: boolean;
+  /** The project tracks a Git folder, so a worktree is possible without a Git project folder. */
+  readonly tracksGitRepositories: boolean;
+  /** The project's tracked Git folders; null while they load. */
+  readonly worktreeRepositoryChoices: ReadonlyArray<WorktreeRepositoryChoice> | null;
+  readonly worktreeRepositorySelection: WorktreeRepositorySelection;
+  readonly setWorktreeRepositories: (repositoryPaths: ReadonlyArray<string>) => void;
   readonly canChooseWorkspace: boolean;
   readonly selectedBranchName: string | null;
   readonly selectedWorktreePath: string | null;
@@ -165,6 +322,8 @@ type NewTaskFlowContextValue = {
   readonly environments: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
     readonly environmentLabel: string;
+    /** A cluster machine without the project, which offers to clone it from this remote when picked. */
+    readonly cloneRemoteUrl?: string;
   }>;
   readonly selectedProject: EnvironmentProject | null;
   /** The machines the selected project's environment links to, whose threads it can read. */
@@ -188,6 +347,23 @@ type NewTaskFlowContextValue = {
     readonly kind: "missing" | "pickProject";
   } | null;
   readonly selectEnvironment: (environmentId: EnvironmentId) => void;
+  /** The Auto choices: every machine with the switch on, then each cluster. */
+  readonly autoPools: ReadonlyArray<AutoPoolOption>;
+  /** Set while Auto picks this draft's machine; null after the user picked one. */
+  readonly autoBalance: {
+    readonly label: string;
+    readonly missingLabels: ReadonlyArray<string>;
+    readonly status: "pending" | "resolved" | "failed";
+    readonly acknowledged: boolean;
+  } | null;
+  readonly chooseAutoPool: (poolKey: string) => void;
+  /** Keeps the draft on its machine, as choosing a branch does. */
+  readonly pinEnvironment: () => void;
+  /** After Auto found no machine, picks again; the machine picked, or null. */
+  readonly retryAutoBalance: () => Promise<EnvironmentId | null>;
+  readonly acknowledgeAutoBalance: () => void;
+  /** Why an Auto send cannot start yet. */
+  readonly autoBalanceWarning: () => { readonly title: string; readonly description: string };
   readonly switchEnvironment: (environmentId: EnvironmentId) => Promise<boolean>;
   readonly switchingToEnvironmentId: EnvironmentId | null;
   readonly setSelectedModelKey: (
@@ -355,7 +531,19 @@ export function NewTaskFlowProvider(
   const isScratchDraft = projectDefaults.isScratch;
   const serverConfigs = useServerConfigs();
   const { connectedEnvironments } = useRemoteConnectionStatus();
+  const { environments: environmentPresentations, presentationById } = useEnvironments();
+  const canClone = useEnvironmentsWithScope(environmentPresentations, AuthSourceControlWriteScope);
   const selectedProjectDraftKey = selectedProject ? activeDraftKey : null;
+  const selectedProjectDraft = useComposerDraft(selectedProjectDraftKey);
+  const { loadBalancingWeights, activePool, autoPools, autoBalance } = useAutoPools({
+    environments: environmentPresentations,
+    isScratchDraft,
+    selectedProject,
+    projects,
+    flowState,
+    loadBalancing: selectedProjectDraft.loadBalancing,
+    workspaceSelection: selectedProjectDraft.workspaceSelection,
+  });
   const activePendingKey =
     props.active === false
       ? null
@@ -365,7 +553,6 @@ export function NewTaskFlowProvider(
           ? `draft-task:${selectedProjectDraftKey}`
           : null;
   const activeNewTask = props.active === false ? null : { pendingKey: activePendingKey };
-  const selectedProjectDraft = useComposerDraft(selectedProjectDraftKey);
   const prompt = selectedProjectDraft.text;
   const attachments = selectedProjectDraft.attachments;
   const projectGitStatus = useEnvironmentQuery(
@@ -384,6 +571,8 @@ export function NewTaskFlowProvider(
   });
   const knownIsGitRepo = projectGitStatus.data?.isRepo ?? projectBranches.data?.isRepo ?? null;
   const isGitRepo = knownIsGitRepo ?? true;
+  const { choices: worktreeRepositoryChoices, tracksGitRepositories } =
+    useWorktreeRepositoryChoices(props.active === false ? null : selectedProject);
   const projectSettings = projectDefaults.projectSettings;
   const canChooseWorkspace = !isScratchDraft;
   const defaultWorkspaceMode: WorkspaceMode = projectDefaults.defaultWorkspaceMode;
@@ -405,6 +594,7 @@ export function NewTaskFlowProvider(
       defaultMode: defaultWorkspaceMode,
       defaultModeSettled: projectDefaults.defaultWorkspaceModeSettled,
       isGitRepo,
+      tracksGitRepositories,
       branches: allBranchRefs,
       projectCwd: selectedProject?.workspaceRoot ?? null,
     });
@@ -425,6 +615,11 @@ export function NewTaskFlowProvider(
   // only the explicit flag is ever written back to the draft, so the resolved
   // value keeps tracking the server setting when the config loads late.
   const draftStartFromOrigin = selectedProjectDraft.workspaceSelection?.startFromOrigin;
+  const draftRepositories = workspaceSelection.repositories;
+  const worktreeRepositorySelection = resolveWorktreeRepositorySelection(
+    { choices: worktreeRepositoryChoices, chosen: draftRepositories },
+    messages,
+  );
   const startFromOrigin =
     isGitRepo && (draftStartFromOrigin ?? projectSettings.settings.newWorktreesStartFromOrigin);
   const defaultRuntimeMode = projectSettings.settings.defaultRuntimeMode;
@@ -579,6 +774,7 @@ export function NewTaskFlowProvider(
 
   const setProject = (project: EnvironmentProject) => {
     updateFlow({
+      autoPick: null,
       draftKey: carryDraftContentTo(project),
       environmentId: project.environmentId,
       projectKey: scopedProjectKey(project.environmentId, project.id),
@@ -609,11 +805,20 @@ export function NewTaskFlowProvider(
   );
   const latestSwitchRef = useRef<object | null>(null);
   const switchEnvironment = async (environmentId: EnvironmentId): Promise<boolean> => {
+    const switched = await switchEnvironmentTo(environmentId);
+    if (switched) updateLoadBalancing({ manual: true });
+    return switched;
+  };
+  const switchEnvironmentTo = async (environmentId: EnvironmentId): Promise<boolean> => {
     if (environmentId === selectedEnvironmentId) {
       latestSwitchRef.current = null;
       setSwitchingToEnvironmentId(null);
       return true;
     }
+    const cloneRemoteUrl = environments.find(
+      (environment) => environment.environmentId === environmentId,
+    )?.cloneRemoteUrl;
+    if (cloneRemoteUrl && selectedProject) return cloneToEnvironment(environmentId, cloneRemoteUrl);
     if (!isScratchDraft) {
       selectEnvironment(environmentId);
       return true;
@@ -658,6 +863,70 @@ export function NewTaskFlowProvider(
     return false;
   };
 
+  const startProjectClone = useAtomCommand(sourceControlEnvironment.startProjectClone, {
+    reportFailure: false,
+  });
+  // Asks first. The draft then moves to the clone; its composer shows progress and holds the start.
+  const cloneToEnvironment = async (
+    environmentId: EnvironmentId,
+    remoteUrl: string,
+  ): Promise<boolean> => {
+    if (!selectedProject) return false;
+    const destinationPath = getSourceCloneDestinationPath({
+      remoteUrl,
+      sourceWorkspaceRoot: selectedProject.workspaceRoot,
+      sourceHomeDirectory: serverConfigs.get(selectedProject.environmentId)?.homeDirectory,
+      targetSettings: serverConfigs.get(environmentId)?.settings,
+    });
+    const confirmed = await confirmClone({
+      repository: selectedProject.repositoryIdentity?.displayName ?? selectedProject.title,
+      machine:
+        environments.find((environment) => environment.environmentId === environmentId)
+          ?.environmentLabel ?? environmentId,
+      path: destinationPath,
+    });
+    if (!confirmed) return false;
+    const request = {};
+    latestSwitchRef.current = request;
+    setSwitchingToEnvironmentId(environmentId);
+    const { projectKey } = readFlow();
+    const started = await startProjectClone({
+      environmentId,
+      input: {
+        projectId: ProjectId.make(uuidv4()),
+        title: selectedProject.title,
+        createdAt: nowIso(),
+        remoteUrl,
+        destinationPath,
+      },
+    });
+    const project =
+      started._tag === "Success"
+        ? await waitForProject({ environmentId, projectId: started.value.projectId }, 15_000)
+        : null;
+    if (latestSwitchRef.current !== request) return false;
+    latestSwitchRef.current = null;
+    setSwitchingToEnvironmentId(null);
+    if (readFlow().projectKey !== projectKey) return false;
+    if (project) {
+      setProject(project);
+      return true;
+    }
+    if (started._tag === "Failure" && isAtomCommandInterrupted(started)) return false;
+    Dialog.alert(
+      m(msg("Could not start the clone.")),
+      started._tag === "Failure"
+        ? (errorDisplayMessage(squashAtomCommandFailure(started), m) ??
+            m(msg("An error occurred.")))
+        : m(
+            msg(
+              "The project was created but has not reached this device yet. It will appear in the project list once the connection catches up.",
+            ),
+          ),
+    );
+    return false;
+  };
+
   const setWorkspaceMode = (mode: WorkspaceMode) => {
     if (!selectedProjectDraftKey) {
       return;
@@ -675,6 +944,7 @@ export function NewTaskFlowProvider(
         branch: mode === "local" ? localSelection.branch : selectedBranchName,
         worktreePath: mode === "local" ? localSelection.worktreePath : selectedWorktreePath,
         ...(draftStartFromOrigin !== undefined ? { startFromOrigin: draftStartFromOrigin } : {}),
+        ...(draftRepositories !== undefined ? { repositories: draftRepositories } : {}),
         // Refs have not named the current branch yet; the selection follows it.
         ...(mode === "local" && localSelection.awaitsCurrentBranch
           ? { followsCurrentCheckout: true }
@@ -687,6 +957,8 @@ export function NewTaskFlowProvider(
     if (!selectedProject || !selectedProjectDraftKey) {
       return;
     }
+    // A chosen branch keeps the draft on this machine.
+    updateLoadBalancing({ manual: true });
     updateComposerDraftSettings(selectedProjectDraftKey, {
       workspaceSelection: {
         mode: workspaceMode,
@@ -697,6 +969,7 @@ export function NewTaskFlowProvider(
           branchWorktreePath: branch.worktreePath,
         }),
         ...(draftStartFromOrigin !== undefined ? { startFromOrigin: draftStartFromOrigin } : {}),
+        ...(draftRepositories !== undefined ? { repositories: draftRepositories } : {}),
       },
     });
   };
@@ -711,9 +984,24 @@ export function NewTaskFlowProvider(
         branch: selectedBranchName,
         worktreePath: selectedWorktreePath,
         startFromOrigin: value,
+        ...(draftRepositories !== undefined ? { repositories: draftRepositories } : {}),
         ...(selectedBranchName === null && workspaceSelection.followsCurrentCheckout
           ? { followsCurrentCheckout: true }
           : {}),
+      },
+    });
+  };
+
+  const setWorktreeRepositories = (repositoryPaths: ReadonlyArray<string>) => {
+    if (!selectedProjectDraftKey) {
+      return;
+    }
+    // The stored selection, not the resolved one: a derived base branch stays derived.
+    const stored = canChooseWorkspace ? selectedProjectDraft.workspaceSelection : undefined;
+    updateComposerDraftSettings(selectedProjectDraftKey, {
+      workspaceSelection: {
+        ...(stored ?? { mode: workspaceMode, branch: null, worktreePath: null }),
+        repositories: repositoryPaths,
       },
     });
   };
@@ -731,6 +1019,19 @@ export function NewTaskFlowProvider(
     if (selectedProjectDraftKey) {
       updateComposerDraftSettings(selectedProjectDraftKey, { runtimeMode: value });
     }
+  };
+
+  const worktreeCreation = (chosen: ReadonlyArray<string> | undefined) => {
+    const repositories = resolveWorktreeRepositorySelection({
+      choices: worktreeRepositoryChoices,
+      chosen,
+    }).strategyRepositories;
+    return {
+      ...(repositories === undefined
+        ? {}
+        : { repositories: repositories.map((repository) => repository.path) }),
+      ...(isGitRepo ? {} : { startsFromRepositoryDefaults: true }),
+    };
   };
 
   const buildPendingTaskMessage = (
@@ -796,6 +1097,7 @@ export function NewTaskFlowProvider(
         ...((workspaceSelection?.startFromOrigin ?? startFromOrigin)
           ? { startFromOrigin: true }
           : {}),
+        ...(mode === "worktree" ? worktreeCreation(workspaceSelection.repositories) : {}),
       },
       createdAt: metadata.createdAt,
     };
@@ -815,18 +1117,18 @@ export function NewTaskFlowProvider(
   // Use || null: placeholder workspaceRoot can be empty, and an empty basename rejects real hosts.
   const selectedWorkspaceBasename = selectedProject?.workspaceRoot.split("/").at(-1) || null;
   const selectedProjectTitle = selectedProject?.title ?? null;
-  const environments = (() => {
+  const environments: NewTaskFlowContextValue["environments"] = (() => {
     if (isScratchDraft) {
-      return scratchEnvironments.map((environment) => ({
-        environmentId: environment.environmentId,
-        environmentLabel: environment.environmentLabel,
-      }));
+      return sortEnvironmentOptionsByCluster(
+        scratchEnvironments.map((environment) => ({
+          environmentId: environment.environmentId,
+          environmentLabel: environment.environmentLabel,
+        })),
+        environmentPresentations,
+      );
     }
     const seen = new Set<EnvironmentId>();
-    const result: Array<{
-      readonly environmentId: EnvironmentId;
-      readonly environmentLabel: string;
-    }> = [];
+    const result: Array<NewTaskFlowContextValue["environments"][number]> = [];
     const hostsSelectedRepository = (project: EnvironmentProject) => {
       if (selectedRepositoryKey === null && selectedWorkspaceBasename === null) {
         return true;
@@ -859,8 +1161,149 @@ export function NewTaskFlowProvider(
         environmentLabel: environment.environmentLabel,
       });
     }
-    return result;
+    const cloneRemoteUrl = selectedProject ? projectCloneRemoteUrl(selectedProject) : null;
+    if (selectedProject && cloneRemoteUrl !== null) {
+      for (const environmentId of clusterCloneEnvironmentIds({
+        project: selectedProject,
+        environments: environmentPresentations,
+        hasProject: seen,
+      })) {
+        const environment = savedConnectionsById[environmentId];
+        if (!environment || !canClone.has(environmentId)) continue;
+        result.push({
+          environmentId,
+          environmentLabel: environment.environmentLabel,
+          cloneRemoteUrl,
+        });
+      }
+    }
+    return sortEnvironmentOptionsByCluster(result, environmentPresentations);
   })();
+
+  const sameRepositoryProjectOn = (environmentId: EnvironmentId) =>
+    environmentId === selectedProject?.environmentId
+      ? selectedProject
+      : projects.find(
+          (project) =>
+            project.environmentId === environmentId && isSameRepository(project, selectedProject),
+        );
+  const referencedThreadContexts = () => {
+    if (!selectedProjectDraftKey) return [];
+    const draft = getComposerDraftSnapshot(selectedProjectDraftKey);
+    const referenced = new Set(
+      collectComposerContextReferences(draft.text).map((occurrence) => occurrence.contextId),
+    );
+    return (draft.context?.records ?? []).filter(
+      (record): record is ThreadContextRecord =>
+        record.kind === "thread" && "threadId" in record && referenced.has(record.contextId),
+    );
+  };
+  const autoCandidateIds = () =>
+    activePool && selectedModel && selectedProviderStatus
+      ? loadBalancingCandidateIds({
+          candidates: activePool.environmentIds.flatMap((environmentId) => {
+            const project = sameRepositoryProjectOn(environmentId);
+            return project ? [{ environmentId, projectId: project.id }] : [];
+          }),
+          environmentById: presentationById,
+          providersByEnvironment: new Map(
+            [...serverConfigs].map(([environmentId, config]) => [environmentId, config.providers]),
+          ),
+          weights: loadBalancingWeights,
+          referencedThreadContexts: referencedThreadContexts(),
+          activeProviderInstanceId: selectedModel.instanceId,
+          selectedProvider: selectedProviderStatus.driver,
+        })
+      : [];
+  // Picks once per Auto choice, then keeps the draft there, like web's composer.
+  const autoPickRequestRef = useRef<object | null>(null);
+  const pickAutoEnvironment = async (request: object) => {
+    const { projectKey, draftKey, autoPick } = readFlow();
+    const balancing = (key: string | null) =>
+      key === null ? undefined : getComposerDraftSnapshot(key).loadBalancing;
+    const autoPool = balancing(draftKey)?.pool;
+    const target = await pickLoadBalancedEnvironment(
+      appAtomRegistry,
+      serverEnvironment.hostResources,
+      autoCandidateIds(),
+      loadBalancingWeights,
+    );
+    const flow = readFlow();
+    if (
+      autoPickRequestRef.current !== request ||
+      flow.projectKey !== projectKey ||
+      balancing(flow.draftKey)?.pool !== autoPool ||
+      balancing(flow.draftKey)?.manual === true ||
+      flow.autoPick !== autoPick ||
+      flow.submitting
+    ) {
+      return;
+    }
+    autoPickRequestRef.current = null;
+    const project = target === null ? undefined : sameRepositoryProjectOn(target);
+    if (!project) {
+      updateFlow({ autoPick: { environmentId: null } });
+      return;
+    }
+    updateFlow({
+      // The target resolves its own workspace defaults; only a PR checkout carries over.
+      draftKey: carryDraftContentTo(project, { keepPullRequestWorkspace: true }),
+      environmentId: project.environmentId,
+      projectKey: scopedProjectKey(project.environmentId, project.id),
+      autoPick: { environmentId: project.environmentId },
+    });
+  };
+  const runAutoPick = useEffectEvent(pickAutoEnvironment);
+  const needsAutoPick =
+    props.active !== false &&
+    activePool !== null &&
+    flowState.autoPick === null &&
+    selectedProjectDraftKey !== null &&
+    selectedModel !== null &&
+    selectedProviderStatus !== null &&
+    !submitting;
+  const autoPickPool = needsAutoPick ? activePool.key : null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts the host-resource pick that resolves an Auto draft to a machine
+  useEffect(() => {
+    if (autoPickPool === null) return;
+    const request = {};
+    autoPickRequestRef.current = request;
+    void runAutoPick(request);
+    return () => {
+      if (autoPickRequestRef.current === request) autoPickRequestRef.current = null;
+    };
+  }, [autoPickPool]);
+  const updateLoadBalancing = (patch: Partial<ComposerDraftLoadBalancing>) => {
+    const key = readFlow().draftKey;
+    if (key === null) return;
+    const current = getComposerDraftSnapshot(key).loadBalancing;
+    updateComposerDraftSettings(key, {
+      loadBalancing: { pool: null, acknowledged: null, ...current, ...patch },
+    });
+  };
+  const chooseAutoPool = (poolKey: string) => {
+    updateFlow({ autoPick: null });
+    if (!selectedProjectDraftKey) return;
+    const draft = getComposerDraftSnapshot(selectedProjectDraftKey);
+    const selection = draft.workspaceSelection;
+    updateComposerDraftSettings(selectedProjectDraftKey, {
+      // Dropping `manual` hands the machine back to Auto.
+      loadBalancing: { pool: poolKey, acknowledged: draft.loadBalancing?.acknowledged ?? null },
+      // Choosing Auto drops a branch or worktree that pinned the draft to its machine.
+      ...(selection && !selection.pullRequestReference
+        ? { workspaceSelection: { mode: selection.mode, branch: null, worktreePath: null } }
+        : {}),
+    });
+  };
+  const autoBalanceWarning = () =>
+    loadBalancingSendWarning(
+      {
+        pending: flowState.autoPick === null,
+        threadContexts: referencedThreadContexts(),
+        candidateEnvironmentIds: autoCandidateIds(),
+      },
+      m,
+    );
 
   const value = {
     activeNewTask,
@@ -871,6 +1314,10 @@ export function NewTaskFlowProvider(
     workspaceMode,
     isGitRepo,
     isGitRepoKnown: knownIsGitRepo !== null,
+    tracksGitRepositories,
+    worktreeRepositoryChoices,
+    worktreeRepositorySelection,
+    setWorktreeRepositories,
     canChooseWorkspace,
     selectedBranchName,
     selectedWorktreePath,
@@ -904,6 +1351,19 @@ export function NewTaskFlowProvider(
         ? { draftId: props.routeDraftId, kind: routeDraftResolution.kind }
         : null,
     selectEnvironment,
+    autoPools,
+    autoBalance,
+    chooseAutoPool,
+    pinEnvironment: () => updateLoadBalancing({ manual: true }),
+    retryAutoBalance: async () => {
+      if (readFlow().autoPick?.environmentId !== null) return null;
+      const request = {};
+      autoPickRequestRef.current = request;
+      await pickAutoEnvironment(request);
+      return readFlow().autoPick?.environmentId ?? null;
+    },
+    acknowledgeAutoBalance: () => updateLoadBalancing({ acknowledged: activePool?.key ?? null }),
+    autoBalanceWarning,
     switchEnvironment,
     switchingToEnvironmentId,
     setSelectedModelKey,

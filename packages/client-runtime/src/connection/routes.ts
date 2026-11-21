@@ -18,6 +18,7 @@ import type { MFunctionType } from "gt-i18n/types";
 
 export type ConnectionRouteKind =
   | "relay"
+  | "cluster"
   | "loopback"
   | "lan"
   | "tailnet"
@@ -33,6 +34,8 @@ export function connectionRouteId(target: ConnectionTarget): string {
       return "primary";
     case "RelayConnectionTarget":
       return RELAY_ROUTE_ID;
+    case "ClusterConnectionTarget":
+      return `cluster:${target.hostEnvironmentId}`;
     case "BearerConnectionTarget":
     case "SshConnectionTarget":
       return target.connectionId;
@@ -94,6 +97,8 @@ export function connectionRouteKind(route: ConnectionRoute): ConnectionRouteKind
   switch (route.target._tag) {
     case "RelayConnectionTarget":
       return "relay";
+    case "ClusterConnectionTarget":
+      return "cluster";
     case "SshConnectionTarget":
       return "ssh";
     case "PrimaryConnectionTarget":
@@ -138,6 +143,7 @@ const ROUTE_KIND_RANK: Record<ConnectionRouteKind, number> = {
   public: 3,
   ssh: 4,
   relay: 5,
+  cluster: 6,
 };
 
 export function insertRoute(
@@ -195,12 +201,20 @@ export function connectionRouteLabel(route: ConnectionRoute): string {
   switch (connectionRouteKind(route)) {
     case "relay":
       return T3_CONNECT_NAME;
+    case "cluster":
+      return route.target._tag === "ClusterConnectionTarget"
+        ? msg("via {host}", { host: route.target.hostLabel })
+        : msg("Cluster");
     case "loopback":
       return msg("This device");
     case "lan":
       return "LAN";
     case "tailnet":
-      return "Tailscale";
+      // Tailscale Serve answers over HTTPS on the machine's name; the same machine's
+      // plain address is another route, so the two are told apart.
+      return routeHttpBaseUrl(route)?.startsWith("https:") === true
+        ? msg("Tailscale HTTPS")
+        : "Tailscale";
     case "vpn":
       return "VPN";
     case "ssh": {
@@ -224,6 +238,8 @@ export function connectionRouteLabelText(
       return resolve(msg("This device"));
     case "public":
       return routeHostname(route) ?? resolve(msg("Remote link"));
+    case "cluster":
+      return resolve(connectionRouteLabel(route));
     default:
       return connectionRouteLabel(route);
   }

@@ -303,6 +303,8 @@ export class PairingGrantStore extends Context.Service<
         /** All scopes must be granted; requestedScopes only requires an overlap for OAuth. */
         readonly requiredScopes?: ReadonlyArray<AuthEnvironmentScope>;
         readonly allowedSubject?: string;
+        /** Spends only a code with exactly this subject; no other code is touched. */
+        readonly exactSubject?: string;
       },
     ) => Effect.Effect<BootstrapGrant, BootstrapCredentialError>;
   }
@@ -533,7 +535,10 @@ const make = Effect.gen(function* () {
   const consume: PairingGrantStore["Service"]["consume"] = Effect.fn("PairingGrantStore.consume")(
     function* (credential, input) {
       const now = yield* DateTime.now;
-      if (yield* consumeRotatingDesktopToken(credential, now.epochMilliseconds)) {
+      if (
+        input?.exactSubject === undefined &&
+        (yield* consumeRotatingDesktopToken(credential, now.epochMilliseconds))
+      ) {
         return {
           method: "desktop-bootstrap",
           scopes: AuthAdministrativeClientScopes,
@@ -546,7 +551,7 @@ const make = Effect.gen(function* () {
       const seededResult: ConsumeResult = yield* Ref.modify(
         seededGrantsRef,
         (current): readonly [ConsumeResult, Map<string, StoredBootstrapGrant>] => {
-          const grant = current.get(credential);
+          const grant = input?.exactSubject === undefined ? current.get(credential) : undefined;
           if (!grant) {
             return [
               {
@@ -653,6 +658,7 @@ const make = Effect.gen(function* () {
             : {}),
           ...(input?.requiredScopes !== undefined ? { requiredScopes: input.requiredScopes } : {}),
           ...(input?.allowedSubject ? { allowedSubject: input.allowedSubject } : {}),
+          ...(input?.exactSubject ? { exactSubject: input.exactSubject } : {}),
           consumedAt: now,
           now,
         })

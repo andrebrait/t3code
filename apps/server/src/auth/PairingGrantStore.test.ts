@@ -15,7 +15,10 @@ import {
 } from "@t3tools/shared/desktopBootstrapToken";
 
 import * as ServerConfig from "../config.ts";
-import { MCP_APPROVAL_SUBJECT_PREFIX } from "../persistence/AuthPairingLinks.ts";
+import {
+  CLUSTER_MEMBER_PAIRING_SUBJECT,
+  MCP_APPROVAL_SUBJECT_PREFIX,
+} from "../persistence/AuthPairingLinks.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as PairingGrantStore from "./PairingGrantStore.ts";
 
@@ -152,6 +155,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PairingGrantStor
   it.effect("matches a seeded desktop bootstrap credential exactly", () =>
     Effect.gen(function* () {
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
+      const asJoinCode = yield* Effect.flip(
+        bootstrapCredentials.consume("abcdefghjkmn", {
+          exactSubject: CLUSTER_MEMBER_PAIRING_SUBJECT,
+        }),
+      );
+      expect(asJoinCode._tag).toBe("UnknownBootstrapCredentialError");
       const exact = yield* bootstrapCredentials.consume("abcdefghjkmn");
       const otherCase = yield* Effect.flip(bootstrapCredentials.consume("ABCDEFGHJKMN"));
 
@@ -198,11 +207,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PairingGrantStor
 
       yield* TestClock.adjust(Duration.days(5));
       const now = 5 * 24 * 60 * 60 * 1000;
-      const current = yield* bootstrapCredentials.consume(
-        yield* currentDesktopBootstrapToken("desktop-secret", now).pipe(
-          Effect.provide(NodeCrypto.layerMac),
-        ),
+      const token = yield* currentDesktopBootstrapToken("desktop-secret", now).pipe(
+        Effect.provide(NodeCrypto.layerMac),
       );
+      const asJoinCode = yield* Effect.flip(
+        bootstrapCredentials.consume(token, { exactSubject: CLUSTER_MEMBER_PAIRING_SUBJECT }),
+      );
+      expect(asJoinCode._tag).toBe("UnknownBootstrapCredentialError");
+      const current = yield* bootstrapCredentials.consume(token);
       expect(current.method).toBe("desktop-bootstrap");
 
       const staleToken = yield* currentDesktopBootstrapToken(

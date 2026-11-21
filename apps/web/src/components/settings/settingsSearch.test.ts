@@ -81,6 +81,12 @@ describe("searchSettings", () => {
     expect(searchSettings("1password").map((item) => item.to)).not.toContain("/settings/secrets");
   });
 
+  it("finds where subagents and side chats open by any of its names", () => {
+    for (const query of ["side panel", "subagent", "side chat", "linked thread", "middle click"]) {
+      expect(searchSettings(query).map((item) => item.id)).toContain("side-thread-open-target");
+    }
+  });
+
   it("finds the Scheduled tasks page", () => {
     expect(searchSettings("scheduled tasks")[0]).toMatchObject({
       id: "scheduled-tasks",
@@ -149,6 +155,7 @@ describe("searchSettings", () => {
       "auto-settle-merged-threads",
       "days-before-auto-settle",
       "linked-environments",
+      "cluster",
     ]);
     expect(available.map((item) => item.id).filter((id) => gatedIds.has(id))).toEqual([]);
   });
@@ -175,6 +182,26 @@ describe("searchSettings", () => {
         to: "/settings/connections",
         targetId: "linked-environments",
       }),
+    );
+  });
+
+  it("finds the cluster section only where a connected host offers it", () => {
+    const availability = {
+      hasCloudPublicConfig: false,
+      hasEnvironment: true,
+      hasProviderSettingsEnvironment: true,
+      canManageLocalBackend: false,
+      isWslSettingsRowVisible: false,
+      hasThreadAutoSettlement: false,
+    };
+    const results = (hasClusterHost: boolean) =>
+      searchSettings(
+        "cluster join code",
+        filterAvailableSettingsSearchItems({ ...availability, hasClusterHost }),
+      );
+    expect(results(false).map((item) => item.id)).not.toContain("cluster");
+    expect(results(true)).toContainEqual(
+      expect.objectContaining({ id: "cluster", to: "/settings/connections", targetId: "cluster" }),
     );
   });
 

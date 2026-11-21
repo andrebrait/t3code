@@ -112,6 +112,13 @@ If a server is already running, generate a fresh link without restarting it:
 t3 pair
 ```
 
+When devices reach the server at another address, such as a reverse proxy's
+HTTPS name, put that address in the link and QR code:
+
+```bash
+t3 pair --url https://t3.example.com
+```
+
 Scan the QR code on your phone or paste the pairing URL into **Add environment**
 in the receiving app. Connection settings are under **Settings → Environments**
 on web and desktop and **Settings → Environments** on mobile. A loopback address
@@ -133,6 +140,22 @@ older than this release, has to pair again. Links
 created in Settings can only be copied from the client that created them while
 its Sharing & access page stays open. If you leave or reload that page, create
 another link to share.
+
+### HTTPS on your network
+
+The server also answers HTTPS on the same port, with a self-signed certificate it
+creates on first start. Open `https://<address>:<port>` and accept the browser's
+certificate warning once.
+
+To keep other devices on your network off plain HTTP, turn on **Redirect network
+HTTP to HTTPS** in **Settings → Sharing & access**, or on mobile in the
+environment's details under **Settings → Environments**. Browsers move to HTTPS;
+apps and scripts that call the server over plain HTTP get an `https_required`
+error. Connections from this machine (which carries T3 Connect, Tailscale
+Serve and SSH forwards), from Tailscale addresses, and from anywhere in the
+`100.64.0.0/10` range are not affected. The desktop and
+mobile apps do not accept the self-signed certificate yet, so leave this off while
+they connect over your LAN by IP address.
 
 ### Reach one machine several ways
 
@@ -180,21 +203,36 @@ different permissions.
 
 ### Balance new threads across machines
 
-Auto balance is off by default. On web and desktop, enable it in
-**Settings → Environments → Load balancing** to automatically choose a machine for
-new threads in projects grouped across connected environments. The section
-appears once two or more machines are switched on.
+New threads can start on the machine with the most free CPU and memory. In the
+machine picker of a new thread, each cluster offers **<main host> (load balanced)**,
+which picks among that cluster's machines. Clusters do this by default. To also get
+**Auto balance**, which picks among all your machines, cluster machines included, open
+**Settings → Environments → Load balancing** and turn on **Balance across all
+machines** under **Other machines** (**Automatically balance load** when you have no
+cluster). With one cluster and no other machines, the cluster's choice already covers
+every machine, so the switch is not shown. The section appears once two or more
+machines are switched on, on web, desktop and mobile.
+
 Each machine starts at **Normal**. Choose **Prefer** to favor it when it has CPU and
 memory available, **Less often** to reduce its share, or **Manual only** to exclude
 it from automatic selection. These are preferences, not fixed traffic percentages.
-Preferences are saved separately in each client.
+Preferences are saved separately in each client. A cluster machine's preference is set
+in its cluster's group, stays editable while the switch is off, and also applies to
+**Auto balance**. Other machines' preferences apply only while the switch is on.
 
-The composer checks eligible machines when choosing a draft's environment, then keeps
-that choice stable. Choose **Auto balance** again to check current resources, or choose
-a specific machine to override it. Choosing a branch or worktree also keeps the draft
-on that machine. Existing threads stay where they started. If resource checks are
-unavailable or all eligible machines are full, choose a machine manually to continue.
-Mobile keeps its manual environment selection.
+A balanced choice only picks machines that already have the project; it never clones
+it. When some of its machines lack the project, the picker warns and lists them, and
+the first send asks whether to continue on the machines that have it. **Don't ask again
+for this project** skips the question for that repository on this device; **Reset "Don't
+ask again" choices** in the load-balancing settings brings it back. To use one that lacks
+it, choose that machine instead.
+
+The draft checks eligible machines when it opens or when you choose a balanced option,
+then keeps that choice stable. Choose the option again to check current resources, or
+choose a specific machine to override it. Choosing a branch or worktree also keeps the
+draft on that machine. Existing threads stay where they started. When only one machine
+can take the thread, it starts there without a check. If resource checks are unavailable
+or all eligible machines are full, choose a machine manually to continue.
 
 ### Tailscale HTTPS
 
@@ -421,7 +459,11 @@ the other: launch, message, wait on and stop its threads, answer their
 questions, and manage its queues, projects and scheduled tasks.
 
 Linked environments is a beta. Turn it on for both machines in **Settings →
-Labs**; on mobile, **Settings → Labs** lists each connected machine. While it is
+Labs**; on mobile, **Settings → Labs** lists each connected machine. On a
+headless server, open its address in a browser and pair to reach its **Settings
+→ Labs**, or add `"linkedEnvironmentsEnabled": true` to `settings.json` in its
+`userdata` directory, such as `~/.t3/userdata/settings.json`; a running server
+picks it up. While it is
 off on either machine, agents start nothing over a link between them. A task
 already running on the other machine still finishes, and if that machine has it
 off, its result arrives once it is back on.
@@ -470,12 +512,159 @@ an address you trust: the code is sent there.
   does one to a machine on an older T3 Code after 30 days; link again with a
   new pairing code.
 
+On web and desktop, **Settings → Environments** opens as a map of your machines:
+this app, each environment with one line per route (the one in use is
+highlighted), and the machines an environment links to. Select a machine to
+manage it, or switch to **List** for the same controls as rows. To link from
+the map, drag the plus on an environment onto another machine, or press it and
+pick one. If this app is connected to both machines, knows an address the first
+can reach the other at, and its session on the other one manages access there,
+it needs no pairing code.
+
+A machine this app is not connected to, shown only because another environment
+links to it, can still be linked without a code when that link has full access:
+drop the plus on it and the environment holding the link gets the pairing code
+from it. Your session on that environment must manage access there. The result
+is a separate link with the access you pick, listed and revocable on the linked
+machine like any other. Links still do not chain.
+
+A link goes one way. To let the other machine's agents work back, tick **Also
+link … back** when you create the link, or select a one-way link and use
+**Link back…**. It is offered when this app is connected to both machines and
+may manage access on each. Two machines linked to each other at the same access
+are drawn as one line with an arrowhead at each end; they are still two links,
+and each is forgotten on its own.
+
+To link one environment to several machines at once, Shift-click the machines
+(or Shift-drag a box around them, or press Space on a focused machine), then
+drag the environment's plus onto any of them, or use **Link several…** above
+the map. Dropping the plus on a stack offers the stack's machines. The dialog
+ticks the machines it can link without a pairing code and says why for the
+rest. When this app is connected to none of them, each needs a pairing code,
+so the map says so and offers to link one at a time instead.
+
+Large setups fold: machines known only through links that share the same
+linking environments and access levels become one stack, and once this app
+knows more than 12 environments, the ones that are not connected and have no
+links fold by state. Select a stack to list and filter every machine in it.
+Opening a stack on the map draws its first 24 below its card: the rest of the
+map stays where it is and the map grows taller, so pan or press the fit button
+to see all of it. **Find a machine** above the map searches by name, and Enter
+goes to the first match. The **?** button above the map lists these gestures.
+
+The map draws the links of the machines this app is connected to; a machine it
+is not connected to may hold links the map cannot show. A link reaches one
+machine and does not carry on through that machine's own links.
+
 An agent can also hand a task to a linked machine with `delegate_task`: it runs
 there as an ordinary thread, in the project with the same repository (or the
 one `target.projectId` names), and this thread wakes with its result when it
 ends, as for any delegated task. It keeps following the task across restarts.
 If the other machine revokes the link, or the link is removed here, the task
 fails with that reason.
+
+### Read a linked machine's threads
+
+You can read a thread on a linked machine without connecting this app to it. Open
+a task that was delegated there from the thread's agents, or a thread link that
+points there, and the thread opens read-only, streamed through the machine you
+are connected to over its link. It follows the thread live. On web and desktop
+it opens as a tab in the right panel, beside the thread you are in, or in the
+main view with ⌘/Ctrl-click, like
+[subagents and side chats](thread-sidebar.md#open-a-thread-beside-the-one-you-are-in).
+On mobile it opens in the inspector on layouts that have one, where Maximize
+fills the screen, and as its own screen elsewhere. It shows the same timeline as
+any other thread on web and desktop, and a shorter read-only list on mobile.
+
+- The view is marked **Read-only** with both machines' names. To reply, approve
+  or stop the thread, choose **Connect to interact**. When the link has full
+  access, this app pairs with that machine in one step and opens the thread
+  there; you need permission to manage access on the machine you are connected
+  to. Otherwise the add-environment form opens for that machine and asks for a
+  pairing code you create on it.
+- This app connects to that machine directly, so it must be able to reach one of
+  the addresses the link uses. If it cannot, the view says so and stays
+  read-only. The new connection appears in that machine's **Settings → Sharing &
+  access**, named after this device and the machine it came through, and is
+  revoked there like any other.
+- Files, images and published visuals stay on that machine and do not load
+  here. A command's output shows as of when you open its row.
+- If this app is already connected to that machine, the thread opens there as
+  usual instead.
+- You need permission to read threads on the machine you are connected to, and
+  Linked environments must be on there. Both machines need a version of T3 Code
+  that has this view.
+
+## Cluster
+
+A cluster puts several machines behind one **main host**. Connect any app to
+the main host and every member shows up as an ordinary environment, marked
+**via** the main host: threads, diffs, terminals and previews work there
+without pairing anything with the member. Agents on any member reach the other
+members through the main host.
+
+Cluster is a beta. Turn on **Cluster** in **Settings → Labs** on the main host;
+with it off there, members cannot be added or reached. A machine you add needs
+it on only to show **Join a cluster…**: `t3 cluster join` and joining work
+with it off. **Remove** and **Leave cluster** always work. Manage a cluster in
+**Settings → Environments → Cluster** on web, desktop and mobile.
+
+To add a machine over HTTPS:
+
+1. On that machine, choose **Join a cluster…**, or run
+   `t3 cluster join --url https://<address>`. Enter the address the main host
+   can reach it at. It shows a join URL and a one-time join code, like a
+   pairing link. The join URL also carries the machine's certificate
+   fingerprint.
+2. On the main host, choose **Add member**, then enter the URL and join code.
+   Pasting the full join URL fills both. On the command line, run
+   `t3 cluster add <join-url>`, or `t3 cluster add https://<address> --code <code>`.
+   The main host accepts the member when it presents the certificate from the
+   join URL or one from a trusted authority, as an address behind T3 Connect
+   or Tailscale Serve does. If the pinned certificate changes later, the member
+   shows **certificate changed**. Add it again with a new join code.
+
+To add a machine over SSH instead, choose **SSH** in **Add member** on the web or
+desktop app and enter `user@host`, or run `t3 cluster add ssh://user@host`. Under **Sign in with**,
+choose your SSH config or agent, a password, or a key file on the main host (with
+its passphrase if it has one). On the command line, pass `--password-stdin`, or
+`--key <path>` with `--passphrase-stdin` for an encrypted key. The main host signs
+in once that way, then adds its own cluster key to `~/.ssh/authorized_keys` on
+the member and reconnects with that key. Nothing you type is saved. Before
+signing in, the main host checks the member's host key against its
+`~/.ssh/known_hosts`, as ssh does. For a host it has never seen, it shows the key's
+fingerprint and asks whether to trust it; if the key changed since it was
+trusted, it warns you and asks before replacing the old one. Compare the
+fingerprint with the member's own before you accept. On the command line, a
+terminal asks the same; a script passes `--trust-host-key SHA256:…`, plus
+`--replace-host-key` for a changed key. The mobile app adds members by join
+code only.
+
+- Joining signs out the member's other remote clients and ends its linked
+  environments. From then on it accepts only its main host and apps on its own
+  machine, so pair your devices with the main host.
+- A member that stops answering stays listed with the reason. One on a
+  different T3 Code version shows as incompatible until both match.
+- While the main host is offline, its apps cannot reach the members; work
+  already running on a member continues.
+- A new thread in a project with a git remote can run on any online member,
+  and on the main host, even before that machine has the project. The machine
+  picker marks such a machine **clones the project**. Choosing it asks first,
+  then clones the project from its remote to the same path under the target's
+  home as it has under the home of the machine you started from (a project
+  outside that home goes to the target's **Add project starts in** folder
+  instead); the composer shows the clone, and the thread starts there once it
+  finishes. Balanced choices only use machines that already have the project.
+  Ignored files such as `.env` are not copied; use **Add to another machine**
+  for those.
+
+To take a machine out, select it on the main host and choose **Remove**, or run
+`t3 cluster remove <id>`. Removing an SSH member also deletes the main host's
+cluster key from its `~/.ssh/authorized_keys`; if the member cannot be reached,
+the app says so, and you delete the line ending in `t3code-cluster:` there by
+hand. On the member, choose **Leave cluster** or run
+`t3 cluster leave`. It becomes a standalone environment again, and you pair
+apps with it as usual.
 
 ## Manage or revoke access
 

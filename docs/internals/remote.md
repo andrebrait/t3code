@@ -115,6 +115,18 @@ Unlinking on the linking side only forgets the token.
   receiving `/mcp` sends nothing while a wait is open and T3 Connect's edge
   drops idle requests after about 100 s.
 
+**A client reads a linked thread as the thread's own stream.** A client connected
+only to the linking environment subscribes to `peerLinks.subscribeThread`;
+[`PeerThreadRelay`](../../apps/server/src/peer/PeerThreadRelay.ts) opens the
+receiving environment's
+[link thread routes](../../apps/server/src/peer/linkThreadHttp.ts) with the
+link's token and passes on the same stream items, history pages and item detail
+the owner's client gets. Clients reduce and draw it like any thread, read-only,
+so there is no second transcript format to keep in step. The relay holds one
+upstream per subscription and nothing once the client stops listening. The
+routes accept only a peer link's session, refuse browser origins as `/mcp` does,
+and serve any access level, since each already reads threads through `/mcp`.
+
 **Work a link paired below full access starts stays within that link.** The
 receiving environment knows a session is a peer link because the linking side
 registers its OAuth client with the `t3code-peer-link` software id, and the
@@ -153,9 +165,12 @@ came from. A stamp without the access, from before it was recorded, is fenced.
 ## Hosted web is a client
 
 The hosted web app stores its connection catalog in the browser and connects
-directly to each environment. It does not proxy traffic or hold server-side
-pairing state. Hosting the UI over HTTPS therefore cannot make a plain HTTP LAN
-backend accessible from that browser context.
+directly to each environment. It holds no server-side pairing state, and
+environments do not proxy for one another, with one exception: a cluster's main
+host forwards `/cluster/<memberId>/*` to its members
+([ClusterProxy](../../apps/server/src/cluster/ClusterProxy.ts)), so a client
+paired only with the main host can drive them. Hosting the UI over HTTPS
+therefore cannot make a plain HTTP LAN backend accessible from that browser context.
 
 A [hosted pairing URL](../../apps/web/src/hostedPairing.ts) identifies the backend
 in its query and carries the pairing secret in its fragment. Fragments stay out
@@ -204,7 +219,11 @@ lifecycle because it can spawn SSH and handle authentication prompts. The
 renderer uses the forwarded endpoint through the shared connection runtime.
 [SSH cleanup](../../packages/ssh/src/tunnel.ts) stops a remote server only if the
 launcher owns it; a server it discovered already running must survive a client
-disconnect. Reconnection restores the forward before opening the application
+disconnect. A cluster's main host never stops a member's server
+(`keepRemoteServer`), and its links offer its own cluster key with
+`-i <key> -o IdentitiesOnly=yes` ([ClusterSshKey](../../apps/server/src/cluster/ClusterSshKey.ts)),
+so keys loaded in a user's agent do not decide whether a member reconnects. `IdentityFile`
+entries and `ProxyJump` hops from the user's ssh config still apply. Reconnection restores the forward before opening the application
 transport.
 
 Remote servers can outlive several client releases. Clients must use advertised

@@ -41,6 +41,11 @@ const mocks = vi.hoisted(() => ({
   openScratch: vi.fn(),
   prepareTriage: vi.fn(),
   environments: vi.fn(),
+  pick: vi.fn(),
+}));
+vi.mock("@t3tools/client-runtime/load-balancing", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@t3tools/client-runtime/load-balancing")>()),
+  pickLoadBalancedEnvironment: mocks.pick,
 }));
 vi.mock("../../state/atom-registry", () => ({
   appAtomRegistry: {
@@ -129,6 +134,7 @@ vi.mock("../../state/shell", () => ({ useEnvironmentShellReadiness: () => ({}) }
 vi.mock("../../lib/clock", () => ({ useNowMinuteMs: () => 0 }));
 
 import { NewTaskFlowProvider, useNewTaskFlow } from "./new-task-flow-provider";
+import { updateNewTaskFlowState } from "./new-task-flow-state";
 
 function project(environment: string, id: string): EnvironmentProject {
   return {
@@ -466,6 +472,22 @@ it("keeps a saved draft with a chosen branch or worktree on its machine", async 
     workspaceSelection: { mode: "worktree", branch: "feature", worktreePath: null },
   });
   expect(screen.current.autoBalance).toBeNull();
+});
+
+it("picks again on send after Auto found no machine", async () => {
+  using screen = setup();
+  mocks.environments.mockReturnValue(clusterMachines());
+  await screen.render(true);
+  act(() => updateNewTaskFlowState("test-flow", { autoPick: { environmentId: null } }));
+  expect(screen.current.autoBalance?.status).toBe("failed");
+
+  mocks.pick.mockResolvedValue(null);
+  await act(async () => expect(await screen.current.retryAutoBalance()).toBeNull());
+  expect(screen.current.autoBalance?.status).toBe("failed");
+
+  mocks.pick.mockResolvedValue(EnvironmentId.make("one"));
+  await act(async () => expect(await screen.current.retryAutoBalance()).toBe("one"));
+  expect(screen.current.autoBalance?.status).toBe("resolved");
 });
 
 const playbookPrompt = (machine: string) =>

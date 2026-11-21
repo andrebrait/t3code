@@ -347,6 +347,8 @@ type NewTaskFlowContextValue = {
   readonly chooseAutoPool: (poolKey: string) => void;
   /** Keeps the draft on its machine, as choosing a branch does. */
   readonly pinEnvironment: () => void;
+  /** After Auto found no machine, picks again; the machine picked, or null. */
+  readonly retryAutoBalance: () => Promise<EnvironmentId | null>;
   readonly acknowledgeAutoBalance: () => void;
   /** Why an Auto send cannot start yet. */
   readonly autoBalanceWarning: () => { readonly title: string; readonly description: string };
@@ -1164,8 +1166,8 @@ export function NewTaskFlowProvider(
       : [];
   // Picks once per Auto choice, then keeps the draft there, like web's composer.
   const autoPickRequestRef = useRef<object | null>(null);
-  const runAutoPick = useEffectEvent(async (request: object) => {
-    const { projectKey, draftKey } = readFlow();
+  const pickAutoEnvironment = async (request: object) => {
+    const { projectKey, draftKey, autoPick } = readFlow();
     const pool = (key: string | null) =>
       key === null ? undefined : getComposerDraftSnapshot(key).loadBalancing?.pool;
     const autoPool = pool(draftKey);
@@ -1181,7 +1183,7 @@ export function NewTaskFlowProvider(
       flow.projectKey !== projectKey ||
       pool(flow.draftKey) !== autoPool ||
       flow.manualEnvironment ||
-      flow.autoPick !== null ||
+      flow.autoPick !== autoPick ||
       flow.submitting
     ) {
       return;
@@ -1199,7 +1201,8 @@ export function NewTaskFlowProvider(
       projectKey: scopedProjectKey(project.environmentId, project.id),
       autoPick: { environmentId: project.environmentId },
     });
-  });
+  };
+  const runAutoPick = useEffectEvent(pickAutoEnvironment);
   const needsAutoPick =
     props.active !== false &&
     activePool !== null &&
@@ -1288,6 +1291,13 @@ export function NewTaskFlowProvider(
     autoBalance,
     chooseAutoPool,
     pinEnvironment: () => updateFlow({ manualEnvironment: true }),
+    retryAutoBalance: async () => {
+      if (readFlow().autoPick?.environmentId !== null) return null;
+      const request = {};
+      autoPickRequestRef.current = request;
+      await pickAutoEnvironment(request);
+      return readFlow().autoPick?.environmentId ?? null;
+    },
     acknowledgeAutoBalance: () => {
       if (!selectedProjectDraftKey) return;
       updateComposerDraftSettings(selectedProjectDraftKey, {

@@ -750,11 +750,15 @@ export function NewTaskDraftScreen(props: {
   async function handleSend(): Promise<MessageId | null> {
     const auto = flow.autoBalance;
     if (auto && !isComposerInteractionLocked) {
-      if (auto.status !== "resolved") {
+      // Machines free up, so a pick that found none is tried again before warning.
+      const picked = auto.status === "failed" ? await flow.retryAutoBalance() : null;
+      if (auto.status !== "resolved" && picked === null) {
         const warning = flow.autoBalanceWarning();
         Dialog.alert(warning.title, warning.description);
         return null;
       }
+      // The draft moved; this render still holds the old machine, so the next send starts it.
+      if (picked !== null && picked !== flow.selectedEnvironmentId) return null;
       if (auto.missingLabels.length > 0 && !auto.acknowledged) {
         const proceed = await confirmFewerMachines(auto.label, auto.missingLabels);
         if (!proceed) return null;

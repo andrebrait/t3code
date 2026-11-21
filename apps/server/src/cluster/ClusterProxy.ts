@@ -38,6 +38,9 @@ const TICKET_PATH = /^\/api\/auth\/websocket-ticket(?:\/(rpc|media))?$/;
 // Join, leave, the control link and MCP belong to the main host, and agent sign-in approval to the
 // member itself; a capped client must not reach them.
 const MAIN_HOST_ONLY_PATH = /^\/(?:api\/cluster|mcp|oauth\/mcp)(?:\/|$)/;
+// Signed file links carry their own credential and load in <img> and native image views, which
+// send no sign-in; the member checks the signature, and the request reaches it with no scopes.
+const SIGNED_PATH = /^\/api\/assets\//;
 
 const encodeTicket = Schema.encodeEffect(AuthWebSocketTicketResult);
 const notFound = () => HttpServerResponse.text("Not Found", { status: 404 });
@@ -75,15 +78,21 @@ const connectFailure = (memberId: EnvironmentId, error: ClusterError) =>
       ? notFound()
       : memberFailure(memberId, "offline");
 
+// Unauthenticated: answer only while the control link is up, so a stranger cannot keep starting ssh.
+const memberDown = Effect.fn("ClusterProxy.memberDown")(function* (memberId: EnvironmentId) {
+  const cluster = yield* ClusterService.ClusterService;
+  const members = Option.getOrElse(yield* Stream.runHead(cluster.members), () => []);
+  const status = members.find((member) => member.environmentId === memberId)?.status;
+  return status !== undefined && status !== "online" ? memberFailure(memberId, status) : undefined;
+});
+
 const forwardPublicDescriptor = Effect.fn("ClusterProxy.forwardPublicDescriptor")(function* (
   memberId: EnvironmentId,
   request: HttpServerRequest.HttpServerRequest,
 ) {
   const cluster = yield* ClusterService.ClusterService;
-  // Unauthenticated: answer only while the control link is up, so a stranger cannot keep starting ssh.
-  const members = Option.getOrElse(yield* Stream.runHead(cluster.members), () => []);
-  const status = members.find((member) => member.environmentId === memberId)?.status;
-  if (status !== undefined && status !== "online") return memberFailure(memberId, status);
+  const down = yield* memberDown(memberId);
+  if (down !== undefined) return down;
   const connected = yield* Effect.result(cluster.connect(memberId));
   if (Result.isFailure(connected)) return connectFailure(memberId, connected.failure);
   const { upstream } = connected.success;
@@ -127,25 +136,34 @@ const handler = Effect.gen(function* () {
   if (!upgrade && request.method === "GET" && route === "/.well-known/t3/environment") {
     return yield* forwardPublicDescriptor(memberId, request);
   }
+  const signed =
+    !upgrade && (request.method === "GET" || request.method === "HEAD") && SIGNED_PATH.test(route);
+  if (signed) {
+    const down = yield* memberDown(memberId);
+    if (down !== undefined) return down;
+  }
   const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
-  const session = yield* (
-    upgrade
-      ? serverAuth.authenticateWebSocketUpgrade(request, route === "/ws" ? "rpc" : "media")
-      : serverAuth.authenticateHttpRequest(request)
-  ).pipe(
-    Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
-      failEnvironmentAuthInvalid(
-        EnvironmentAuth.serverAuthCredentialReason(error),
-        EnvironmentAuth.serverAuthDpopFailureReason(error),
-      ),
-    ),
-    Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-      failEnvironmentInternal("internal_error", error),
-    ),
-  );
+  const session = signed
+    ? undefined
+    : yield* (
+        upgrade
+          ? serverAuth.authenticateWebSocketUpgrade(request, route === "/ws" ? "rpc" : "media")
+          : serverAuth.authenticateHttpRequest(request)
+      ).pipe(
+        Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
+          failEnvironmentAuthInvalid(
+            EnvironmentAuth.serverAuthCredentialReason(error),
+            EnvironmentAuth.serverAuthDpopFailureReason(error),
+          ),
+        ),
+        Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+          failEnvironmentInternal("internal_error", error),
+        ),
+      );
 
-  const ticketUse = request.method === "POST" ? TICKET_PATH.exec(route) : null;
-  if (ticketUse !== null) {
+  const ticketUse =
+    session !== undefined && request.method === "POST" ? TICKET_PATH.exec(route) : null;
+  if (session !== undefined && ticketUse !== null) {
     const use = ticketUse[1] === "rpc" || ticketUse[1] === "media" ? ticketUse[1] : undefined;
     const ticket = yield* serverAuth
       .issueWebSocketTicket(session, use === undefined ? undefined : { use })
@@ -160,7 +178,7 @@ const handler = Effect.gen(function* () {
 
   const credentials = {
     authorization: `Bearer ${token}`,
-    [CLUSTER_SCOPES_HEADER]: encodeOAuthScope(session.scopes),
+    [CLUSTER_SCOPES_HEADER]: session === undefined ? "" : encodeOAuthScope(session.scopes),
   };
   const search = new URLSearchParams(url.value.search);
   search.delete("wsTicket");
@@ -169,10 +187,13 @@ const handler = Effect.gen(function* () {
 
   const sessions = yield* SessionStore.SessionStore;
   // A revoked client session or a removed member ends what is in flight.
-  const ended = Effect.raceFirst(
-    sessions.awaitInvalidation(session.sessionId).pipe(Effect.ignore),
-    cluster.awaitGone(memberId),
-  );
+  const ended =
+    session === undefined
+      ? cluster.awaitGone(memberId)
+      : Effect.raceFirst(
+          sessions.awaitInvalidation(session.sessionId).pipe(Effect.ignore),
+          cluster.awaitGone(memberId),
+        );
 
   if (upgrade) {
     // The control link vouches for the member: it answers, speaks this protocol, accepts this host.

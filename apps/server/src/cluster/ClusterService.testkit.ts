@@ -178,6 +178,18 @@ const layerEchoHttp = HttpRouter.add(
   }).pipe(Effect.orDie),
 );
 
+/** Stands in for the member's signed file links: reports the scope cap they arrived with. */
+const layerSignedAsset = HttpRouter.add(
+  "GET",
+  "/api/assets/*",
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    return HttpServerResponse.jsonUnsafe({
+      scopes: request.headers[CLUSTER_SCOPES_HEADER] ?? null,
+    });
+  }),
+);
+
 /** Stands in for the member's MCP endpoint, which answers any caller it accepts. */
 const layerMcp = HttpRouter.add("*", "/mcp/*", HttpServerResponse.text("mcp"));
 /** Stands in for the member's agent sign-in approval. */
@@ -193,6 +205,7 @@ const memberRoutes = Layer.mergeAll(
   ClusterHttp.layerEvents,
   layerEcho,
   layerEchoHttp,
+  layerSignedAsset,
   layerMcp,
   layerMcpOAuth,
 );

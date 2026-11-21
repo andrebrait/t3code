@@ -154,6 +154,12 @@ it.effect("forwards HTTP to the member under the client's scopes, never the clie
         ),
       ).toMatchObject({ environmentId: box.environmentId });
       expect((yield* get(`${base}/api/auth/session`)).status).toBe(401);
+      // Signed file links load in image views that send no sign-in; they reach the member with no scopes.
+      expect(
+        yield* get(`${base}/api/assets/signed-token/shot.png`).pipe(
+          Effect.flatMap((response) => response.json),
+        ),
+      ).toEqual({ scopes: "" });
       expect(
         yield* get(`${base}/.well-known/t3/environment`, reader).pipe(
           Effect.flatMap((response) => response.json),

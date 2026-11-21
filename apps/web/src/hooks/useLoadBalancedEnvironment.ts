@@ -55,15 +55,21 @@ export function useLoadBalancedEnvironment(
   };
   const refreshSelection = (ids: readonly EnvironmentId[]) =>
     pickLoadBalancedEnvironment(registry, serverEnvironment.hostResources, ids, weights);
-  const { evaluatedAt, resources } = useAtomValue(hostResourcesAtom(environmentIds.join("\n")));
+  // A lone candidate needs no resource check, as in pickLoadBalancedEnvironment.
+  const lone = environmentIds.length === 1 ? environmentIds[0]! : null;
+  const { evaluatedAt, resources } = useAtomValue(
+    hostResourcesAtom(lone === null ? environmentIds.join("\n") : ""),
+  );
   const pending = resources.some((resource) => resource.pending);
-  const environmentId = chooseLoadBalancedEnvironment(
-    resources.map((resource) => ({
-      ...resource,
-      weight: weights[resource.environmentId] ?? 50,
-    })),
-    evaluatedAt,
-  ) as EnvironmentId | null;
+  const environmentId =
+    lone ??
+    (chooseLoadBalancedEnvironment(
+      resources.map((resource) => ({
+        ...resource,
+        weight: weights[resource.environmentId] ?? 50,
+      })),
+      evaluatedAt,
+    ) as EnvironmentId | null);
   return {
     refresh,
     refreshSelection,

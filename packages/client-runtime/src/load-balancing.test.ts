@@ -6,6 +6,7 @@ import {
   type ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
+import { AtomRegistry } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
 import { scopeThreadRef } from "./environment/scoped.ts";
@@ -18,6 +19,7 @@ import {
   loadBalancingCandidateIds,
   loadBalancingPools,
   loadBalancingSendWarning,
+  pickLoadBalancedEnvironment,
   sortEnvironmentOptionsByCluster,
 } from "./load-balancing.ts";
 
@@ -78,6 +80,17 @@ describe("loadBalancingCandidateIds", () => {
 
   it("leaves out a machine set to Manual only", () => {
     expect(candidateIds({ [other]: 0 })).toEqual([local]);
+  });
+});
+
+describe("pickLoadBalancedEnvironment", () => {
+  it("goes straight to a lone candidate, whose resources may be busy or unreadable", async () => {
+    const unreadable = () => {
+      throw new Error("host resources unavailable");
+    };
+    expect(await pickLoadBalancedEnvironment(AtomRegistry.make(), unreadable, [remote], {})).toBe(
+      remote,
+    );
   });
 });
 

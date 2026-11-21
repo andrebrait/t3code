@@ -287,7 +287,10 @@ export function loadBalancingCandidateIds(input: {
     .map((candidate) => candidate.environmentId);
 }
 
-/** Fetches fresh host resources for each candidate, then picks one; null when none qualifies. */
+/**
+ * Fetches fresh host resources for each candidate, then picks one; null when none qualifies.
+ * A lone candidate is taken as is: with nowhere else to go, its load cannot block the send.
+ */
 export async function pickLoadBalancedEnvironment(
   registry: AtomRegistry.AtomRegistry,
   hostResources: (target: {
@@ -297,6 +300,7 @@ export async function pickLoadBalancedEnvironment(
   environmentIds: ReadonlyArray<EnvironmentId>,
   weights: Readonly<Record<string, number>>,
 ): Promise<EnvironmentId | null> {
+  if (environmentIds.length === 1) return environmentIds[0]!;
   const candidates = await Promise.all(
     environmentIds.map(async (environmentId) => {
       const result = await executeAtomQuery(registry, hostResources({ environmentId, input: {} }), {

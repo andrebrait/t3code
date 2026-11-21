@@ -227,8 +227,9 @@ lacks it, choose that machine instead.
 The draft checks eligible machines when it opens or when you choose a balanced option,
 then keeps that choice stable. Choose the option again to check current resources, or
 choose a specific machine to override it. Choosing a branch or worktree also keeps the
-draft on that machine. Existing threads stay where they started. If resource checks are
-unavailable or all eligible machines are full, choose a machine manually to continue.
+draft on that machine. Existing threads stay where they started. When only one machine
+can take the thread, it starts there without a check. If resource checks are unavailable
+or all eligible machines are full, choose a machine manually to continue.
 
 ### Tailscale HTTPS
 

@@ -41,7 +41,6 @@ import {
   loadBalancingCandidateIds,
   loadBalancingSendWarning,
 } from "@t3tools/client-runtime/load-balancing";
-import { Atom } from "effect/reactivity";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { seedDraftModelSelection } from "../../lib/seedDraftModelSelection";
 import { draftFanoutSelectionsAtom } from "./chatViewSend";
@@ -73,17 +72,6 @@ interface DraftEnvironmentRoutingInput {
   readonly projectGroupingSettings: ReturnType<typeof selectProjectGroupingSettings>;
   readonly sendInFlightRef: { readonly current: boolean };
 }
-
-/**
- * Per draft, in memory: the Auto pool picked in the composer, and the pool whose machines
- * without the project the user already accepted leaving out.
- */
-export const draftLoadBalancingPoolAtom = Atom.family((_draftId: string) =>
-  Atom.make<{ readonly chosen: string | null; readonly acknowledged: string | null }>({
-    chosen: null,
-    acknowledged: null,
-  }).pipe(Atom.keepAlive),
-);
 
 // Multiple-model selections are kept per route, so a draft moving machine takes them along.
 function carryFanoutSelections(
@@ -303,12 +291,11 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       });
       return;
     }
-    const pool = draftLoadBalancingPoolAtom(draftId);
-    appAtomRegistry.set(pool, { ...appAtomRegistry.get(pool), chosen: poolKey });
     loadBalancing.refresh(
       logicalProjectEnvironments.map((environment) => environment.environmentId),
     );
     setDraftThreadContext(draftId, {
+      loadBalancingPool: poolKey,
       environmentSelection: "auto",
       loadBalancedEnvironmentId: null,
       branch: null,
@@ -348,8 +335,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     if (!automaticEnvironment || !draftId || !pool || pool.missingEnvironmentIds.length === 0) {
       return true;
     }
-    const choice = draftLoadBalancingPoolAtom(draftId);
-    if (appAtomRegistry.get(choice).acknowledged === pool.key) return true;
+    if (getDraftSession(draftId)?.loadBalancingAcknowledgedPool === pool.key) return true;
     const question = m(
       msg(
         "Load balance across fewer machines?\n{machines} don't have this project, so {pool} only picks among the machines that do. To start on one of them, go back and choose it.",
@@ -360,9 +346,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       initialFocus: "confirm",
       confirmLabel: m(msg("Continue", { $context: "load balance across fewer machines" })),
     }) ?? Promise.resolve(window.confirm(question)));
-    if (confirmed) {
-      appAtomRegistry.set(choice, { ...appAtomRegistry.get(choice), acknowledged: pool.key });
-    }
+    if (confirmed) setDraftThreadContext(draftId, { loadBalancingAcknowledgedPool: pool.key });
     return confirmed;
   };
 

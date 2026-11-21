@@ -410,6 +410,8 @@ const PersistedDraftThreadState = Schema.Struct({
   logicalProjectKey: Schema.optionalKey(Schema.String),
   environmentSelection: Schema.optionalKey(Schema.Literals(["auto", "manual"])),
   loadBalancedEnvironmentId: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  loadBalancingPool: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  loadBalancingAcknowledgedPool: Schema.optionalKey(Schema.NullOr(Schema.String)),
   createdAt: Schema.String,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
@@ -509,6 +511,10 @@ export interface DraftSessionState {
   logicalProjectKey: string;
   environmentSelection?: "auto" | "manual";
   loadBalancedEnvironmentId?: EnvironmentId | null;
+  /** The Auto pool picked in the composer; unset takes the default one. */
+  loadBalancingPool?: string | null;
+  /** The pool whose machines without the project the user accepted leaving out. */
+  loadBalancingAcknowledgedPool?: string | null;
   createdAt: string;
   runtimeMode: RuntimeMode;
   interactionMode: ProviderInteractionMode;
@@ -623,6 +629,8 @@ interface ComposerDraftStoreState {
       interactionMode?: ProviderInteractionMode;
       environmentSelection?: "auto" | "manual";
       loadBalancedEnvironmentId?: EnvironmentId | null;
+      loadBalancingPool?: string | null;
+      loadBalancingAcknowledgedPool?: string | null;
       checkoutPullRequest?: DraftCheckoutPullRequest | null;
     },
   ) => void;
@@ -1771,6 +1779,7 @@ function createDraftThreadState(
               : existingThread.loadBalancedEnvironmentId,
           }
         : {}),
+    ...draftLoadBalancingPoolFields(existingThread),
     createdAt: options?.createdAt ?? existingThread?.createdAt ?? new Date().toISOString(),
     runtimeMode: options?.runtimeMode ?? existingThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
     interactionMode:
@@ -1816,6 +1825,23 @@ function isDraftThreadPromoting(draftThread: DraftThreadState | null | undefined
   return draftThread?.promotedTo !== null && draftThread?.promotedTo !== undefined;
 }
 
+// The pool choice belongs to the draft, so it follows the draft across machines and projects.
+function draftLoadBalancingPoolFields(
+  draft:
+    | {
+        readonly loadBalancingPool?: string | null | undefined;
+        readonly loadBalancingAcknowledgedPool?: string | null | undefined;
+      }
+    | undefined,
+): Pick<DraftThreadState, "loadBalancingPool" | "loadBalancingAcknowledgedPool"> {
+  return {
+    ...(draft?.loadBalancingPool != null ? { loadBalancingPool: draft.loadBalancingPool } : {}),
+    ...(draft?.loadBalancingAcknowledgedPool != null
+      ? { loadBalancingAcknowledgedPool: draft.loadBalancingAcknowledgedPool }
+      : {}),
+  };
+}
+
 function draftThreadsEqual(left: DraftThreadState | undefined, right: DraftThreadState): boolean {
   return (
     !!left &&
@@ -1825,6 +1851,8 @@ function draftThreadsEqual(left: DraftThreadState | undefined, right: DraftThrea
     left.logicalProjectKey === right.logicalProjectKey &&
     left.environmentSelection === right.environmentSelection &&
     left.loadBalancedEnvironmentId === right.loadBalancedEnvironmentId &&
+    left.loadBalancingPool === right.loadBalancingPool &&
+    left.loadBalancingAcknowledgedPool === right.loadBalancingAcknowledgedPool &&
     left.createdAt === right.createdAt &&
     left.runtimeMode === right.runtimeMode &&
     left.interactionMode === right.interactionMode &&
@@ -2005,6 +2033,16 @@ function normalizePersistedDraftThreads(
           : candidateDraftThread.loadBalancedEnvironmentId === null
             ? { loadBalancedEnvironmentId: null }
             : {}),
+        ...draftLoadBalancingPoolFields({
+          loadBalancingPool:
+            typeof candidateDraftThread.loadBalancingPool === "string"
+              ? candidateDraftThread.loadBalancingPool
+              : null,
+          loadBalancingAcknowledgedPool:
+            typeof candidateDraftThread.loadBalancingAcknowledgedPool === "string"
+              ? candidateDraftThread.loadBalancingAcknowledgedPool
+              : null,
+        }),
         ...(checkoutPullRequest ? { checkoutPullRequest } : {}),
         promotedTo,
       };
@@ -2782,6 +2820,7 @@ function toHydratedDraftThreadState(
             persistedDraftThread.loadBalancedEnvironmentId as EnvironmentId | null,
         }
       : {}),
+    ...draftLoadBalancingPoolFields(persistedDraftThread),
     ...(persistedDraftThread.checkoutPullRequest
       ? { checkoutPullRequest: persistedDraftThread.checkoutPullRequest }
       : {}),
@@ -3061,6 +3100,16 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                     ? null
                     : (existing.loadBalancedEnvironmentId ?? null)
                   : options.loadBalancedEnvironmentId,
+              ...draftLoadBalancingPoolFields({
+                loadBalancingPool:
+                  options.loadBalancingPool === undefined
+                    ? existing.loadBalancingPool
+                    : options.loadBalancingPool,
+                loadBalancingAcknowledgedPool:
+                  options.loadBalancingAcknowledgedPool === undefined
+                    ? existing.loadBalancingAcknowledgedPool
+                    : options.loadBalancingAcknowledgedPool,
+              }),
               createdAt:
                 options.createdAt === undefined
                   ? existing.createdAt
@@ -3081,6 +3130,9 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               nextDraftThread.logicalProjectKey === existing.logicalProjectKey &&
               nextDraftThread.environmentSelection === existing.environmentSelection &&
               nextDraftThread.loadBalancedEnvironmentId === existing.loadBalancedEnvironmentId &&
+              nextDraftThread.loadBalancingPool === existing.loadBalancingPool &&
+              nextDraftThread.loadBalancingAcknowledgedPool ===
+                existing.loadBalancingAcknowledgedPool &&
               nextDraftThread.createdAt === existing.createdAt &&
               nextDraftThread.runtimeMode === existing.runtimeMode &&
               nextDraftThread.interactionMode === existing.interactionMode &&

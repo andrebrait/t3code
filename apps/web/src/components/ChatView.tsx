@@ -391,10 +391,7 @@ import { observeResize } from "~/lib/observeResize";
 import { ThreadVisitWatermark } from "./chat/ThreadVisitWatermark";
 import { ChatTerminalDrawers } from "./chat/ChatTerminalDrawers";
 import { ChatRightPanel } from "./chat/ChatRightPanel";
-import {
-  draftLoadBalancingPoolAtom,
-  useDraftEnvironmentRouting,
-} from "./chat/useDraftEnvironmentRouting";
+import { useDraftEnvironmentRouting } from "./chat/useDraftEnvironmentRouting";
 import { loadBalancingPools } from "@t3tools/client-runtime/load-balancing";
 import { branchMismatchBannerItem, extensionStatusBannerItem } from "./chat/ThreadActivityBanners";
 import { ThreadNow } from "./chat/ThreadNow";
@@ -1265,7 +1262,6 @@ export default function ChatView(props: ChatViewProps) {
     loadBalancingEnabled: settings.loadBalancingEnabled,
     loadBalancingWeights: settings.loadBalancingWeights,
   }));
-  const loadBalancingPoolChoice = useAtomValue(draftLoadBalancingPoolAtom(draftId ?? ""));
   const loadBalancingPoolList =
     clientSettingsHydrated && !activeProjectIsScratch
       ? loadBalancingPools({
@@ -1283,7 +1279,7 @@ export default function ChatView(props: ChatViewProps) {
     activeThread
       ? resolveDraftLoadBalancing(
           loadBalancingPoolList,
-          loadBalancingPoolChoice.chosen,
+          draftThread?.loadBalancingPool,
           activeThread.environmentId,
         )
       : { activePool: null, canAutoBalance: false };

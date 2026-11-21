@@ -1273,6 +1273,35 @@ describe("composerDraftStore project draft thread mapping", () => {
     });
   });
 
+  it("keeps a draft's chosen balancing pool across machines and reloads", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId, environmentSelection: "auto" });
+    store.setDraftThreadContext(draftId, {
+      loadBalancingPool: "cluster-host",
+      loadBalancingAcknowledgedPool: "cluster-host",
+    });
+    store.setProjectDraftThreadId(remoteProjectRef, draftId, { threadId });
+    store.setDraftThreadContext(draftId, { projectRef });
+    const pool = {
+      loadBalancingPool: "cluster-host",
+      loadBalancingAcknowledgedPool: "cluster-host",
+    };
+    expect(store.getDraftThread(draftId)).toMatchObject(pool);
+
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        merge: (
+          persistedState: unknown,
+          currentState: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => ReturnType<typeof useComposerDraftStore.getState>;
+      };
+    };
+    const persisted = partializeComposerDraftStoreState(useComposerDraftStore.getState());
+    resetComposerDraftStore();
+    const hydrated = persistApi.getOptions().merge(persisted, useComposerDraftStore.getState());
+    expect(hydrated.draftThreadsByThreadKey[draftId]).toMatchObject(pool);
+  });
+
   it("pins manual workspace choices and can return to automatic routing without losing the prompt", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectRef, draftId, { threadId });

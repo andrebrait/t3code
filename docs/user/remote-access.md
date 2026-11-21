@@ -567,11 +567,11 @@ code only.
 - A new thread in a project with a git remote can run on any online member,
   and on the main host, even before that machine has the project. The machine
   picker marks such a machine **clones the project**. Choosing it asks first,
-  then clones the project from its remote to the same path it has on the
-  machine you started from (a path under that machine's home stays under the
-  target's home); the composer shows the clone, and the thread starts there
-  once it finishes. Balanced choices only use machines that already have the
-  project.
+  then clones the project from its remote to the same path under the target's
+  home as it has under the home of the machine you started from (a project
+  outside that home goes to the target's **Add project starts in** folder
+  instead); the composer shows the clone, and the thread starts there once it
+  finishes. Balanced choices only use machines that already have the project.
   Ignored files such as `.env` are not copied; use **Add to another machine**
   for those.
 

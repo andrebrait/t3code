@@ -353,8 +353,9 @@ describe("cluster clone targets", () => {
     ["/root/git/tau", "/root", "~/git/tau"],
     ["/Users/me/git/tau", "/Users/me/", "~/git/tau"],
     ["C:\\Users\\me\\git\\tau", "C:\\Users\\me", "~/git/tau"],
-    ["/root2/tau", "/root", "/root2/tau"],
-    ["/srv/tau", "/root", "/srv/tau"],
+    ["/root2/tau", "/root", "~/tau"],
+    ["/srv/tau", "/root", "~/tau"],
+    ["D:\\src\\tau", "C:\\Users\\me", "~/tau"],
     ["/root/git/tau", undefined, "~/tau"],
   ])("clones %s from home %s to %s on another machine", (root, home, expected) => {
     expect(

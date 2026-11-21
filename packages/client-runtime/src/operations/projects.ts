@@ -294,9 +294,9 @@ export function getDefaultCloneDestinationPath(
 }
 
 /**
- * Where a copy of a project goes on another machine: the path it has on the machine it comes
- * from. Under that machine's home it becomes `~/…`, so it maps onto a machine whose home
- * differs. Without the source path or home, it falls back to the target's default.
+ * Where a copy of a project goes on another machine: under the source machine's home, the same
+ * `~/…` path, so it maps onto a machine whose home differs. Anywhere else (another drive, a
+ * mounted volume) may not exist on the target, so it falls back to the target's default.
  */
 export function getSourceCloneDestinationPath(input: {
   readonly remoteUrl: string;
@@ -308,14 +308,11 @@ export function getSourceCloneDestinationPath(input: {
 }): string {
   const root = input.sourceWorkspaceRoot?.trim() ?? "";
   const home = input.sourceHomeDirectory?.trim().replace(/[\\/]+$/, "") ?? "";
-  if (!root || !home || root === home) {
-    return getDefaultCloneDestinationPath(input.remoteUrl, input.targetSettings);
-  }
   const separator = root[home.length];
-  if (root.startsWith(home) && (separator === "/" || separator === "\\")) {
+  if (home && root.startsWith(home) && (separator === "/" || separator === "\\")) {
     return `~/${root.slice(home.length + 1).replaceAll("\\", "/")}`;
   }
-  return root;
+  return getDefaultCloneDestinationPath(input.remoteUrl, input.targetSettings);
 }
 
 /**

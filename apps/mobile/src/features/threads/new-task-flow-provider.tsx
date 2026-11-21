@@ -75,6 +75,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import {
   appendComposerDraftAttachments,
   type ComposerDraftInsertion,
+  type ComposerDraftLoadBalancing,
   type ComposerDraftWorkspaceSelection,
   composerDraftsLoadedAtom,
   createNewTaskDraft,
@@ -204,6 +205,7 @@ function useAutoPools(input: {
   readonly selectedProject: EnvironmentProject | null;
   readonly projects: ReadonlyArray<EnvironmentProject>;
   readonly flowState: NewTaskFlowState;
+  readonly loadBalancing: ComposerDraftLoadBalancing | undefined;
 }) {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const { selectedProject, flowState } = input;
@@ -226,7 +228,7 @@ function useAutoPools(input: {
       });
   const activePool =
     selectedProject && !flowState.manualEnvironment
-      ? activeLoadBalancingPool(pools, flowState.autoPool, selectedProject.environmentId)
+      ? activeLoadBalancingPool(pools, input.loadBalancing?.pool, selectedProject.environmentId)
       : null;
   return {
     loadBalancingWeights,
@@ -242,7 +244,7 @@ function useAutoPools(input: {
               : flowState.autoPick.environmentId === null
                 ? ("failed" as const)
                 : ("resolved" as const),
-          acknowledged: flowState.autoAcknowledged === activePool.key,
+          acknowledged: input.loadBalancing?.acknowledged === activePool.key,
         }
       : null,
   };
@@ -507,14 +509,16 @@ export function NewTaskFlowProvider(
   const { connectedEnvironments } = useRemoteConnectionStatus();
   const { environments: environmentPresentations, presentationById } = useEnvironments();
   const canClone = useEnvironmentsWithScope(environmentPresentations, AuthSourceControlWriteScope);
+  const selectedProjectDraftKey = selectedProject ? activeDraftKey : null;
+  const selectedProjectDraft = useComposerDraft(selectedProjectDraftKey);
   const { loadBalancingWeights, activePool, autoPools, autoBalance } = useAutoPools({
     environments: environmentPresentations,
     isScratchDraft,
     selectedProject,
     projects,
     flowState,
+    loadBalancing: selectedProjectDraft.loadBalancing,
   });
-  const selectedProjectDraftKey = selectedProject ? activeDraftKey : null;
   const activePendingKey =
     props.active === false
       ? null
@@ -524,7 +528,6 @@ export function NewTaskFlowProvider(
           ? `draft-task:${selectedProjectDraftKey}`
           : null;
   const activeNewTask = props.active === false ? null : { pendingKey: activePendingKey };
-  const selectedProjectDraft = useComposerDraft(selectedProjectDraftKey);
   const prompt = selectedProjectDraft.text;
   const attachments = selectedProjectDraft.attachments;
   const projectGitStatus = useEnvironmentQuery(
@@ -1151,7 +1154,10 @@ export function NewTaskFlowProvider(
   // Picks once per Auto choice, then keeps the draft there, like web's composer.
   const autoPickRequestRef = useRef<object | null>(null);
   const runAutoPick = useEffectEvent(async (request: object) => {
-    const { projectKey, autoPool } = readFlow();
+    const { projectKey, draftKey } = readFlow();
+    const pool = (key: string | null) =>
+      key === null ? undefined : getComposerDraftSnapshot(key).loadBalancing?.pool;
+    const autoPool = pool(draftKey);
     const target = await pickLoadBalancedEnvironment(
       appAtomRegistry,
       serverEnvironment.hostResources,
@@ -1162,7 +1168,7 @@ export function NewTaskFlowProvider(
     if (
       autoPickRequestRef.current !== request ||
       flow.projectKey !== projectKey ||
-      flow.autoPool !== autoPool ||
+      pool(flow.draftKey) !== autoPool ||
       flow.manualEnvironment ||
       flow.autoPick !== null ||
       flow.submitting
@@ -1203,15 +1209,17 @@ export function NewTaskFlowProvider(
     };
   }, [autoPickPool]);
   const chooseAutoPool = (poolKey: string) => {
-    updateFlow({ manualEnvironment: false, autoPool: poolKey, autoPick: null });
+    updateFlow({ manualEnvironment: false, autoPick: null });
     if (!selectedProjectDraftKey) return;
-    // Choosing Auto drops a branch or worktree that pinned the draft to its machine.
-    const selection = getComposerDraftSnapshot(selectedProjectDraftKey).workspaceSelection;
-    if (selection && !selection.pullRequestReference) {
-      updateComposerDraftSettings(selectedProjectDraftKey, {
-        workspaceSelection: { mode: selection.mode, branch: null, worktreePath: null },
-      });
-    }
+    const draft = getComposerDraftSnapshot(selectedProjectDraftKey);
+    const selection = draft.workspaceSelection;
+    updateComposerDraftSettings(selectedProjectDraftKey, {
+      loadBalancing: { pool: poolKey, acknowledged: draft.loadBalancing?.acknowledged ?? null },
+      // Choosing Auto drops a branch or worktree that pinned the draft to its machine.
+      ...(selection && !selection.pullRequestReference
+        ? { workspaceSelection: { mode: selection.mode, branch: null, worktreePath: null } }
+        : {}),
+    });
   };
   const autoBalanceWarning = () =>
     loadBalancingSendWarning(
@@ -1269,7 +1277,15 @@ export function NewTaskFlowProvider(
     autoBalance,
     chooseAutoPool,
     pinEnvironment: () => updateFlow({ manualEnvironment: true }),
-    acknowledgeAutoBalance: () => updateFlow({ autoAcknowledged: activePool?.key ?? null }),
+    acknowledgeAutoBalance: () => {
+      if (!selectedProjectDraftKey) return;
+      updateComposerDraftSettings(selectedProjectDraftKey, {
+        loadBalancing: {
+          pool: getComposerDraftSnapshot(selectedProjectDraftKey).loadBalancing?.pool ?? null,
+          acknowledged: activePool?.key ?? null,
+        },
+      });
+    },
     autoBalanceWarning,
     switchEnvironment,
     switchingToEnvironmentId,

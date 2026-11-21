@@ -89,6 +89,7 @@ type SupervisorSignal =
   | { readonly _tag: "ConnectRequested" }
   | { readonly _tag: "DisconnectRequested" }
   | { readonly _tag: "RetryRequested" }
+  | { readonly _tag: "ReprepareRequested" }
   | { readonly _tag: "NetworkChanged"; readonly network: NetworkStatus }
   | { readonly _tag: "Wakeup"; readonly reason: ConnectionWakeups.ConnectionWakeup }
   | { readonly _tag: "BetterRouteAvailable"; readonly routeId: string };
@@ -271,6 +272,8 @@ export class EnvironmentSupervisor extends Context.Service<
     readonly connect: Effect.Effect<void>;
     readonly disconnect: Effect.Effect<void>;
     readonly retryNow: Effect.Effect<void>;
+    /** Replaces a live session with a freshly prepared one, as when the route it borrows changed. */
+    readonly reprepare: Effect.Effect<void>;
   }
 >()("@t3tools/client-runtime/connection/supervisor/EnvironmentSupervisor") {}
 
@@ -635,6 +638,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       const next = yield* Queue.take(signals);
       switch (next._tag) {
         case "DisconnectRequested":
+        case "ReprepareRequested":
           return false;
         case "RetryRequested":
           // Once the loop has taken this retry's flag, the running attempt is
@@ -685,6 +689,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       yield* Ref.set(preferredRouteId, Option.some(next.routeId));
       return "reset" as const;
     }
+    if (next._tag === "ReprepareRequested") return "reset" as const;
     // Only a session over T3 Connect holds the old account's credential.
     if (next._tag === "Wakeup" && next.reason === "credentials-changed" && isRelayLease(lease)) {
       yield* logManagedRelayAccountChange;
@@ -740,6 +745,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           : CONNECTION_PROBE_TIMEOUT;
       case "ConnectRequested":
       case "DisconnectRequested":
+      case "ReprepareRequested":
       case "BetterRouteAvailable":
         return undefined;
     }
@@ -1154,6 +1160,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
             case "ConnectRequested":
             case "DisconnectRequested":
             case "RetryRequested":
+            case "ReprepareRequested":
             case "NetworkChanged":
               return false;
             case "BetterRouteAvailable":
@@ -1446,6 +1453,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     Effect.withSpan("EnvironmentSupervisor.retryNow"),
   );
 
+  const reprepare = signal({ _tag: "ReprepareRequested" });
+
   return EnvironmentSupervisor.of({
     target,
     state,
@@ -1454,5 +1463,6 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     connect,
     disconnect,
     retryNow,
+    reprepare,
   });
 });

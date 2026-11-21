@@ -1,20 +1,27 @@
+import { WS_METHODS, type EnvironmentId } from "@t3tools/contracts";
 import type { RelayEnvironmentStatusResponse } from "@t3tools/contracts/relay";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as Option from "effect/Option";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { orchestrationProtocolCompatibilityError } from "./compatibility.ts";
 
+import * as ClusterHosts from "./clusterHosts.ts";
 import * as ConnectionResolver from "./resolver.ts";
 import * as ConnectionDriver from "./driver.ts";
 import * as EnvironmentRegistry from "./registry.ts";
 import * as ConnectionOnboarding from "./onboarding.ts";
 import { connectionRoutes, hasRelayRoute } from "./routes.ts";
+import * as EnvironmentSupervisor from "./supervisor.ts";
+import type { ConnectionCatalogEntry } from "./catalog.ts";
+import type { PreparedConnection } from "./model.ts";
 import * as PlatformConnectionSource from "../platform/source.ts";
 import * as RelayEnvironmentDiscovery from "../relay/discovery.ts";
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import * as RpcSession from "../rpc/session.ts";
+import { subscribe } from "../rpc/client.ts";
 
 export const watchDiscoveredCompatibility = Effect.fn("connection.watchDiscoveredCompatibility")(
   function* () {
@@ -71,6 +78,137 @@ export const watchDiscoveredCompatibility = Effect.fn("connection.watchDiscovere
   },
 );
 
+/**
+ * Publishes each enabled main host's connection for its members to borrow and lists its members.
+ * Members outlive host reconnects; a host that changes route or credential re-prepares them.
+ */
+export const watchClusterMembers = Effect.fn("connection.watchClusterMembers")(function* () {
+  const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+  const hosts = yield* ClusterHosts.ClusterHosts;
+  // Members borrow a bearer host's address and token, but only a DPoP host's address: the broker
+  // mints their DPoP tokens itself (see the resolver's cluster broker).
+  const borrowed = new Map<EnvironmentId, string>();
+  const dropMembers = (hostEnvironmentId: EnvironmentId) =>
+    registry.reconcileCluster({ hostEnvironmentId, hostLabel: "", members: [] });
+  // Untraced: it runs on every change of a host's prepared connection.
+  const publishHost = Effect.fnUntraced(function* (
+    hostEnvironmentId: EnvironmentId,
+    host: Option.Option<PreparedConnection>,
+  ) {
+    const returned = Option.isNone(yield* hosts.get(hostEnvironmentId));
+    yield* hosts.set(hostEnvironmentId, host);
+    if (Option.isNone(host)) return;
+    const authorization = host.value.httpAuthorization;
+    const next =
+      authorization?._tag === "Bearer"
+        ? `${host.value.httpBaseUrl} ${authorization.token}`
+        : host.value.httpBaseUrl;
+    const previous = borrowed.get(hostEnvironmentId);
+    borrowed.set(hostEnvironmentId, next);
+    const changed = previous !== undefined && previous !== next;
+    if (!changed && !returned) return;
+    for (const { target } of (yield* SubscriptionRef.get(registry.entries)).values()) {
+      if (
+        target._tag !== "ClusterConnectionTarget" ||
+        target.hostEnvironmentId !== hostEnvironmentId
+      ) {
+        continue;
+      }
+      if (changed) {
+        yield* registry.reprepare(target.environmentId);
+      } else if (
+        Option.exists(
+          yield* Effect.option(registry.state(target.environmentId)),
+          (state) => state.phase !== "connected",
+        )
+      ) {
+        // A member waiting out its backoff retries now that its host is back.
+        yield* registry.retryNow(target.environmentId);
+      }
+    }
+  });
+  const followHost = (hostEnvironmentId: EnvironmentId) =>
+    registry
+      .followStream(
+        hostEnvironmentId,
+        Stream.unwrap(
+          EnvironmentSupervisor.EnvironmentSupervisor.pipe(
+            Effect.map((supervisor) =>
+              SubscriptionRef.changes(supervisor.prepared).pipe(
+                Stream.changesWith(
+                  (previous, next) => Option.getOrNull(previous) === Option.getOrNull(next),
+                ),
+                Stream.map((prepared) => ({
+                  prepared,
+                  host: ClusterHosts.clusterHostConnection(prepared),
+                })),
+                Stream.tap(({ host }) => publishHost(hostEnvironmentId, host)),
+                // A disconnected host keeps its subscription; it resumes with the next session.
+                Stream.filter(({ prepared }) => Option.isSome(prepared)),
+                Stream.map(({ host }) => Option.map(host, (connection) => connection.target.label)),
+                Stream.changesWith(
+                  (previous, next) => Option.getOrNull(previous) === Option.getOrNull(next),
+                ),
+                Stream.switchMap(
+                  Option.match({
+                    onNone: () =>
+                      Stream.fromEffect(dropMembers(hostEnvironmentId)).pipe(Stream.drain),
+                    onSome: (hostLabel) =>
+                      subscribe(
+                        WS_METHODS.clusterMembers,
+                        {},
+                        {
+                          onExpectedFailure: (cause) =>
+                            Effect.logWarning("Could not list a main host's cluster members.", {
+                              hostEnvironmentId,
+                              cause,
+                            }),
+                          retryExpectedFailureAfter: "1 second",
+                        },
+                      ).pipe(
+                        Stream.tap((members) =>
+                          registry.reconcileCluster({ hostEnvironmentId, hostLabel, members }),
+                        ),
+                      ),
+                  }),
+                ),
+              ),
+            ),
+          ),
+        ),
+      )
+      .pipe(
+        Stream.runDrain,
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Stopped following a main host's cluster members.", {
+            hostEnvironmentId,
+            cause,
+          }),
+        ),
+      );
+  const followed = new Map<EnvironmentId, Fiber.Fiber<void>>();
+  const isHost = (entry: ConnectionCatalogEntry | undefined) =>
+    entry !== undefined && entry.enabled && entry.target._tag !== "ClusterConnectionTarget";
+  yield* SubscriptionRef.changes(registry.entries).pipe(
+    Stream.runForEach((entries) =>
+      Effect.gen(function* () {
+        for (const [environmentId, entry] of entries) {
+          if (!isHost(entry) || followed.has(environmentId)) continue;
+          followed.set(environmentId, yield* followHost(environmentId).pipe(Effect.forkScoped));
+        }
+        for (const [environmentId, fiber] of followed) {
+          if (isHost(entries.get(environmentId))) continue;
+          followed.delete(environmentId);
+          borrowed.delete(environmentId);
+          yield* Fiber.interrupt(fiber);
+          yield* hosts.set(environmentId, Option.none());
+          yield* dropMembers(environmentId);
+        }
+      }),
+    ),
+  );
+});
+
 export function layerWithOptions(options: RpcSession.RpcSessionOptions) {
   const layerDriver = ConnectionDriver.layer.pipe(
     Layer.provide(Layer.mergeAll(ConnectionResolver.layer, RpcSession.layer(options))),
@@ -88,6 +226,7 @@ export function layerWithOptions(options: RpcSession.RpcSessionOptions) {
       const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
       const platformSource = yield* PlatformConnectionSource.PlatformConnectionSource;
       yield* watchDiscoveredCompatibility().pipe(Effect.forkScoped);
+      yield* watchClusterMembers().pipe(Effect.forkScoped);
       yield* registry.start;
       yield* platformSource.registrations.pipe(
         Stream.runForEach(registry.reconcilePlatform),
@@ -98,6 +237,7 @@ export function layerWithOptions(options: RpcSession.RpcSessionOptions) {
   return layerConnectionStartup.pipe(
     Layer.provideMerge(layerConnectionServices),
     Layer.provideMerge(RemoteEnvironmentAuthorization.layer),
+    Layer.provideMerge(ClusterHosts.layer),
   );
 }
 

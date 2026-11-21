@@ -337,6 +337,7 @@ describe("accepted server update recovery", () => {
         connect: Effect.void,
         disconnect: Effect.void,
         retryNow: Effect.void,
+        reprepare: Effect.void,
       });
       const run: EnvironmentRegistry.EnvironmentRegistry["Service"]["run"] = (_id, effect) =>
         Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor);
@@ -350,6 +351,7 @@ describe("accepted server update recovery", () => {
         followStream: runStream,
         stateChanges: () => Stream.never,
         retryNow: () => Effect.void,
+        reprepare: () => Effect.void,
       } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
       const runtime = Atom.runtime(
         Layer.mergeAll(
@@ -445,6 +447,7 @@ const makeConfigPersistenceHarness = Effect.fn("test.makeConfigPersistenceHarnes
     connect: Effect.void,
     disconnect: Effect.void,
     retryNow: Effect.void,
+    reprepare: Effect.void,
   });
   const cache = Persistence.EnvironmentCacheStore.of({
     loadShell: () => Effect.succeedNone,
@@ -1040,6 +1043,7 @@ describe("server state projection", () => {
         connect: Effect.void,
         disconnect: Effect.void,
         retryNow: Effect.void,
+        reprepare: Effect.void,
       } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
       const staleWelcome = {
         environment: {} as ServerLifecycleWelcomePayload["environment"],
@@ -1095,6 +1099,7 @@ describe("server state projection", () => {
         connect: Effect.void,
         disconnect: Effect.void,
         retryNow: Effect.void,
+        reprepare: Effect.void,
       } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
 
       yield* Effect.scoped(
@@ -1153,6 +1158,7 @@ describe("server state projection", () => {
         connect: Effect.void,
         disconnect: Effect.void,
         retryNow: Effect.void,
+        reprepare: Effect.void,
       } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
       const firstWelcome = {
         environment: {} as ServerLifecycleWelcomePayload["environment"],
@@ -1367,6 +1373,7 @@ describe("server state projection", () => {
         connect: Effect.void,
         disconnect: Effect.void,
         retryNow: Effect.void,
+        reprepare: Effect.void,
       } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
       const savedConfigs = yield* Queue.unbounded<ServerConfig>();
       const cache = Persistence.EnvironmentCacheStore.of({
@@ -1431,6 +1438,7 @@ describe("server state projection", () => {
         connect: Effect.void,
         disconnect: Effect.void,
         retryNow: Effect.void,
+        reprepare: Effect.void,
       } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
       const savedConfigs = yield* Queue.unbounded<ServerConfig>();
       const cache = Persistence.EnvironmentCacheStore.of({
@@ -1570,6 +1578,7 @@ describe("launcher update resume", () => {
       connect: Effect.void,
       disconnect: Effect.void,
       retryNow: Effect.void,
+      reprepare: Effect.void,
     } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
     type Environments = EnvironmentRegistry.EnvironmentRegistry["Service"];
     const run: Environments["run"] = (_environmentId, effect) =>
@@ -1582,6 +1591,7 @@ describe("launcher update resume", () => {
       followStream: runStream,
       stateChanges: () => Stream.never,
       retryNow: () => Effect.void,
+      reprepare: () => Effect.void,
     } as unknown as Environments);
     const cache = Persistence.EnvironmentCacheStore.of({
       loadShell: () => Effect.succeedNone,
@@ -1753,6 +1763,7 @@ describe("provider setup commands", () => {
         connect: Effect.void,
         disconnect: Effect.void,
         retryNow: Effect.void,
+        reprepare: Effect.void,
       } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
       const runtime = Atom.runtime(
         Layer.merge(
@@ -1824,6 +1835,7 @@ describe("provider setup commands", () => {
         connect: Effect.void,
         disconnect: Effect.void,
         retryNow: Effect.void,
+        reprepare: Effect.void,
       } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
       const runtime = Atom.runtime(
         Layer.merge(
@@ -1915,6 +1927,7 @@ describe("resource telemetry history", () => {
                 connect: Effect.void,
                 disconnect: Effect.void,
                 retryNow: Effect.void,
+                reprepare: Effect.void,
               });
               const environments = EnvironmentRegistry.EnvironmentRegistry.of({
                 run: (_id, effect) =>

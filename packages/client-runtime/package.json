@@ -299,6 +299,10 @@
       "types": "./src/state/previewTunnel.ts",
       "default": "./src/state/previewTunnel.ts"
     },
+    "./state/cluster": {
+      "types": "./src/state/cluster.ts",
+      "default": "./src/state/cluster.ts"
+    },
     "./state/peerLinks": {
       "types": "./src/state/peerLinks.ts",
       "default": "./src/state/peerLinks.ts"

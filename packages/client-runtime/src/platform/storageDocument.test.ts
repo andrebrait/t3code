@@ -15,6 +15,7 @@ import {
 } from "../connection/catalog.ts";
 import {
   BearerConnectionTarget,
+  ClusterConnectionTarget,
   ConnectionTransientError,
   PrimaryConnectionTarget,
   RelayConnectionTarget,
@@ -23,6 +24,7 @@ import {
 import {
   PullRequestRoutingPermissions,
   makePullRequestRoutingPermissions,
+  pullRequestRoutingConnectionKey,
 } from "../connection/pullRequestRoutingPermissions.ts";
 import {
   ConnectionCatalogDocument,
@@ -118,6 +120,25 @@ describe("ConnectionCatalogDocument", () => {
         yield* restarted.get({ target: RELAY_TARGET, profile: Option.none(), enabled: true }),
       ).toBe("off");
       yield* restarted.set(entry, "read-write");
+      expect(yield* restarted.get(entry)).toBe("read-write");
+      // A cluster member follows its main host and is never set on its own.
+      const member = {
+        target: new ClusterConnectionTarget({
+          environmentId: EnvironmentId.make("environment-member"),
+          label: "Member",
+          hostEnvironmentId: ENVIRONMENT_ID,
+          hostLabel: "Host",
+          hostConnectionKey: pullRequestRoutingConnectionKey(entry),
+          status: "online",
+          statusDetail: null,
+        }),
+        profile: Option.none(),
+        enabled: true,
+      };
+      expect(yield* restarted.get(member)).toBe("read-write");
+      expect((yield* Effect.flip(restarted.set(member, "off")))._tag).toBe(
+        "ConnectionBlockedError",
+      );
       expect(yield* restarted.get(entry)).toBe("read-write");
       yield* restarted.forget(ENVIRONMENT_ID);
       expect(yield* restarted.get(entry)).toBe("off");

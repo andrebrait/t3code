@@ -1,0 +1,192 @@
+import {
+  type ClusterMember,
+  type ClusterSshLogin,
+  type ClusterStatus,
+  type ServerConfig,
+  formatClusterJoinUrl,
+  parseClusterJoinUrl,
+  parseClusterSshTarget,
+  WS_METHODS,
+} from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
+import { Atom } from "effect/reactivity";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
+
+import type { EnvironmentConnectionPhase } from "../connection/presentation.ts";
+import type { EnvironmentRegistry } from "../connection/registry.ts";
+import {
+  createEnvironmentRpcCommand,
+  createEnvironmentRpcQueryAtomFamily,
+  createEnvironmentRpcSubscriptionAtomFamily,
+} from "./runtime.ts";
+
+export function createClusterEnvironmentAtoms<R, E>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
+) {
+  const status = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:cluster:status",
+    tag: WS_METHODS.clusterStatus,
+  });
+  return {
+    status,
+    members: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:cluster:members",
+      tag: WS_METHODS.clusterMembers,
+    }),
+    createJoinCode: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:cluster:createJoinCode",
+      tag: WS_METHODS.clusterCreateJoinCode,
+    }),
+    addMember: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:cluster:add-member",
+      tag: WS_METHODS.clusterAddMember,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+      onSuccess: ({ environmentId }, registry) =>
+        Effect.sync(() => registry.refresh(status({ environmentId, input: {} }))),
+    }),
+    removeMember: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:cluster:remove-member",
+      tag: WS_METHODS.clusterRemoveMember,
+      onSuccess: ({ environmentId }, registry) =>
+        Effect.sync(() => registry.refresh(status({ environmentId, input: {} }))),
+    }),
+    renameMember: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:cluster:rename-member",
+      tag: WS_METHODS.clusterRenameMember,
+    }),
+    sshKeys: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:cluster:ssh-keys",
+      tag: WS_METHODS.clusterSshKeys,
+    }),
+    leave: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:cluster:leave",
+      tag: WS_METHODS.clusterLeave,
+      onSuccess: ({ environmentId }, registry) =>
+        Effect.sync(() => registry.refresh(status({ environmentId, input: {} }))),
+    }),
+  };
+}
+
+/** Whether an environment shows its Cluster settings: it supports clusters and its beta is on. */
+export const offersCluster = (
+  config:
+    | {
+        readonly environment: { readonly capabilities: { readonly cluster?: boolean } };
+        readonly settings: Pick<ServerConfig["settings"], "clusterEnabled">;
+      }
+    | null
+    | undefined,
+): boolean => config?.environment.capabilities.cluster === true && config.settings.clusterEnabled;
+
+/** A main host only adds members; joining another cluster is for a standalone machine. */
+export const clusterActions = (
+  role: ClusterStatus["role"],
+  access: { readonly enabled: boolean; readonly canAdd: boolean; readonly canJoin: boolean },
+) => ({
+  add: access.enabled && access.canAdd && role !== "member",
+  join: access.enabled && access.canJoin && role === "standalone",
+});
+
+/** The Add member join URL from its fields; pasted codes may carry spaces, which no code has. */
+export function clusterJoinTarget(input: {
+  readonly url: string;
+  readonly code: string;
+  readonly fingerprint: string | null;
+}): string | null {
+  const url = input.url.trim();
+  const origin = URL.parse(/^[a-z][a-z\d+.-]*:\/\//i.test(url) ? url : `https://${url}`);
+  if (origin === null) return null;
+  const target = formatClusterJoinUrl({
+    url: origin.href,
+    code: input.code.replace(/\s+/g, ""),
+    fingerprint: input.fingerprint,
+  });
+  return parseClusterJoinUrl(target) === undefined ? null : target;
+}
+
+export const clusterSshTarget = (raw: string): string | null =>
+  parseClusterSshTarget(raw) === undefined ? null : raw.trim();
+
+/** A key path the main host resolves the same way from any working directory. */
+export const clusterKeyPathValid = (path: string) => /^(?:~|\/|[A-Za-z]:[\\/])/.test(path.trim());
+
+/** The Add member dialog's one-time ssh login; null until its required field is filled. */
+export function clusterSshLogin(input: {
+  readonly method: ClusterSshLogin["_tag"];
+  readonly password: string;
+  readonly keyPath: string;
+  readonly passphrase: string;
+}): ClusterSshLogin | null {
+  switch (input.method) {
+    case "config":
+      return { _tag: "config" };
+    case "password":
+      return input.password === ""
+        ? null
+        : { _tag: "password", password: Redacted.make(input.password) };
+    case "keyFile": {
+      const path = input.keyPath.trim();
+      if (!clusterKeyPathValid(path)) return null;
+      return input.passphrase === ""
+        ? { _tag: "keyFile", path }
+        : { _tag: "keyFile", path, passphrase: Redacted.make(input.passphrase) };
+    }
+  }
+}
+
+export function clusterName(
+  status: Pick<ClusterStatus, "role" | "host">,
+  ownLabel: string,
+): string | null {
+  switch (status.role) {
+    case "standalone":
+      return null;
+    case "main":
+      return ownLabel;
+    case "member":
+      return status.host?.label ?? ownLabel;
+  }
+}
+
+/** A member's light: this device's connection to it, unless the main host rules the member out. */
+export function clusterMemberConnectionPhase(
+  member: Pick<ClusterMember, "status">,
+  devicePhase: EnvironmentConnectionPhase | undefined,
+): EnvironmentConnectionPhase {
+  if (member.status === "revoked" || member.status === "incompatible") return "error";
+  return devicePhase ?? (member.status === "online" ? "connected" : "offline");
+}
+
+export function clusterMemberStatusText(
+  member: Pick<ClusterMember, "status" | "lastError">,
+  hostLabel: string,
+  resolve: MFunctionType = mFallback,
+): string {
+  switch (member.status) {
+    case "online":
+      return resolve(msg("Online", { $context: "cluster member status" }));
+    case "offline":
+      // A just-added member is offline with no error until its control link first connects.
+      return member.lastError ?? resolve(msg("Connecting…", { $context: "cluster member status" }));
+    case "incompatible":
+      return resolve(
+        msg("Runs a T3 Code version {host} cannot drive. Update both to the same version.", {
+          host: hostLabel,
+        }),
+      );
+    case "revoked":
+      return resolve(
+        msg("No longer accepts {host}. Remove it here, then add it again with a new join code.", {
+          host: hostLabel,
+        }),
+      );
+  }
+}
+
+/** Members answer HTTPS on the port they already serve, which is what the main host dials. */
+export function defaultClusterJoinAddress(httpBaseUrl: string | null): string {
+  const url = httpBaseUrl === null ? null : URL.parse(httpBaseUrl);
+  return url === null ? "" : `https://${url.host}`;
+}

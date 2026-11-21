@@ -7,16 +7,22 @@ import {
   type ConnectionCatalogEntry,
   type ConnectionRoute,
 } from "./catalog.ts";
-import { pullRequestRoutingConnectionKey } from "./pullRequestRoutingPermissions.ts";
-import { BearerConnectionTarget, RelayConnectionTarget } from "./model.ts";
+import {
+  pullRequestRoutingConnectionKey,
+  pullRequestRoutingOwnerId,
+  pullRequestRoutingPermissionFor,
+} from "./pullRequestRoutingPermissions.ts";
+import { BearerConnectionTarget, ClusterConnectionTarget, RelayConnectionTarget } from "./model.ts";
 import {
   connectionRouteId,
   connectionRouteKind,
   connectionRouteLabel,
+  connectionRouteLabelText,
   credentialConnectionId,
   insertRoute,
   entryWithRoutes,
   isNearbyAddress,
+  routeHttpBaseUrl,
   mergeLearnedRoutes,
   pendingRouteOrder,
   removedWithRelay,
@@ -472,4 +478,66 @@ describe("learned routes", () => {
     expect(moved).not.toBeNull();
     expect(profileOf(moved![0]!)).toMatchObject({ httpBaseUrl: "https://desk.local:3773/" });
   });
+});
+
+describe("cluster member pull request routing key", () => {
+  const member = (hostConnectionKey: string | null) => ({
+    target: new ClusterConnectionTarget({
+      environmentId: EnvironmentId.make("environment-box"),
+      label: "Box",
+      hostEnvironmentId: EnvironmentId.make("environment-studio"),
+      hostLabel: "Studio",
+      hostConnectionKey,
+      status: "online",
+      statusDetail: null,
+    }),
+    profile: Option.none(),
+    enabled: true,
+  });
+
+  it("is the main host's key", () => {
+    expect(pullRequestRoutingConnectionKey(member("host-key"))).toBe("host-key");
+  });
+
+  it("changes when the main host's address changes", () => {
+    expect(pullRequestRoutingConnectionKey(member("host-key-2"))).not.toBe(
+      pullRequestRoutingConnectionKey(member("host-key")),
+    );
+  });
+
+  it("is null when the main host has no key", () => {
+    expect(pullRequestRoutingConnectionKey(member(null))).toBeNull();
+  });
+
+  it("follows the main host's permission", () => {
+    const hostPermission = {
+      environmentId: EnvironmentId.make("environment-studio"),
+      connectionKey: "host-key",
+      permission: "read-write" as const,
+    };
+    expect(pullRequestRoutingOwnerId(member("host-key"))).toBe("environment-studio");
+    expect(pullRequestRoutingPermissionFor(member("host-key"), [hostPermission])).toBe(
+      "read-write",
+    );
+    expect(pullRequestRoutingPermissionFor(member("host-key-2"), [hostPermission])).toBe("off");
+  });
+});
+
+it("names a cluster member's route after its main host and gives it no address", () => {
+  const route = {
+    target: new ClusterConnectionTarget({
+      environmentId: EnvironmentId.make("environment-box"),
+      label: "Box",
+      hostEnvironmentId: EnvironmentId.make("environment-studio"),
+      hostLabel: "Studio",
+      hostConnectionKey: null,
+      status: "online",
+      statusDetail: null,
+    }),
+    profile: Option.none(),
+  };
+  expect(connectionRouteId(route.target)).toBe("cluster:environment-studio");
+  expect(connectionRouteKind(route)).toBe("cluster");
+  expect(connectionRouteLabelText(route)).toBe("via Studio");
+  expect(routeHttpBaseUrl(route)).toBeNull();
 });

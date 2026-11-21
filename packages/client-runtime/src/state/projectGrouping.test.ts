@@ -336,6 +336,25 @@ describe("buildProjectGroups", () => {
     ]);
     expect(groups[1]?.members.map((member) => member.project.id)).toEqual(["fork", "fork-2"]);
     expect(groups[1]?.label).toBe("julius/t3code-fork");
+
+    // A clone of the fork's origin has only that remote, and still groups with the fork.
+    const clone = makeProject("fork-clone", "/box/t3code-fork", {
+      environmentId: EnvironmentId.make("box"),
+      repositoryIdentity: {
+        ...repositoryIdentity,
+        canonicalKey: "github.com/julius/t3code-fork",
+        locator: {
+          source: "git-remote",
+          remoteName: "origin",
+          remoteUrl: "git@github.com:julius/t3code-fork.git",
+        },
+      },
+    });
+    for (const mode of ["repository", "repository_path"] as const) {
+      expect(deriveLogicalProjectKeyFromSettings(clone, settings(mode))).toBe(
+        deriveLogicalProjectKeyFromSettings(fork, settings(mode)),
+      );
+    }
   });
 
   // regression: #15049 a rename to the repository name snapped back to the display path

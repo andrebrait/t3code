@@ -1,4 +1,8 @@
-import { EnvironmentId, type ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
+import {
+  ClusterMemberStatus,
+  EnvironmentId,
+  type ExecutionEnvironmentDescriptor,
+} from "@t3tools/contracts";
 import { RelayEnvironmentEndpointFailure } from "@t3tools/contracts/relay";
 import * as Schema from "effect/Schema";
 
@@ -41,11 +45,27 @@ export class SshConnectionTarget extends Schema.TaggedClass<SshConnectionTarget>
   },
 ) {}
 
+/** A cluster member reached through its main host's `/cluster/<memberId>` proxy. Never saved. */
+export class ClusterConnectionTarget extends Schema.TaggedClass<ClusterConnectionTarget>()(
+  "ClusterConnectionTarget",
+  {
+    ...ConnectionTargetBase,
+    hostEnvironmentId: EnvironmentId,
+    hostLabel: Schema.String,
+    /** The main host's pull request routing key, so changing its address revokes member trust. */
+    hostConnectionKey: Schema.NullOr(Schema.String),
+    status: ClusterMemberStatus,
+    /** The main host's last error for the member. */
+    statusDetail: Schema.NullOr(Schema.String),
+  },
+) {}
+
 export const ConnectionTarget = Schema.Union([
   PrimaryConnectionTarget,
   BearerConnectionTarget,
   RelayConnectionTarget,
   SshConnectionTarget,
+  ClusterConnectionTarget,
 ]);
 export type ConnectionTarget = typeof ConnectionTarget.Type;
 
@@ -155,6 +175,8 @@ export type PreparedHttpAuthorization =
       readonly expiresAtEpochMs: number;
       /** Set when the token renews directly with the host instead of through T3 Connect. */
       readonly directConnection?: DirectDpopConnection;
+      /** The environment the token was minted for, when it reaches another (a cluster member). */
+      readonly issuedFor?: EnvironmentId;
     };
 
 export interface DirectDpopConnection {

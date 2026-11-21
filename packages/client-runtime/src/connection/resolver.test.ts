@@ -9,6 +9,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 
+import * as ClusterHosts from "./clusterHosts.ts";
 import * as ConnectionResolver from "./resolver.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
@@ -21,10 +22,12 @@ import {
 } from "./catalog.ts";
 import * as ConnectionCredentialStore from "./credentialStore.ts";
 import {
+  ClusterConnectionTarget,
   ConnectionTransientError,
   PrimaryConnectionTarget,
   SshConnectionTarget,
   type ConnectionTarget,
+  type PreparedConnection,
 } from "./model.ts";
 import * as ConnectionProfileStore from "./profileStore.ts";
 import * as RpcHttp from "../rpc/http.ts";
@@ -59,9 +62,12 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
   readonly credentials?: ReadonlyArray<readonly [string, ConnectionCredential]>;
   readonly authorizeBearer?: RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization["Service"]["authorizeBearer"];
   readonly authorizeDpop?: RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization["Service"]["authorizeDpop"];
+  readonly authorizeDirectDpop?: RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization["Service"]["authorizeDirectDpop"];
   readonly primaryBearerToken?: string;
   readonly prepareSsh?: ClientCapabilities.SshEnvironmentGateway["Service"]["prepare"];
   readonly descriptorProtocolVersion?: number | null | undefined;
+  readonly descriptorEnvironmentId?: EnvironmentId;
+  readonly clusterHosts?: ReadonlyArray<PreparedConnection>;
 }) => {
   const profiles = new Map(
     (options?.profiles ?? []).map((profile) => [profile.connectionId, profile]),
@@ -108,7 +114,7 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
           },
         })),
     authorizeDpopHttp: () => Effect.die("unused"),
-    authorizeDirectDpop: () => Effect.die("unused"),
+    authorizeDirectDpop: options?.authorizeDirectDpop ?? (() => Effect.die("unused")),
     authorizeDirectDpopHttp: () => Effect.die("unused"),
     rememberCheckedDescriptor: () => Effect.void,
     renewDpopBeforeExpiry: () => Effect.die("unused"),
@@ -134,7 +140,7 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
     RpcHttp.layerRemoteHttpClient((() =>
       Promise.resolve(
         Response.json({
-          environmentId: ENVIRONMENT_ID,
+          environmentId: options?.descriptorEnvironmentId ?? ENVIRONMENT_ID,
           label: "Compatible environment",
           platform: { os: "linux", arch: "x64" },
           serverVersion: "0.0.0-test",
@@ -165,6 +171,20 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
     ),
     Layer.succeed(RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization, remote),
     Layer.succeed(ClientCapabilities.SshEnvironmentGateway, ssh),
+    Layer.succeed(
+      ClusterHosts.ClusterHosts,
+      ClusterHosts.ClusterHosts.of({
+        get: (hostEnvironmentId) =>
+          Effect.succeed(
+            Option.fromUndefinedOr(
+              (options?.clusterHosts ?? []).find(
+                (host) => host.environmentId === hostEnvironmentId,
+              ),
+            ),
+          ),
+        set: () => Effect.void,
+      }),
+    ),
   );
 
   return Effect.succeed(ConnectionResolver.layer.pipe(Layer.provide(layerDependencies)));
@@ -217,6 +237,210 @@ describe("ConnectionResolver", () => {
           orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
           capabilities: { repositoryIdentity: true },
         },
+      });
+    }),
+  );
+
+  const HOST_ID = EnvironmentId.make("environment-studio");
+  const memberEntry = catalogEntry(
+    new ClusterConnectionTarget({
+      environmentId: ENVIRONMENT_ID,
+      label: "Box",
+      hostEnvironmentId: HOST_ID,
+      hostLabel: "Studio",
+      hostConnectionKey: null,
+      status: "online",
+      statusDetail: null,
+    }),
+  );
+  const host = (
+    httpAuthorization: PreparedConnection["httpAuthorization"],
+  ): PreparedConnection => ({
+    environmentId: HOST_ID,
+    label: "Studio",
+    httpBaseUrl: "https://studio.example.test/",
+    socketUrl: "wss://studio.example.test/ws?wsTicket=host",
+    httpAuthorization,
+    target: new PrimaryConnectionTarget({
+      environmentId: HOST_ID,
+      label: "Studio",
+      httpBaseUrl: "https://studio.example.test/",
+      wsBaseUrl: "wss://studio.example.test/",
+    }),
+  });
+
+  it.effect("reaches a member with the main host's bearer under its cluster path", () =>
+    Effect.gen(function* () {
+      const calls = yield* Ref.make<ReadonlyArray<unknown>>([]);
+      const layerBroker = yield* makeDependencies({
+        clusterHosts: [host({ _tag: "Bearer", token: "host-token" })],
+        authorizeBearer: (input) =>
+          Ref.update(calls, (current) => [...current, input]).pipe(
+            Effect.as({
+              environmentId: input.expectedEnvironmentId,
+              label: "Box",
+              httpBaseUrl: input.httpBaseUrl,
+              socketUrl: `${input.wsBaseUrl}?wsTicket=main-host-ticket`,
+              httpAuthorization: { _tag: "Bearer" as const, token: input.bearerToken },
+            }),
+          ),
+      });
+      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(layerBroker));
+
+      const prepared = yield* broker.prepare(memberEntry);
+
+      expect(yield* Ref.get(calls)).toEqual([
+        {
+          expectedEnvironmentId: ENVIRONMENT_ID,
+          httpBaseUrl: "https://studio.example.test/cluster/environment-1",
+          wsBaseUrl: "wss://studio.example.test/cluster/environment-1/ws",
+          bearerToken: "host-token",
+          connectionMethod: "direct",
+        },
+      ]);
+      expect(prepared).toMatchObject({
+        environmentId: ENVIRONMENT_ID,
+        label: "Box",
+        httpBaseUrl: "https://studio.example.test/cluster/environment-1",
+        target: memberEntry.target,
+      });
+    }),
+  );
+
+  it.effect("reaches a member over the main host's cookie session without a ticket", () =>
+    Effect.gen(function* () {
+      const layerBroker = yield* makeDependencies({ clusterHosts: [host(null)] });
+      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(layerBroker));
+
+      const prepared = yield* broker.prepare(memberEntry);
+
+      expect(prepared.httpAuthorization).toBeNull();
+      expect(prepared.socketUrl).toMatch(
+        /^wss:\/\/studio\.example\.test\/cluster\/environment-1\/ws\?clientSurface=web&/,
+      );
+      expect(prepared.descriptor?.environmentId).toBe(ENVIRONMENT_ID);
+    }),
+  );
+
+  it.effect("blocks a member path that answers as another environment", () =>
+    Effect.gen(function* () {
+      const layerBroker = yield* makeDependencies({
+        clusterHosts: [host(null)],
+        descriptorEnvironmentId: HOST_ID,
+      });
+      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(layerBroker));
+
+      const error = yield* Effect.flip(broker.prepare(memberEntry));
+
+      expect(error).toMatchObject({ _tag: "ConnectionBlockedError", reason: "configuration" });
+    }),
+  );
+
+  it.effect("keys a member's DPoP token to the main host", () =>
+    Effect.gen(function* () {
+      const calls = yield* Ref.make<ReadonlyArray<unknown>>([]);
+      const layerBroker = yield* makeDependencies({
+        clusterHosts: [
+          host({
+            _tag: "Dpop",
+            accessToken: "host-access",
+            expiresAtEpochMs: Number.MAX_SAFE_INTEGER,
+          }),
+        ],
+        authorizeDpop: (input) =>
+          Ref.update(calls, (current) => [...current, input]).pipe(
+            Effect.as({
+              environmentId: input.expectedEnvironmentId,
+              label: "Studio",
+              httpBaseUrl: input.directEndpoint!.httpBaseUrl,
+              socketUrl: `${input.directEndpoint!.wsBaseUrl}?wsTicket=dpop`,
+              httpAuthorization: {
+                _tag: "Dpop" as const,
+                accessToken: "host-access",
+                expiresAtEpochMs: Number.MAX_SAFE_INTEGER,
+              },
+            }),
+          ),
+      });
+      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(layerBroker));
+
+      const prepared = yield* broker.prepare(memberEntry);
+
+      expect(yield* Ref.get(calls)).toEqual([
+        {
+          expectedEnvironmentId: HOST_ID,
+          clusterMemberId: ENVIRONMENT_ID,
+          directEndpoint: {
+            httpBaseUrl: "https://studio.example.test/cluster/environment-1",
+            wsBaseUrl: "wss://studio.example.test/cluster/environment-1/ws",
+          },
+        },
+      ]);
+      expect(prepared.environmentId).toBe(ENVIRONMENT_ID);
+      expect(prepared.httpAuthorization).toMatchObject({ _tag: "Dpop", issuedFor: HOST_ID });
+    }),
+  );
+
+  it.effect("reaches a member of a directly paired DPoP host with the host's credential", () =>
+    Effect.gen(function* () {
+      const calls = yield* Ref.make<ReadonlyArray<unknown>>([]);
+      const directConnection = {
+        connectionId: "studio-direct",
+        httpBaseUrl: "https://studio.example.test",
+      };
+      const layerBroker = yield* makeDependencies({
+        clusterHosts: [
+          host({
+            _tag: "Dpop",
+            accessToken: "host-access",
+            expiresAtEpochMs: Number.MAX_SAFE_INTEGER,
+            directConnection,
+          }),
+        ],
+        authorizeDirectDpop: (input) =>
+          Ref.update(calls, (current) => [...current, input]).pipe(
+            Effect.as({
+              environmentId: input.expectedEnvironmentId,
+              label: "Studio",
+              httpBaseUrl: input.httpBaseUrl,
+              socketUrl: `${input.wsBaseUrl}?wsTicket=dpop`,
+              httpAuthorization: {
+                _tag: "Dpop" as const,
+                accessToken: "host-access",
+                expiresAtEpochMs: Number.MAX_SAFE_INTEGER,
+                directConnection,
+              },
+            }),
+          ),
+      });
+      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(layerBroker));
+
+      const prepared = yield* broker.prepare(memberEntry);
+
+      expect(yield* Ref.get(calls)).toEqual([
+        {
+          expectedEnvironmentId: ENVIRONMENT_ID,
+          connectionId: "studio-direct",
+          credentialHttpBaseUrl: "https://studio.example.test",
+          httpBaseUrl: "https://studio.example.test/cluster/environment-1",
+          wsBaseUrl: "wss://studio.example.test/cluster/environment-1/ws",
+        },
+      ]);
+      expect(prepared.environmentId).toBe(ENVIRONMENT_ID);
+      expect(prepared.httpAuthorization).toMatchObject({ _tag: "Dpop", directConnection });
+    }),
+  );
+
+  it.effect("waits for the main host before reaching a member", () =>
+    Effect.gen(function* () {
+      const layerBroker = yield* makeDependencies();
+      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(layerBroker));
+
+      const error = yield* Effect.flip(broker.prepare(memberEntry));
+
+      expect(error).toMatchObject({
+        _tag: "ConnectionTransientError",
+        reason: "remote-unavailable",
       });
     }),
   );

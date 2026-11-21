@@ -2057,7 +2057,6 @@
   "cbf49f84e7f456e5": "Lastbalansering",
   "8c0303c36a69ecc0": "Balansera belastningen automatiskt",
   "ebfef435bd266c26": "Belastningsinställning för {environment}",
-  "c693a4efc8b2a466": "Nya trådar i delade projekt startar på den dator som har mest ledig CPU och minne, viktat efter varje dators inställning.",
   "4c6b2d924da2c94d": "Inga miljöer anslutna än.",
   "28494052dfb4647a": [
     "Tryck på ",
@@ -4256,7 +4255,6 @@
   "400667ed9c6be7f1": "Visa anslutningsdetaljer för {title}",
   "70a6342814614ba1": "Återanslut nu",
   "25ae6917f8121f5d": "Balansera automatiskt",
-  "9d55acffe9106b1b": "Startar på den dator som har mest ledig CPU och minne när du skickar.",
   "24ab73837f60e592": "Kunde inte byta gren",
   "ae508eab4195971a": "Grenen kunde inte checkas ut.",
   "46bd5bedd660d528": "Hitta en gren",
@@ -5408,5 +5406,17 @@
   "ad208e3e32c85029": "Dölj alla",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Verktygsanrop i chatten",
-  "8d545d54c0a9e950": "Dölj kommandon, redigeringar och sökningar som agenter kör. Dölj lyckade behåller misslyckanden. Zen visar bara slutliga svar. Godkännanden, frågor och fel visas alltid."
+  "8d545d54c0a9e950": "Dölj kommandon, redigeringar och sökningar som agenter kör. Dölj lyckade behåller misslyckanden. Zen visar bara slutliga svar. Godkännanden, frågor och fel visas alltid.",
+  "5cd298c5f5124a04": "Kontrollerar datorns resurser",
+  "7578705bfbac4a0e": "Resurskontrollerna pågår fortfarande. Du kan välja en dator i inmatningsfältet.",
+  "48c031224e6f62f6": "Ingen dator kan läsa alla bifogade trådar. Välj en dator i inmatningsfältet eller ta bort trådarna.",
+  "6d50bb227e79e08c": "Nya trådar startar på den dator som har mest ledig CPU och minne, viktat efter varje dators inställning. Kluster fördelar alltid mellan sina egna datorer; slå på detta för att också fördela mellan alla dina datorer.",
+  "ff0f41243bccf129": "Saknas på: {machines}",
+  "46c62f145a1736aa": "Fördelar bara mellan datorer med det här projektet. Saknas på: {machines}",
+  "53992fba6097f02b": "Startar på den dator som har mest ledig CPU och minne.",
+  "df0f6f7f50068f16": "Fördela över färre datorer?",
+  "47bc4354488e55ce": "{machines} har inte det här projektet, så {pool} väljer bara bland datorerna som har det. Gå tillbaka och välj en av dem för att starta där.",
+  "e6851054810ad073": "Gå tillbaka",
+  "cb54c8d2ec301da8": "Fortsätt",
+  "c0ad4b16d188d74a": "{cluster} (lastbalanserad)"
 }

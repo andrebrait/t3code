@@ -8821,7 +8821,6 @@
   "c66cd1455fe36678": "Desativado",
   "8c0303c36a69ecc0": "Balancear carga automaticamente",
   "ebfef435bd266c26": "Preferência de carga de {environment}",
-  "a49a651079f9664d": "Novas threads em projetos compartilhados começam na máquina com mais CPU e memória livres, ponderado pela preferência de cada máquina.",
   "da16b9e4be45ae09": "Não foi possível alterar esta configuração.",
   "d1781a918f8a11cf": "Executa agentes neste computador. Desative para usar o T3 Code só com ambientes remotos.",
   "e1391d08740f38f0": "Desativado. Os agentes só rodam em ambientes remotos.",
@@ -12305,5 +12304,10 @@
   "27d76249d09eb69f": "Guia de revisão pronto",
   "faa3bb26abb39c93": "O guia de revisão falhou",
   "b7df38b7d8792d78": "Abrir guia",
-  "9e91e9a77b664e4e": "Não foi possível iniciar um guia de revisão"
+  "9e91e9a77b664e4e": "Não foi possível iniciar um guia de revisão",
+  "46c62f145a1736aa": "Distribui só entre máquinas com este projeto. Não está em: {machines}",
+  "26c88f99d5805f73": "Distribuir entre menos máquinas?\n{machines} não têm este projeto, então {pool} só escolhe entre as máquinas que têm. Para começar em uma delas, volte e escolha-a.",
+  "cb54c8d2ec301da8": "Continuar",
+  "c0ad4b16d188d74a": "{cluster} (balanceado)",
+  "d9b631005b85a3bd": "Novas threads começam na máquina com mais CPU e memória livres, ponderado pela preferência de cada máquina. Clusters sempre distribuem entre as próprias máquinas; ative isto para distribuir também entre todas as suas máquinas."
 }

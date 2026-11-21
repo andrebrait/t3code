@@ -2057,7 +2057,6 @@
   "cbf49f84e7f456e5": "Balanceamento de carga",
   "8c0303c36a69ecc0": "Balancear carga automaticamente",
   "ebfef435bd266c26": "Preferência de carga de {environment}",
-  "c693a4efc8b2a466": "Novas threads em projetos compartilhados começam na máquina com mais CPU e memória livres, ponderado pela preferência de cada máquina.",
   "4c6b2d924da2c94d": "Nenhum ambiente conectado ainda.",
   "28494052dfb4647a": [
     "Toque em ",
@@ -4250,7 +4249,6 @@
   "400667ed9c6be7f1": "Mostrar detalhes da conexão de {title}",
   "70a6342814614ba1": "Reconectar agora",
   "25ae6917f8121f5d": "Balanceamento automático",
-  "9d55acffe9106b1b": "Ao enviar, começa na máquina com mais CPU e memória livres.",
   "24ab73837f60e592": "Não foi possível trocar de branch",
   "ae508eab4195971a": "Não foi possível fazer checkout do branch.",
   "46bd5bedd660d528": "Encontrar um branch",
@@ -5402,5 +5400,17 @@
   "ad208e3e32c85029": "Ocultar todas",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Chamadas de ferramentas no chat",
-  "8d545d54c0a9e950": "Oculta os comandos, edições e pesquisas que os agentes executam. \"Ocultar bem-sucedidas\" mantém as falhas. Zen mostra só as respostas finais. Aprovações, perguntas e erros sempre aparecem."
+  "8d545d54c0a9e950": "Oculta os comandos, edições e pesquisas que os agentes executam. \"Ocultar bem-sucedidas\" mantém as falhas. Zen mostra só as respostas finais. Aprovações, perguntas e erros sempre aparecem.",
+  "5cd298c5f5124a04": "Verificando os recursos das máquinas",
+  "7578705bfbac4a0e": "As verificações de recursos ainda estão em andamento. Você pode escolher uma máquina no editor de mensagens.",
+  "48c031224e6f62f6": "Nenhuma máquina consegue ler todas as threads anexadas. Escolha uma máquina no editor de mensagens ou remova as threads.",
+  "6d50bb227e79e08c": "Novas threads começam na máquina com mais CPU e memória livres, ponderado pela preferência de cada máquina. Clusters sempre distribuem entre as próprias máquinas; ative isto para distribuir também entre todas as suas máquinas.",
+  "ff0f41243bccf129": "Não está em: {machines}",
+  "46c62f145a1736aa": "Distribui só entre máquinas com este projeto. Não está em: {machines}",
+  "53992fba6097f02b": "Começa na máquina com mais CPU e memória livres.",
+  "df0f6f7f50068f16": "Distribuir entre menos máquinas?",
+  "47bc4354488e55ce": "{machines} não têm este projeto, então {pool} só escolhe entre as máquinas que têm. Para começar em uma delas, volte e escolha-a.",
+  "e6851054810ad073": "Voltar",
+  "cb54c8d2ec301da8": "Continuar",
+  "c0ad4b16d188d74a": "{cluster} (balanceado)"
 }

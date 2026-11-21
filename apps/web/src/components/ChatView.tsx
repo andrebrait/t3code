@@ -387,7 +387,14 @@ import { observeResize } from "~/lib/observeResize";
 import { ThreadVisitWatermark } from "./chat/ThreadVisitWatermark";
 import { ChatTerminalDrawers } from "./chat/ChatTerminalDrawers";
 import { ChatRightPanel } from "./chat/ChatRightPanel";
-import { useDraftEnvironmentRouting } from "./chat/useDraftEnvironmentRouting";
+import {
+  draftLoadBalancingPoolAtom,
+  useDraftEnvironmentRouting,
+} from "./chat/useDraftEnvironmentRouting";
+import {
+  activeLoadBalancingPool,
+  loadBalancingPools,
+} from "@t3tools/client-runtime/load-balancing";
 import { branchMismatchBannerItem, extensionStatusBannerItem } from "./chat/ThreadActivityBanners";
 import { ThreadNow } from "./chat/ThreadNow";
 import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
@@ -1253,7 +1260,32 @@ export default function ChatView(props: ChatViewProps) {
     activeProjectIsScratch && draftId !== null,
   );
   const hasMultipleEnvironments = logicalProjectEnvironments.length > 1;
-  const canAutoBalanceEnvironments = hasMultipleEnvironments && !activeProjectIsScratch;
+  const loadBalancingSettings = useClientSettings((settings) => ({
+    loadBalancingEnabled: settings.loadBalancingEnabled,
+    loadBalancingWeights: settings.loadBalancingWeights,
+  }));
+  const loadBalancingPoolChoice = useAtomValue(draftLoadBalancingPoolAtom(draftId ?? ""));
+  const loadBalancingPoolList =
+    clientSettingsHydrated && !activeProjectIsScratch
+      ? loadBalancingPools({
+          environments,
+          weights: loadBalancingSettings.loadBalancingWeights,
+          autoEnabled: loadBalancingSettings.loadBalancingEnabled,
+          hasProject: new Set(
+            logicalProjectEnvironments.flatMap((environment) =>
+              environment.projectId === null ? [] : [environment.environmentId],
+            ),
+          ),
+        })
+      : [];
+  const activeLoadBalancingPoolValue = activeThread
+    ? activeLoadBalancingPool(
+        loadBalancingPoolList,
+        loadBalancingPoolChoice.chosen,
+        activeThread.environmentId,
+      )
+    : null;
+  const canAutoBalanceEnvironments = activeLoadBalancingPoolValue !== null;
   const activeEnvironmentOption =
     logicalProjectEnvironments.find(
       (environment) => environment.environmentId === activeThread?.environmentId,
@@ -1337,18 +1369,16 @@ export default function ChatView(props: ChatViewProps) {
   // rule out a started thread: one whose machine is offline never loads its
   // messages, so it would otherwise be offered a machine picker that does nothing.
   const canChangeEnvironment =
-    hasMultipleEnvironments && !envLocked && draftId !== null && !draftThread?.promotedTo;
+    (hasMultipleEnvironments || canAutoBalanceEnvironments) &&
+    !envLocked &&
+    draftId !== null &&
+    !draftThread?.promotedTo;
 
-  const loadBalancingSettings = useClientSettings((settings) => ({
-    loadBalancingEnabled: settings.loadBalancingEnabled,
-    loadBalancingWeights: settings.loadBalancingWeights,
-  }));
   const automaticEnvironment = Boolean(
     clientSettingsHydrated &&
     draftId &&
     !envLocked &&
     canAutoBalanceEnvironments &&
-    loadBalancingSettings.loadBalancingEnabled &&
     draftThread?.environmentSelection !== "manual" &&
     (!composerHasAttachments || Boolean(draftThread?.loadBalancedEnvironmentId)) &&
     (!draftThread?.branch || draftThread.environmentSelection === "auto") &&
@@ -1857,6 +1887,8 @@ export default function ChatView(props: ChatViewProps) {
     refreshBeforeSend,
     onAutoEnvironmentStable,
     autoEnvironmentLabel,
+    autoEnvironments,
+    confirmAutoBalance,
     isEnvironmentChanging,
     readPendingEnvironmentChange,
     onEnvironmentChangeStable,
@@ -1869,6 +1901,8 @@ export default function ChatView(props: ChatViewProps) {
     environmentById,
     providersByEnvironment,
     loadBalancingSettings,
+    loadBalancingPool: activeLoadBalancingPoolValue,
+    loadBalancingPools: loadBalancingPoolList,
     referencedThreadContexts,
     activeProviderInstanceId,
     selectedProvider,
@@ -3034,6 +3068,7 @@ export default function ChatView(props: ChatViewProps) {
     needsLoadBalancing,
     loadBalancing,
     refreshBeforeSend,
+    confirmAutoBalance,
     readPendingEnvironmentChange,
     pendingApprovals,
     respondingRequestIds,
@@ -3892,11 +3927,9 @@ export default function ChatView(props: ChatViewProps) {
                                     ? { onEnvironmentChange: onEnvironmentChangeStable }
                                     : {})}
                                   autoEnvironmentLabel={autoEnvironmentLabel}
+                                  autoEnvironments={autoEnvironments}
                                   onAutoEnvironment={
-                                    draftId &&
-                                    !envLocked &&
-                                    canAutoBalanceEnvironments &&
-                                    loadBalancingSettings.loadBalancingEnabled
+                                    draftId && !envLocked && canAutoBalanceEnvironments
                                       ? onAutoEnvironmentStable
                                       : undefined
                                   }
@@ -3991,11 +4024,9 @@ export default function ChatView(props: ChatViewProps) {
                   envLocked={envLocked}
                   availableEnvironments={logicalProjectEnvironments}
                   autoEnvironmentLabel={autoEnvironmentLabel}
+                  autoEnvironments={autoEnvironments}
                   onAutoEnvironment={
-                    draftId &&
-                    !envLocked &&
-                    canAutoBalanceEnvironments &&
-                    loadBalancingSettings.loadBalancingEnabled
+                    draftId && !envLocked && canAutoBalanceEnvironments
                       ? onAutoEnvironmentStable
                       : undefined
                   }

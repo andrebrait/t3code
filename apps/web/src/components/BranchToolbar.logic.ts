@@ -25,6 +25,16 @@ export interface EnvironmentOption {
   cloneRemoteUrl?: string;
 }
 
+/** An Auto choice: every machine, or one cluster's machines. */
+export interface AutoEnvironmentOption {
+  readonly key: string;
+  readonly label: string;
+  readonly cluster: boolean;
+  /** Machines in the pool without the project, which Auto skips. */
+  readonly missingLabels: ReadonlyArray<string>;
+  readonly active: boolean;
+}
+
 /** "Add to another machine" stays muted until hovered: easy to find, quieter than the machines. */
 export const ADD_TO_MACHINE_LABEL_CLASS =
   "flex min-w-0 items-center gap-1.5 opacity-55 in-data-highlighted:opacity-100 in-data-popup-open:opacity-100";

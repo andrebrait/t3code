@@ -5,7 +5,7 @@ import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { useNowMinuteMs } from "../../lib/clock";
 import { m, type MessageResolver } from "../../i18n/messages";
 import * as Dialog from "../../components/ui/Dialog";
-import React, { useRef, useState } from "react";
+import React, { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import type {
   EnvironmentId,
@@ -29,7 +29,11 @@ import {
   threadContextsOutsideEnvironment,
 } from "@t3tools/shared/composerContextReferences";
 import {
+  activeLoadBalancingPool,
+  type LoadBalancingPool,
   loadBalancingCandidateIds,
+  loadBalancingPools,
+  loadBalancingSendWarning,
   pickLoadBalancedEnvironment,
 } from "@t3tools/client-runtime/load-balancing";
 import { AsyncResult } from "effect/reactivity";
@@ -180,6 +184,88 @@ function confirmClone(names: {
   );
 }
 
+export interface AutoPoolOption {
+  readonly key: string;
+  readonly label: string;
+  readonly cluster: boolean;
+  /** Machines in the pool without the project, which Auto skips. */
+  readonly missingLabels: ReadonlyArray<string>;
+  readonly active: boolean;
+}
+
+/**
+ * The Auto choices for the selected project. A hook so the compiler treats its inputs as
+ * frozen: deriving pools in the provider body stops it caching the machine list.
+ */
+function useAutoPools(input: {
+  readonly environments: ReturnType<typeof useEnvironments>["environments"];
+  readonly isScratchDraft: boolean;
+  readonly selectedProject: EnvironmentProject | null;
+  readonly projects: ReadonlyArray<EnvironmentProject>;
+  readonly flowState: NewTaskFlowState;
+}) {
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const { selectedProject, flowState } = input;
+  const preferences = AsyncResult.isSuccess(preferencesResult) ? preferencesResult.value : {};
+  const loadBalancingWeights = preferences.loadBalancingWeights ?? {};
+  // Auto balances only across clones of the same repository; weaker matches stay manual.
+  const sameRepository = new Set<EnvironmentId>(
+    selectedProject ? [selectedProject.environmentId] : [],
+  );
+  for (const project of input.projects) {
+    if (isSameRepository(project, selectedProject)) sameRepository.add(project.environmentId);
+  }
+  const pools = input.isScratchDraft
+    ? []
+    : loadBalancingPools({
+        environments: input.environments,
+        weights: loadBalancingWeights,
+        hasProject: sameRepository,
+        autoEnabled: preferences.loadBalancingEnabled === true,
+      });
+  const activePool =
+    selectedProject && !flowState.manualEnvironment
+      ? activeLoadBalancingPool(pools, flowState.autoPool, selectedProject.environmentId)
+      : null;
+  return {
+    loadBalancingWeights,
+    activePool,
+    autoPools: autoPoolOptions(pools, activePool),
+    autoBalance: activePool
+      ? {
+          label: autoPoolLabel(activePool),
+          missingLabels: activePool.missingLabels,
+          status:
+            flowState.autoPick === null
+              ? ("pending" as const)
+              : flowState.autoPick.environmentId === null
+                ? ("failed" as const)
+                : ("resolved" as const),
+          acknowledged: flowState.autoAcknowledged === activePool.key,
+        }
+      : null,
+  };
+}
+
+function autoPoolLabel(pool: LoadBalancingPool): string {
+  return pool.cluster
+    ? m(msg("{cluster} (load balanced)", { cluster: pool.cluster.label }))
+    : m(msg("Auto balance"));
+}
+
+function autoPoolOptions(
+  pools: ReadonlyArray<LoadBalancingPool>,
+  activePool: LoadBalancingPool | null,
+): AutoPoolOption[] {
+  return pools.map((pool) => ({
+    key: pool.key,
+    label: autoPoolLabel(pool),
+    cluster: pool.cluster !== null,
+    missingLabels: pool.missingLabels,
+    active: pool.key === activePool?.key,
+  }));
+}
+
 type NewTaskFlowContextValue = {
   readonly activeNewTask: { readonly pendingKey: string | null } | null;
   readonly projectScopes: ReadonlyArray<HomeProjectScope>;
@@ -236,16 +322,21 @@ type NewTaskFlowContextValue = {
     readonly kind: "missing" | "pickProject";
   } | null;
   readonly selectEnvironment: (environmentId: EnvironmentId) => void;
-  /** Load balancing is on and at least two machines have the project. */
-  readonly canAutoBalance: boolean;
-  /** The send picks the machine: Auto balance is chosen and the draft can still move. */
-  readonly autoEnvironment: boolean;
-  readonly chooseAutoEnvironment: () => void;
-  /**
-   * Picks the machine for an Auto send from fresh host resources and moves the draft there.
-   * Null when no machine qualifies or the draft could not move.
-   */
-  readonly autoBalance: () => Promise<EnvironmentId | null>;
+  /** The Auto choices: every machine with the switch on, then each cluster. */
+  readonly autoPools: ReadonlyArray<AutoPoolOption>;
+  /** Set while Auto picks this draft's machine; null after the user picked one. */
+  readonly autoBalance: {
+    readonly label: string;
+    readonly missingLabels: ReadonlyArray<string>;
+    readonly status: "pending" | "resolved" | "failed";
+    readonly acknowledged: boolean;
+  } | null;
+  readonly chooseAutoPool: (poolKey: string) => void;
+  /** Keeps the draft on its machine, as choosing a branch does. */
+  readonly pinEnvironment: () => void;
+  readonly acknowledgeAutoBalance: () => void;
+  /** Why an Auto send cannot start yet. */
+  readonly autoBalanceWarning: () => { readonly title: string; readonly description: string };
   readonly switchEnvironment: (environmentId: EnvironmentId) => Promise<boolean>;
   readonly switchingToEnvironmentId: EnvironmentId | null;
   readonly setSelectedModelKey: (
@@ -412,10 +503,16 @@ export function NewTaskFlowProvider(
   const projectDefaults = useNewTaskProjectDefaults(selectedProject);
   const isScratchDraft = projectDefaults.isScratch;
   const serverConfigs = useServerConfigs();
-  const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const { connectedEnvironments } = useRemoteConnectionStatus();
   const { environments: environmentPresentations, presentationById } = useEnvironments();
   const canClone = useEnvironmentsWithScope(environmentPresentations, AuthSourceControlWriteScope);
+  const { loadBalancingWeights, activePool, autoPools, autoBalance } = useAutoPools({
+    environments: environmentPresentations,
+    isScratchDraft,
+    selectedProject,
+    projects,
+    flowState,
+  });
   const selectedProjectDraftKey = selectedProject ? activeDraftKey : null;
   const activePendingKey =
     props.active === false
@@ -640,6 +737,7 @@ export function NewTaskFlowProvider(
 
   const setProject = (project: EnvironmentProject) => {
     updateFlow({
+      autoPick: null,
       draftKey: carryDraftContentTo(project),
       environmentId: project.environmentId,
       projectKey: scopedProjectKey(project.environmentId, project.id),
@@ -821,6 +919,8 @@ export function NewTaskFlowProvider(
     if (!selectedProject || !selectedProjectDraftKey) {
       return;
     }
+    // A chosen branch keeps the draft on this machine.
+    updateFlow({ manualEnvironment: true });
     updateComposerDraftSettings(selectedProjectDraftKey, {
       workspaceSelection: {
         mode: workspaceMode,
@@ -949,19 +1049,12 @@ export function NewTaskFlowProvider(
   // Use || null: placeholder workspaceRoot can be empty, and an empty basename rejects real hosts.
   const selectedWorkspaceBasename = selectedProject?.workspaceRoot.split("/").at(-1) || null;
   const selectedProjectTitle = selectedProject?.title ?? null;
-  // Also returns the machines that already have the project: Auto balance never clones.
-  const { environments, environmentIdsWithProject } = ((): {
-    readonly environments: NewTaskFlowContextValue["environments"];
-    readonly environmentIdsWithProject: ReadonlyArray<EnvironmentId>;
-  } => {
+  const environments: NewTaskFlowContextValue["environments"] = (() => {
     if (isScratchDraft) {
-      return {
-        environments: scratchEnvironments.map((environment) => ({
-          environmentId: environment.environmentId,
-          environmentLabel: environment.environmentLabel,
-        })),
-        environmentIdsWithProject: [],
-      };
+      return scratchEnvironments.map((environment) => ({
+        environmentId: environment.environmentId,
+        environmentLabel: environment.environmentLabel,
+      }));
     }
     const seen = new Set<EnvironmentId>();
     const result: Array<NewTaskFlowContextValue["environments"][number]> = [];
@@ -1013,82 +1106,118 @@ export function NewTaskFlowProvider(
         });
       }
     }
-    return { environments: result, environmentIdsWithProject: [...seen] };
+    return result;
   })();
 
-  const preferences = AsyncResult.isSuccess(preferencesResult) ? preferencesResult.value : {};
-  const loadBalancingWeights = preferences.loadBalancingWeights ?? {};
-  const canAutoBalance =
-    preferences.loadBalancingEnabled === true &&
-    !isScratchDraft &&
-    environmentIdsWithProject.length >= 2;
-  // A worktree that exists only on this machine pins the draft here.
-  const autoEnvironment =
-    canAutoBalance &&
-    !flowState.manualEnvironment &&
-    (workspaceSelection.worktreePath === null ||
-      workspaceSelection.worktreePath === selectedProject?.workspaceRoot);
-  const projectOn = (environmentId: EnvironmentId) =>
-    resolveEnvironmentProjectMatch(
-      projects.filter((project) => project.environmentId === environmentId),
-      selectedProject,
-    );
-  const autoBalance = async (): Promise<EnvironmentId | null> => {
-    if (!selectedProject || !selectedProjectDraftKey || !selectedModel || !selectedProviderStatus) {
-      return null;
-    }
+  const sameRepositoryProjectOn = (environmentId: EnvironmentId) =>
+    environmentId === selectedProject?.environmentId
+      ? selectedProject
+      : projects.find(
+          (project) =>
+            project.environmentId === environmentId && isSameRepository(project, selectedProject),
+        );
+  const referencedThreadContexts = () => {
+    if (!selectedProjectDraftKey) return [];
     const draft = getComposerDraftSnapshot(selectedProjectDraftKey);
     const referenced = new Set(
       collectComposerContextReferences(draft.text).map((occurrence) => occurrence.contextId),
     );
-    const candidateIds = loadBalancingCandidateIds({
-      candidates: environmentIdsWithProject.map((environmentId) => ({
-        environmentId,
-        projectId: projectOn(environmentId)?.id ?? null,
-      })),
-      environmentById: presentationById,
-      providersByEnvironment: new Map(
-        [...serverConfigs].map(([environmentId, config]) => [environmentId, config.providers]),
-      ),
-      weights: loadBalancingWeights,
-      referencedThreadContexts: (draft.context?.records ?? []).filter(
-        (record): record is ThreadContextRecord =>
-          record.kind === "thread" && "threadId" in record && referenced.has(record.contextId),
-      ),
-      activeProviderInstanceId: selectedModel.instanceId,
-      selectedProvider: selectedProviderStatus.driver,
-    });
+    return (draft.context?.records ?? []).filter(
+      (record): record is ThreadContextRecord =>
+        record.kind === "thread" && "threadId" in record && referenced.has(record.contextId),
+    );
+  };
+  const autoCandidateIds = () =>
+    activePool && selectedModel && selectedProviderStatus
+      ? loadBalancingCandidateIds({
+          candidates: activePool.environmentIds.flatMap((environmentId) => {
+            const project = sameRepositoryProjectOn(environmentId);
+            return project ? [{ environmentId, projectId: project.id }] : [];
+          }),
+          environmentById: presentationById,
+          providersByEnvironment: new Map(
+            [...serverConfigs].map(([environmentId, config]) => [environmentId, config.providers]),
+          ),
+          weights: loadBalancingWeights,
+          referencedThreadContexts: referencedThreadContexts(),
+          activeProviderInstanceId: selectedModel.instanceId,
+          selectedProvider: selectedProviderStatus.driver,
+        })
+      : [];
+  // Picks once per Auto choice, then keeps the draft there, like web's composer.
+  const autoPickRequestRef = useRef<object | null>(null);
+  const runAutoPick = useEffectEvent(async (request: object) => {
+    const { projectKey, autoPool } = readFlow();
     const target = await pickLoadBalancedEnvironment(
       appAtomRegistry,
       serverEnvironment.hostResources,
-      candidateIds,
+      autoCandidateIds(),
       loadBalancingWeights,
     );
-    if (target === null || target === selectedProject.environmentId) return target;
-    const project = projectOn(target);
-    if (!project) return null;
-    // Moving drops machine-local workspace state; the branch choice carries over.
-    const { pullRequestReference, ...carried } = resolveWorkspaceSelection(
-      getComposerDraftSnapshot(selectedProjectDraftKey).workspaceSelection,
-    );
-    const draftKey = carryDraftContentTo(project);
+    const flow = readFlow();
+    if (
+      autoPickRequestRef.current !== request ||
+      flow.projectKey !== projectKey ||
+      flow.autoPool !== autoPool ||
+      flow.manualEnvironment ||
+      flow.autoPick !== null ||
+      flow.submitting
+    ) {
+      return;
+    }
+    autoPickRequestRef.current = null;
+    const project = target === null ? undefined : sameRepositoryProjectOn(target);
+    if (!project) {
+      updateFlow({ autoPick: { environmentId: null } });
+      return;
+    }
     updateFlow({
-      draftKey,
-      environmentId: target,
-      projectKey: scopedProjectKey(target, project.id),
+      // The target resolves its own workspace defaults; only a PR checkout carries over.
+      draftKey: carryDraftContentTo(project, { keepPullRequestWorkspace: true }),
+      environmentId: project.environmentId,
+      projectKey: scopedProjectKey(project.environmentId, project.id),
+      autoPick: { environmentId: project.environmentId },
     });
-    updateComposerDraftSettings(draftKey, {
-      workspaceSelection: {
-        ...carried,
-        worktreePath: null,
-        // A name or title match may be another repository, which must not receive the PR checkout.
-        ...(pullRequestReference !== undefined && isSameRepository(project, selectedProject)
-          ? { pullRequestReference }
-          : {}),
-      },
-    });
-    return target;
+  });
+  const needsAutoPick =
+    props.active !== false &&
+    activePool !== null &&
+    flowState.autoPick === null &&
+    selectedProjectDraftKey !== null &&
+    selectedModel !== null &&
+    selectedProviderStatus !== null &&
+    !submitting;
+  const autoPickPool = needsAutoPick ? activePool.key : null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts the host-resource pick that resolves an Auto draft to a machine
+  useEffect(() => {
+    if (autoPickPool === null) return;
+    const request = {};
+    autoPickRequestRef.current = request;
+    void runAutoPick(request);
+    return () => {
+      if (autoPickRequestRef.current === request) autoPickRequestRef.current = null;
+    };
+  }, [autoPickPool]);
+  const chooseAutoPool = (poolKey: string) => {
+    updateFlow({ manualEnvironment: false, autoPool: poolKey, autoPick: null });
+    if (!selectedProjectDraftKey) return;
+    // Choosing Auto drops a branch or worktree that pinned the draft to its machine.
+    const selection = getComposerDraftSnapshot(selectedProjectDraftKey).workspaceSelection;
+    if (selection && !selection.pullRequestReference) {
+      updateComposerDraftSettings(selectedProjectDraftKey, {
+        workspaceSelection: { mode: selection.mode, branch: null, worktreePath: null },
+      });
+    }
   };
+  const autoBalanceWarning = () =>
+    loadBalancingSendWarning(
+      {
+        pending: flowState.autoPick === null,
+        threadContexts: referencedThreadContexts(),
+        candidateEnvironmentIds: autoCandidateIds(),
+      },
+      m,
+    );
 
   const value = {
     activeNewTask,
@@ -1132,10 +1261,12 @@ export function NewTaskFlowProvider(
         ? { draftId: props.routeDraftId, kind: routeDraftResolution.kind }
         : null,
     selectEnvironment,
-    canAutoBalance,
-    autoEnvironment,
-    chooseAutoEnvironment: () => updateFlow({ manualEnvironment: false }),
+    autoPools,
     autoBalance,
+    chooseAutoPool,
+    pinEnvironment: () => updateFlow({ manualEnvironment: true }),
+    acknowledgeAutoBalance: () => updateFlow({ autoAcknowledged: activePool?.key ?? null }),
+    autoBalanceWarning,
     switchEnvironment,
     switchingToEnvironmentId,
     setSelectedModelKey,

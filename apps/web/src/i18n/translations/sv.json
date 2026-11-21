@@ -8828,7 +8828,6 @@
   "c66cd1455fe36678": "Av",
   "8c0303c36a69ecc0": "Balansera belastningen automatiskt",
   "ebfef435bd266c26": "Belastningsinställning för {environment}",
-  "a49a651079f9664d": "Nya trådar i delade projekt startar på den dator som har mest ledig CPU och minne, viktat efter varje dators inställning.",
   "da16b9e4be45ae09": "Det gick inte att ändra inställningen.",
   "d1781a918f8a11cf": "Kör agenter på den här datorn. Stäng av för att bara använda T3 Code med fjärrmiljöer.",
   "e1391d08740f38f0": "Avstängd. Agenter körs bara i fjärrmiljöer.",
@@ -12313,5 +12312,10 @@
   "27d76249d09eb69f": "Granskningsguiden är klar",
   "faa3bb26abb39c93": "Granskningsguiden misslyckades",
   "b7df38b7d8792d78": "Öppna guiden",
-  "9e91e9a77b664e4e": "Kunde inte starta en granskningsguide"
+  "9e91e9a77b664e4e": "Kunde inte starta en granskningsguide",
+  "46c62f145a1736aa": "Fördelar bara mellan datorer med det här projektet. Saknas på: {machines}",
+  "26c88f99d5805f73": "Fördela över färre datorer?\n{machines} har inte det här projektet, så {pool} väljer bara bland datorerna som har det. Gå tillbaka och välj en av dem för att starta där.",
+  "cb54c8d2ec301da8": "Fortsätt",
+  "c0ad4b16d188d74a": "{cluster} (lastbalanserad)",
+  "d9b631005b85a3bd": "Nya trådar startar på den dator som har mest ledig CPU och minne, viktat efter varje dators inställning. Kluster fördelar alltid mellan sina egna datorer; slå på detta för att också fördela mellan alla dina datorer."
 }

@@ -73,6 +73,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { toastManager } from "../ui/toast";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { ITEM_ROW_CLASSNAME } from "./itemRows";
+import { ClusterIcon } from "../ClusterIcon";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { useSearchableSetting } from "./settingsSearch";
 
@@ -132,6 +133,7 @@ export function ClusterSettings({
     <SettingsSection
       {...(isSearchTarget ? { id: search.id } : {})}
       title={showLabel ? `${search.title} · ${label}` : search.title}
+      icon={<ClusterIcon aria-hidden className="size-4 text-muted-foreground" />}
     >
       {status.error ? (
         <SettingsRow title={gt("Could not load the cluster")} description={status.error} />

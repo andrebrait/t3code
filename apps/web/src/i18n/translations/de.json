@@ -8822,7 +8822,6 @@
   "c66cd1455fe36678": "Aus",
   "8c0303c36a69ecc0": "Last automatisch verteilen",
   "ebfef435bd266c26": "Lastpräferenz für {environment}",
-  "a49a651079f9664d": "Neue Threads in gemeinsamen Projekten starten auf dem Rechner mit der meisten freien CPU und dem meisten freien Speicher, gewichtet nach der Präferenz jedes Rechners.",
   "da16b9e4be45ae09": "Diese Einstellung konnte nicht geändert werden.",
   "d1781a918f8a11cf": "Agenten auf diesem Computer ausführen. Ausschalten, um T3 Code nur mit Remote-Umgebungen zu nutzen.",
   "e1391d08740f38f0": "Ausgeschaltet. Agenten laufen nur in Remote-Umgebungen.",
@@ -12306,5 +12305,10 @@
   "27d76249d09eb69f": "Review-Leitfaden bereit",
   "faa3bb26abb39c93": "Review-Leitfaden fehlgeschlagen",
   "b7df38b7d8792d78": "Leitfaden öffnen",
-  "9e91e9a77b664e4e": "Review-Leitfaden konnte nicht gestartet werden"
+  "9e91e9a77b664e4e": "Review-Leitfaden konnte nicht gestartet werden",
+  "46c62f145a1736aa": "Verteilt nur auf Rechner mit diesem Projekt. Nicht auf: {machines}",
+  "26c88f99d5805f73": "Auf weniger Rechner verteilen?\n{machines} haben dieses Projekt nicht, daher wählt {pool} nur unter den Rechnern, die es haben. Um auf einem davon zu starten, geh zurück und wähle ihn aus.",
+  "cb54c8d2ec301da8": "Weiter",
+  "c0ad4b16d188d74a": "{cluster} (verteilt)",
+  "d9b631005b85a3bd": "Neue Threads starten auf dem Rechner mit der meisten freien CPU und dem meisten freien Speicher, gewichtet nach der Präferenz jedes Rechners. Cluster verteilen immer auf ihre eigenen Rechner; schalte dies ein, um auch auf alle deine Rechner zu verteilen."
 }

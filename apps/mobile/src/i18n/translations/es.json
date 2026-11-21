@@ -2057,7 +2057,6 @@
   "cbf49f84e7f456e5": "Equilibrio de carga",
   "8c0303c36a69ecc0": "Equilibrar la carga automáticamente",
   "ebfef435bd266c26": "Preferencia de carga de {environment}",
-  "c693a4efc8b2a466": "Los nuevos hilos de los proyectos compartidos empiezan en la máquina con más CPU y memoria libres, ponderado por la preferencia de cada máquina.",
   "4c6b2d924da2c94d": "Aún no hay entornos conectados.",
   "28494052dfb4647a": [
     "Toca ",
@@ -4249,7 +4248,6 @@
   "400667ed9c6be7f1": "Mostrar los detalles de conexión de {title}",
   "70a6342814614ba1": "Reconectar ahora",
   "25ae6917f8121f5d": "Equilibrio automático",
-  "9d55acffe9106b1b": "Al enviar, empieza en la máquina con más CPU y memoria libres.",
   "24ab73837f60e592": "No se pudo cambiar de rama",
   "ae508eab4195971a": "No se pudo hacer checkout de la rama.",
   "46bd5bedd660d528": "Buscar una rama",
@@ -5402,5 +5400,17 @@
   "ad208e3e32c85029": "Ocultar todo",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Llamadas a herramientas en el chat",
-  "8d545d54c0a9e950": "Oculta los comandos, ediciones y búsquedas que ejecutan los agentes. Ocultar las correctas mantiene los fallos. Zen solo muestra las respuestas finales. Las aprobaciones, preguntas y errores siempre se muestran."
+  "8d545d54c0a9e950": "Oculta los comandos, ediciones y búsquedas que ejecutan los agentes. Ocultar las correctas mantiene los fallos. Zen solo muestra las respuestas finales. Las aprobaciones, preguntas y errores siempre se muestran.",
+  "5cd298c5f5124a04": "Comprobando los recursos de las máquinas",
+  "7578705bfbac4a0e": "Las comprobaciones de recursos siguen en curso. Puedes elegir una máquina en el cuadro de mensaje.",
+  "48c031224e6f62f6": "Ninguna máquina puede leer todos los hilos adjuntos. Elige una máquina en el cuadro de mensaje o quita los hilos.",
+  "6d50bb227e79e08c": "Los nuevos hilos empiezan en la máquina con más CPU y memoria libres, ponderado por la preferencia de cada máquina. Los clústeres siempre reparten entre sus propias máquinas; activa esto para repartir también entre todas tus máquinas.",
+  "ff0f41243bccf129": "No está en: {machines}",
+  "46c62f145a1736aa": "Solo reparte entre máquinas con este proyecto. No está en: {machines}",
+  "53992fba6097f02b": "Empieza en la máquina con más CPU y memoria libres.",
+  "df0f6f7f50068f16": "¿Repartir entre menos máquinas?",
+  "47bc4354488e55ce": "{machines} no tienen este proyecto, así que {pool} solo elige entre las máquinas que lo tienen. Para empezar en una de ellas, vuelve atrás y elígela.",
+  "e6851054810ad073": "Atrás",
+  "cb54c8d2ec301da8": "Continuar",
+  "c0ad4b16d188d74a": "{cluster} (equilibrado)"
 }

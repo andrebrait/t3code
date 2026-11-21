@@ -30,8 +30,14 @@ export interface NewTaskFlowState {
   readonly draftKey: string | null;
   readonly submitting: boolean;
   readonly expandedProvider: string | null;
-  /** The user picked a machine, so Auto balance no longer chooses one. */
+  /** The user picked a machine or branch, so Auto balance no longer chooses one. */
   readonly manualEnvironment: boolean;
+  /** The Auto pool picked in the picker; null takes the default one. */
+  readonly autoPool: string | null;
+  /** Auto's pick for the draft, once made; a null machine means none qualified. */
+  readonly autoPick: { readonly environmentId: EnvironmentId | null } | null;
+  /** The pool whose machines without the project the user accepted leaving out. */
+  readonly autoAcknowledged: string | null;
 }
 
 export const INITIAL_NEW_TASK_FLOW_STATE: NewTaskFlowState = {
@@ -41,6 +47,9 @@ export const INITIAL_NEW_TASK_FLOW_STATE: NewTaskFlowState = {
   submitting: false,
   expandedProvider: null,
   manualEnvironment: false,
+  autoPool: null,
+  autoPick: null,
+  autoAcknowledged: null,
 };
 
 // Every draft route on the stack keeps its flow, not just the one the provider

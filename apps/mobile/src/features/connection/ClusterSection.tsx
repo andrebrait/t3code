@@ -37,6 +37,8 @@ import { useEnvironmentServerConfig } from "../../state/entities";
 import { formatEnvironmentQueryError, useEnvironmentQuery } from "../../state/query";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { CLUSTER_SYMBOL } from "../../lib/clusterSymbol";
 import { SettingsSection } from "../settings/components/SettingsSection";
 
 function alertFailure(
@@ -97,7 +99,12 @@ export function ClusterSection(props: {
     const host = status.data.host?.label ?? "";
     return (
       <View className="mt-5">
-        <SettingsSection title={title}>
+        <SettingsSection
+          title={title}
+          titleIcon={
+            <SymbolView name={CLUSTER_SYMBOL} size={14} tintColorClassName="accent-icon-muted" />
+          }
+        >
           <Row>
             <Text className="text-base font-t3-bold text-foreground">
               {gt("Member of {host}", { host })}
@@ -139,7 +146,12 @@ export function ClusterSection(props: {
   return (
     <View className="mt-5 gap-3">
       {role === "main" ? (
-        <SettingsSection title={title}>
+        <SettingsSection
+          title={title}
+          titleIcon={
+            <SymbolView name={CLUSTER_SYMBOL} size={14} tintColorClassName="accent-icon-muted" />
+          }
+        >
           {members.error ? (
             <Row>
               <Text className="text-xs text-danger-foreground">{members.error}</Text>
@@ -200,7 +212,12 @@ export function ClusterSection(props: {
           )}
         </SettingsSection>
       ) : actions.join || actions.add ? (
-        <SettingsSection title={title}>
+        <SettingsSection
+          title={title}
+          titleIcon={
+            <SymbolView name={CLUSTER_SYMBOL} size={14} tintColorClassName="accent-icon-muted" />
+          }
+        >
           {actions.join ? (
             <ListActionRow
               icon="link"

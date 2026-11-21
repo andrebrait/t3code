@@ -37,9 +37,11 @@ import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { DraftSessionState } from "../../composerDraftStore";
 import {
+  type LoadBalancingPool,
   loadBalancingCandidateIds,
   loadBalancingSendWarning,
 } from "@t3tools/client-runtime/load-balancing";
+import { Atom } from "effect/reactivity";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { seedDraftModelSelection } from "../../lib/seedDraftModelSelection";
 import { draftFanoutSelectionsAtom } from "./chatViewSend";
@@ -59,6 +61,9 @@ interface DraftEnvironmentRoutingInput {
   readonly loadBalancingSettings: {
     readonly loadBalancingWeights: Readonly<Record<string, number>>;
   };
+  /** The pool Auto balances in for this draft, and every pool it could choose. */
+  readonly loadBalancingPool: LoadBalancingPool | null;
+  readonly loadBalancingPools: ReadonlyArray<LoadBalancingPool>;
   readonly referencedThreadContexts: ReadonlyArray<ThreadContextRecord>;
   readonly activeProviderInstanceId: ProviderInstanceId | null;
   readonly selectedProvider: ProviderDriverKind;
@@ -68,6 +73,17 @@ interface DraftEnvironmentRoutingInput {
   readonly projectGroupingSettings: ReturnType<typeof selectProjectGroupingSettings>;
   readonly sendInFlightRef: { readonly current: boolean };
 }
+
+/**
+ * Per draft, in memory: the Auto pool picked in the composer, and the pool whose machines
+ * without the project the user already accepted leaving out.
+ */
+export const draftLoadBalancingPoolAtom = Atom.family((_draftId: string) =>
+  Atom.make<{ readonly chosen: string | null; readonly acknowledged: string | null }>({
+    chosen: null,
+    acknowledged: null,
+  }).pipe(Atom.keepAlive),
+);
 
 // Multiple-model selections are kept per route, so a draft moving machine takes them along.
 function carryFanoutSelections(
@@ -100,6 +116,8 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     environmentById,
     providersByEnvironment,
     loadBalancingSettings,
+    loadBalancingPool,
+    loadBalancingPools,
     referencedThreadContexts,
     activeProviderInstanceId,
     selectedProvider,
@@ -122,7 +140,9 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
   const needsLoadBalancing = automaticEnvironment && !draftThread?.loadBalancedEnvironmentId;
   const loadBalancingCandidates = automaticEnvironment
     ? loadBalancingCandidateIds({
-        candidates: logicalProjectEnvironments,
+        candidates: logicalProjectEnvironments.filter((environment) =>
+          loadBalancingPool?.environmentIds.includes(environment.environmentId),
+        ),
         environmentById,
         providersByEnvironment,
         weights: loadBalancingSettings.loadBalancingWeights,
@@ -268,7 +288,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     getDraftSession,
     setDraftThreadContext,
   ]);
-  const onAutoEnvironment = () => {
+  const onAutoEnvironment = (poolKey: string) => {
     if (envLocked || !draftId || sendInFlightRef.current) return;
     if (composerHasAttachments) {
       toastManager.add({
@@ -283,6 +303,8 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       });
       return;
     }
+    const pool = draftLoadBalancingPoolAtom(draftId);
+    appAtomRegistry.set(pool, { ...appAtomRegistry.get(pool), chosen: poolKey });
     loadBalancing.refresh(
       logicalProjectEnvironments.map((environment) => environment.environmentId),
     );
@@ -294,15 +316,55 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     });
   };
   const onAutoEnvironmentStable = useStableCallback(onAutoEnvironment);
-  const autoEnvironmentLabel = automaticEnvironment
-    ? draftThread?.loadBalancedEnvironmentId
-      ? gt("Auto balance")
-      : loadBalancing.pending
-        ? gt("Checking machines…")
-        : loadBalancing.failed
-          ? gt("Auto balance unavailable")
-          : gt("Auto balance")
-    : undefined;
+  const poolLabel = (pool: LoadBalancingPool) =>
+    pool.cluster
+      ? gt("{cluster} (load balanced)", { cluster: pool.cluster.label })
+      : gt("Auto balance");
+  // A cluster's choice always names the cluster, never a bare Auto.
+  const autoEnvironmentLabel = !automaticEnvironment
+    ? undefined
+    : loadBalancingPool?.cluster
+      ? poolLabel(loadBalancingPool)
+      : draftThread?.loadBalancedEnvironmentId
+        ? gt("Auto balance")
+        : loadBalancing.pending
+          ? gt("Checking machines…")
+          : loadBalancing.failed
+            ? gt("Auto balance unavailable")
+            : gt("Auto balance");
+  const autoEnvironments = loadBalancingPools.map((pool) => {
+    const active = automaticEnvironment && pool.key === loadBalancingPool?.key;
+    return {
+      key: pool.key,
+      label: active && autoEnvironmentLabel ? autoEnvironmentLabel : poolLabel(pool),
+      cluster: pool.cluster !== null,
+      missingLabels: pool.missingLabels,
+      active,
+    };
+  });
+  // Asks once per draft before Auto leaves out machines that lack the project.
+  const confirmAutoBalance = async () => {
+    const pool = loadBalancingPool;
+    if (!automaticEnvironment || !draftId || !pool || pool.missingEnvironmentIds.length === 0) {
+      return true;
+    }
+    const choice = draftLoadBalancingPoolAtom(draftId);
+    if (appAtomRegistry.get(choice).acknowledged === pool.key) return true;
+    const question = m(
+      msg(
+        "Load balance across fewer machines?\n{machines} don't have this project, so {pool} only picks among the machines that do. To start on one of them, go back and choose it.",
+        { machines: pool.missingLabels.join(", "), pool: poolLabel(pool) },
+      ),
+    );
+    const confirmed = await (requestConfirmDialog(question, {
+      initialFocus: "confirm",
+      confirmLabel: m(msg("Continue", { $context: "load balance across fewer machines" })),
+    }) ?? Promise.resolve(window.confirm(question)));
+    if (confirmed) {
+      appAtomRegistry.set(choice, { ...appAtomRegistry.get(choice), acknowledged: pool.key });
+    }
+    return confirmed;
+  };
 
   // A change in flight belongs to the draft and project it started on.
   const environmentChangeScope = `${draftId ?? ""}:${activeProjectKey ?? ""}`;
@@ -444,6 +506,8 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     refreshBeforeSend,
     onAutoEnvironmentStable,
     autoEnvironmentLabel,
+    autoEnvironments,
+    confirmAutoBalance,
     isEnvironmentChanging,
     readPendingEnvironmentChange,
     onEnvironmentChangeStable,

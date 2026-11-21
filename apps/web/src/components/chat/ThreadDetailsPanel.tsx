@@ -12,7 +12,11 @@ import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 
 import type { ComposerThreadTarget, DraftId } from "../../composerDraftStore";
 import { useT3ProjectFileScripts } from "../../hooks/useT3ProjectFileScripts";
-import { type EnvMode, type EnvironmentOption } from "../BranchToolbar.logic";
+import {
+  type AutoEnvironmentOption,
+  type EnvMode,
+  type EnvironmentOption,
+} from "../BranchToolbar.logic";
 import { BranchToolbar } from "../BranchToolbar";
 import GitActionsControl from "../GitActionsControl";
 import ProjectScriptsControl, {
@@ -71,7 +75,8 @@ interface ThreadDetailsPanelProps extends Pick<
   envLocked: boolean;
   availableEnvironments: readonly EnvironmentOption[];
   autoEnvironmentLabel?: string | undefined;
-  onAutoEnvironment?: (() => void) | undefined;
+  onAutoEnvironment?: ((key: string) => void) | undefined;
+  autoEnvironments?: ReadonlyArray<AutoEnvironmentOption> | undefined;
   onEnvironmentChange?: (environmentId: EnvironmentId) => void;
   onEnvModeChange: (mode: EnvMode) => void;
   envMode: EnvMode;
@@ -198,6 +203,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                           : {})}
                         autoEnvironmentLabel={props.autoEnvironmentLabel}
                         onAutoEnvironment={props.onAutoEnvironment}
+                        autoEnvironments={props.autoEnvironments}
                         {...branchToolbarProps}
                       />
                     ) : null}

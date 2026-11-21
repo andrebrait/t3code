@@ -1,4 +1,5 @@
-import { T, useGT, useMessages, Var } from "gt-react-native";
+import { msg, T, useGT, useMessages, Var } from "gt-react-native";
+import { m as resolveMessage } from "../../i18n/messages";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { DraftEnvironmentControl } from "./DraftEnvironmentControl";
 import { NativeScrollEdgeEffectsContext } from "../../native/NativeScrollViewMarker";
@@ -13,7 +14,7 @@ import { scopedProjectKey } from "../../lib/scopedEntities";
 import { connectionTone } from "../connection/connectionTone";
 import { runtimeConnectionErrorText } from "../connection/environmentStatusText";
 import { AppBar } from "../../components/ui/AppBar";
-import { type EnvironmentId, type MessageId, ThreadId } from "@t3tools/contracts";
+import { type MessageId, ThreadId } from "@t3tools/contracts";
 
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
@@ -29,7 +30,7 @@ import {
   usePreventRemove,
   useRoute,
 } from "@react-navigation/native";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { KeyboardController } from "react-native-keyboard-controller";
@@ -152,6 +153,28 @@ function NewTaskWorkspaceIcon(props: {
   );
 }
 
+function confirmFewerMachines(pool: string, machines: ReadonlyArray<string>): Promise<boolean> {
+  return new Promise((resolve) =>
+    Dialog.confirm({
+      title: resolveMessage(msg("Load balance across fewer machines?")),
+      message: resolveMessage(
+        msg(
+          "{machines} don't have this project, so {pool} only picks among the machines that do. To start on one of them, go back and choose it.",
+          { machines: machines.join(", "), pool },
+        ),
+      ),
+      cancelText: resolveMessage(
+        msg("Go back", { $context: "return to the draft without sending" }),
+      ),
+      confirmText: resolveMessage(
+        msg("Continue", { $context: "load balance across fewer machines" }),
+      ),
+      onConfirm: () => resolve(true),
+      onCancel: () => resolve(false),
+    }),
+  );
+}
+
 export function NewTaskDraftScreen(props: {
   readonly initialProjectRef?: {
     readonly environmentId?: string;
@@ -174,7 +197,7 @@ export function NewTaskDraftScreen(props: {
   const currentRoute = useRoute();
   const flowKey = newTaskFlowKey(currentRoute);
   const { getShare, isLoading: isIncomingShareInboxLoading } = useIncomingShare();
-  const { projectScopes, selectedProject, selectedProjectKey, setProject } = flow;
+  const { pinEnvironment, projectScopes, selectedProject, selectedProjectKey, setProject } = flow;
   // selectedProject falls back to the environment's first project; remember only a chosen one.
   useRememberThreadProject(
     selectedProject &&
@@ -456,6 +479,7 @@ export function NewTaskDraftScreen(props: {
             return;
           }
           // Checkout completed before mount; local mode reuses it while worktree mode would create another.
+          pinEnvironment();
           updateComposerDraftSettings(flow.draftKey, {
             workspaceSelection: {
               mode: "local",
@@ -523,6 +547,7 @@ export function NewTaskDraftScreen(props: {
     selectedProject,
     selectedProjectKey,
     setProject,
+    pinEnvironment,
   ]);
 
   const { loadBranches } = flow;
@@ -722,40 +747,21 @@ export function NewTaskDraftScreen(props: {
     return message.messageId;
   }
 
-  // An Auto send that moved the draft finishes with the render showing the picked machine.
-  const latestStartRef = useRef(handleStart);
-  const autoMoveRef = useRef<{ environmentId: EnvironmentId; resume: () => void } | null>(null);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resumes an Auto send once the draft renders on the machine it moved to
-  useLayoutEffect(() => {
-    latestStartRef.current = handleStart;
-    if (!flow.submitting && autoMoveRef.current?.environmentId === selectedProject?.environmentId) {
-      autoMoveRef.current?.resume();
-      autoMoveRef.current = null;
-    }
-  });
   async function handleSend(): Promise<MessageId | null> {
-    if (!flow.autoEnvironment || isComposerInteractionLocked || cloneBlocksStart) {
-      return handleStart();
+    const auto = flow.autoBalance;
+    if (auto && !isComposerInteractionLocked) {
+      if (auto.status !== "resolved") {
+        const warning = flow.autoBalanceWarning();
+        Dialog.alert(warning.title, warning.description);
+        return null;
+      }
+      if (auto.missingLabels.length > 0 && !auto.acknowledged) {
+        const proceed = await confirmFewerMachines(auto.label, auto.missingLabels);
+        if (!proceed) return null;
+        flow.acknowledgeAutoBalance();
+      }
     }
-    flow.setSubmitting(true);
-    const target = await flow.autoBalance();
-    if (target === null || target === selectedProject?.environmentId) {
-      flow.setSubmitting(false);
-      if (target !== null) return handleStart();
-      Dialog.alert(
-        gt("Choose a machine to continue"),
-        gt(
-          "No eligible machine has available resources. Choose a machine in the composer to override.",
-        ),
-      );
-      return null;
-    }
-    const moved = new Promise<void>((resume) => {
-      autoMoveRef.current = { environmentId: target, resume };
-    });
-    flow.setSubmitting(false);
-    await moved;
-    return latestStartRef.current();
+    return handleStart();
   }
 
   // Keep the current surface until the local draft selection is ready. Publishing
@@ -792,7 +798,7 @@ export function NewTaskDraftScreen(props: {
   const environmentControl = (
     <DraftEnvironmentControl
       connectionState={connectionState}
-      label={flow.autoEnvironment ? gt("Auto balance") : selectedEnvironmentLabel}
+      label={flow.autoBalance?.label ?? selectedEnvironmentLabel}
       machineKind={resolveEnvironmentMachineKind(selectedEnvironmentServerConfig)}
       disabled={isComposerInteractionLocked}
       onChooseEnvironment={() => openContextPicker("NewTaskEnvironment")}

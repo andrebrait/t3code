@@ -8820,7 +8820,6 @@
   "c66cd1455fe36678": "Desactivado",
   "8c0303c36a69ecc0": "Equilibrar la carga automáticamente",
   "ebfef435bd266c26": "Preferencia de carga de {environment}",
-  "a49a651079f9664d": "Los nuevos hilos de los proyectos compartidos empiezan en la máquina con más CPU y memoria libres, ponderado por la preferencia de cada máquina.",
   "da16b9e4be45ae09": "No se pudo cambiar este ajuste.",
   "d1781a918f8a11cf": "Ejecuta agentes en este equipo. Desactívalo para usar T3 Code solo con entornos remotos.",
   "e1391d08740f38f0": "Desactivado. Los agentes solo se ejecutan en entornos remotos.",
@@ -12301,5 +12300,10 @@
   "27d76249d09eb69f": "Guía de revisión lista",
   "faa3bb26abb39c93": "Falló la guía de revisión",
   "b7df38b7d8792d78": "Abrir guía",
-  "9e91e9a77b664e4e": "No se pudo iniciar una guía de revisión"
+  "9e91e9a77b664e4e": "No se pudo iniciar una guía de revisión",
+  "46c62f145a1736aa": "Solo reparte entre máquinas con este proyecto. No está en: {machines}",
+  "26c88f99d5805f73": "¿Repartir entre menos máquinas?\n{machines} no tienen este proyecto, así que {pool} solo elige entre las máquinas que lo tienen. Para empezar en una de ellas, vuelve atrás y elígela.",
+  "cb54c8d2ec301da8": "Continuar",
+  "c0ad4b16d188d74a": "{cluster} (equilibrado)",
+  "d9b631005b85a3bd": "Los nuevos hilos empiezan en la máquina con más CPU y memoria libres, ponderado por la preferencia de cada máquina. Los clústeres siempre reparten entre sus propias máquinas; activa esto para repartir también entre todas tus máquinas."
 }

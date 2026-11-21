@@ -2057,7 +2057,6 @@
   "cbf49f84e7f456e5": "Load balancing",
   "8c0303c36a69ecc0": "Automatically balance load",
   "ebfef435bd266c26": "{environment} load preference",
-  "c693a4efc8b2a466": "New threads in shared projects start on the machine with the most free CPU and memory, weighted by each machine's preference.",
   "4c6b2d924da2c94d": "No environments connected yet.",
   "28494052dfb4647a": [
     "Tap ",
@@ -4257,7 +4256,6 @@
   "400667ed9c6be7f1": "Show connection details for {title}",
   "70a6342814614ba1": "Reconnect now",
   "25ae6917f8121f5d": "Auto balance",
-  "9d55acffe9106b1b": "Starts on the machine with the most free CPU and memory when you send.",
   "24ab73837f60e592": "Could not switch branch",
   "ae508eab4195971a": "The branch could not be checked out.",
   "46bd5bedd660d528": "Find a branch",
@@ -5409,5 +5407,17 @@
   "ad208e3e32c85029": "Hide all",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Tool calls in chat",
-  "8d545d54c0a9e950": "Hide the commands, edits, and searches agents run. Hide successful keeps failures. Zen shows only final answers. Approvals, questions, and errors always show."
+  "8d545d54c0a9e950": "Hide the commands, edits, and searches agents run. Hide successful keeps failures. Zen shows only final answers. Approvals, questions, and errors always show.",
+  "5cd298c5f5124a04": "Checking machine resources",
+  "7578705bfbac4a0e": "Resource checks are still running. You can choose a machine in the composer.",
+  "48c031224e6f62f6": "No machine can read every attached thread. Choose a machine in the composer or remove the threads.",
+  "6d50bb227e79e08c": "New threads start on the machine with the most free CPU and memory, weighted by each machine's preference. Clusters always balance across their own machines; turn this on to also balance across all your machines.",
+  "ff0f41243bccf129": "Not on: {machines}",
+  "46c62f145a1736aa": "Balances only across machines with this project. Not on: {machines}",
+  "53992fba6097f02b": "Starts on the machine with the most free CPU and memory.",
+  "df0f6f7f50068f16": "Load balance across fewer machines?",
+  "47bc4354488e55ce": "{machines} don't have this project, so {pool} only picks among the machines that do. To start on one of them, go back and choose it.",
+  "e6851054810ad073": "Go back",
+  "cb54c8d2ec301da8": "Continue",
+  "c0ad4b16d188d74a": "{cluster} (load balanced)"
 }

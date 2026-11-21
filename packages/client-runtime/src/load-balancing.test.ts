@@ -12,7 +12,12 @@ import { scopeThreadRef } from "./environment/scoped.ts";
 
 import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 
-import { loadBalancingCandidateIds, loadBalancingSendWarning } from "./load-balancing.ts";
+import { ClusterConnectionTarget, PrimaryConnectionTarget } from "./connection/model.ts";
+import {
+  loadBalancingCandidateIds,
+  loadBalancingPools,
+  loadBalancingSendWarning,
+} from "./load-balancing.ts";
 
 const local = EnvironmentId.make("local");
 const remote = EnvironmentId.make("remote");
@@ -103,5 +108,79 @@ describe("loadBalancingSendWarning", () => {
         candidateEnvironmentIds: [remote, local],
       }).description,
     ).toMatch(/No eligible machine has available resources/);
+  });
+});
+
+describe("loadBalancingPools", () => {
+  const host = EnvironmentId.make("ai-dev");
+  const worker2 = EnvironmentId.make("ai-worker-2");
+  const worker3 = EnvironmentId.make("ai-worker-3");
+  const laptop = EnvironmentId.make("laptop");
+  const machine = (environmentId: EnvironmentId, label: string, member: boolean) => ({
+    environmentId,
+    label,
+    entry: {
+      enabled: true,
+      target: member
+        ? new ClusterConnectionTarget({
+            environmentId,
+            label,
+            hostEnvironmentId: host,
+            hostLabel: "ai-dev",
+            hostConnectionKey: null,
+            status: "online",
+            statusDetail: null,
+          })
+        : new PrimaryConnectionTarget({
+            environmentId,
+            label,
+            httpBaseUrl: "https://example.test/",
+            wsBaseUrl: "wss://example.test/",
+          }),
+    },
+    connection: { phase: "connected" },
+  });
+  const cluster = [
+    machine(host, "ai-dev", false),
+    machine(worker2, "ai-worker-2", true),
+    machine(worker3, "ai-worker-3", true),
+  ];
+  const pools = (
+    environments: ReadonlyArray<ReturnType<typeof machine>>,
+    hasProject: ReadonlyArray<EnvironmentId>,
+    weights: Record<string, number> = {},
+    autoEnabled = true,
+  ) =>
+    loadBalancingPools({ environments, weights, hasProject: new Set(hasProject), autoEnabled }).map(
+      (pool) => [pool.key, pool.environmentIds, pool.missingEnvironmentIds],
+    );
+
+  it("offers a lone cluster once, with the machines that lack the project", () => {
+    expect(pools(cluster, [host])).toEqual([[host, [host, worker2, worker3], [worker2, worker3]]]);
+  });
+
+  it("offers Auto over every machine beside each cluster", () => {
+    expect(pools([...cluster, machine(laptop, "laptop", false)], [host, laptop])).toEqual([
+      ["auto", [host, worker2, worker3, laptop], [worker2, worker3]],
+      [host, [host, worker2, worker3], [worker2, worker3]],
+    ]);
+  });
+
+  it("balances clusters while the client's switch is off, but offers Auto only when on", () => {
+    const environments = [...cluster, machine(laptop, "laptop", false)];
+    expect(pools(environments, [host, laptop], {}, false)).toEqual([
+      [host, [host, worker2, worker3], [worker2, worker3]],
+    ]);
+  });
+
+  it("leaves Manual only machines out of the pool and its missing list", () => {
+    expect(pools(cluster, [host], { [worker3]: 0 })).toEqual([[host, [host, worker2], [worker2]]]);
+  });
+
+  it("offers nothing with one eligible machine or none with the project", () => {
+    expect(pools(cluster, [host], { [worker2]: 0, [worker3]: 0 })).toEqual([]);
+    expect(pools([machine(host, "ai-dev", false), machine(laptop, "laptop", false)], [])).toEqual(
+      [],
+    );
   });
 });

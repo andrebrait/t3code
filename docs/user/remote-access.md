@@ -203,21 +203,29 @@ different permissions.
 
 ### Balance new threads across machines
 
-Auto balance is off by default. On web and desktop, enable it in
-**Settings → Environments → Load balancing** to automatically choose a machine for
-new threads in projects grouped across connected environments. The section
-appears once two or more machines are switched on.
+New threads can start on the machine with the most free CPU and memory. In the
+machine picker of a new thread, each cluster offers **<main host> (load balanced)**,
+which picks among that cluster's machines. Clusters do this by default. Turn on
+**Settings → Environments → Load balancing → Automatically balance load** to also
+get **Auto balance**, which picks among all your machines. The section appears once
+two or more machines are switched on, on web, desktop and mobile.
+
 Each machine starts at **Normal**. Choose **Prefer** to favor it when it has CPU and
 memory available, **Less often** to reduce its share, or **Manual only** to exclude
 it from automatic selection. These are preferences, not fixed traffic percentages.
-Preferences are saved separately in each client.
+Preferences are saved separately in each client. Cluster machines stay editable while
+the switch is off, because the cluster's own choice still uses them.
 
-The composer checks eligible machines when choosing a draft's environment, then keeps
-that choice stable. Choose **Auto balance** again to check current resources, or choose
-a specific machine to override it. Choosing a branch or worktree also keeps the draft
-on that machine. Existing threads stay where they started. If resource checks are
+A balanced choice only picks machines that already have the project; it never clones
+it. When some of its machines lack the project, the picker warns and lists them, and
+the first send asks whether to continue on the machines that have it. To use one that
+lacks it, choose that machine instead.
+
+The draft checks eligible machines when it opens or when you choose a balanced option,
+then keeps that choice stable. Choose the option again to check current resources, or
+choose a specific machine to override it. Choosing a branch or worktree also keeps the
+draft on that machine. Existing threads stay where they started. If resource checks are
 unavailable or all eligible machines are full, choose a machine manually to continue.
-Mobile keeps its manual environment selection.
 
 ### Tailscale HTTPS
 
@@ -555,9 +563,11 @@ code only.
 - A new thread in a project with a git remote can run on any online member,
   and on the main host, even before that machine has the project. The machine
   picker marks such a machine **clones the project**. Choosing it asks first,
-  then clones the project from its remote into that machine's Add Project
-  folder; the composer shows the clone, and the thread starts there once it
-  finishes. Auto balance only uses machines that already have the project.
+  then clones the project from its remote to the same path it has on the
+  machine you started from (a path under that machine's home stays under the
+  target's home); the composer shows the clone, and the thread starts there
+  once it finishes. Balanced choices only use machines that already have the
+  project.
   Ignored files such as `.env` are not copied; use **Add to another machine**
   for those.
 

@@ -1,4 +1,7 @@
-import { loadBalancingPreferenceForWeight } from "@t3tools/client-runtime/load-balancing";
+import {
+  clusterEnvironmentIds,
+  loadBalancingPreferenceForWeight,
+} from "@t3tools/client-runtime/load-balancing";
 import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import { msg, T, useGT, useMessages } from "gt-react";
 
@@ -58,6 +61,7 @@ export function LoadBalancingSettings({
   const items = preferences.map((entry) => ({ ...entry, label: m(entry.label) }));
 
   if (environments.length < 2) return null;
+  const clusterIds = clusterEnvironmentIds(environments);
 
   const { id, title } = searchableSetting("load-balancing");
   return (
@@ -80,8 +84,9 @@ export function LoadBalancingSettings({
     >
       <p className="px-3 py-2.5 text-xs text-muted-foreground sm:px-4">
         <T>
-          New threads in shared projects start on the machine with the most free CPU and memory,
-          weighted by each machine's preference.
+          New threads start on the machine with the most free CPU and memory, weighted by each
+          machine's preference. Clusters always balance across their own machines; turn this on to
+          also balance across all your machines.
         </T>
       </p>
       {environments.map((environment) => (
@@ -96,7 +101,10 @@ export function LoadBalancingSettings({
             value={loadBalancingPreferenceForWeight(
               settings.loadBalancingWeights[environment.environmentId],
             )}
-            disabled={!settingsHydrated || !settings.loadBalancingEnabled}
+            disabled={
+              !settingsHydrated ||
+              (!settings.loadBalancingEnabled && !clusterIds.has(environment.environmentId))
+            }
             onValueChange={(value) => {
               if (value === null) return;
               updateClientSettings({

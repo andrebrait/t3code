@@ -2057,7 +2057,6 @@
   "cbf49f84e7f456e5": "Répartition de charge",
   "8c0303c36a69ecc0": "Répartir automatiquement la charge",
   "ebfef435bd266c26": "Préférence de charge de {environment}",
-  "c693a4efc8b2a466": "Les nouveaux fils des projets partagés démarrent sur la machine qui a le plus de CPU et de mémoire libres, pondéré par la préférence de chaque machine.",
   "4c6b2d924da2c94d": "Aucun environnement connecté pour l’instant.",
   "28494052dfb4647a": [
     "Touchez ",
@@ -4250,7 +4249,6 @@
   "400667ed9c6be7f1": "Afficher les détails de connexion de {title}",
   "70a6342814614ba1": "Se reconnecter maintenant",
   "25ae6917f8121f5d": "Répartition automatique",
-  "9d55acffe9106b1b": "Démarre, à l'envoi, sur la machine qui a le plus de CPU et de mémoire libres.",
   "24ab73837f60e592": "Impossible de changer de branche",
   "ae508eab4195971a": "Le checkout de la branche a échoué.",
   "46bd5bedd660d528": "Trouver une branche",
@@ -5402,5 +5400,17 @@
   "ad208e3e32c85029": "Tout masquer",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Appels d’outils dans la discussion",
-  "8d545d54c0a9e950": "Masque les commandes, modifications et recherches lancées par les agents. Masquer les réussis garde les échecs. Zen n’affiche que les réponses finales. Les approbations, questions et erreurs s’affichent toujours."
+  "8d545d54c0a9e950": "Masque les commandes, modifications et recherches lancées par les agents. Masquer les réussis garde les échecs. Zen n’affiche que les réponses finales. Les approbations, questions et erreurs s’affichent toujours.",
+  "5cd298c5f5124a04": "Vérification des ressources des machines",
+  "7578705bfbac4a0e": "Les vérifications des ressources sont en cours. Vous pouvez choisir une machine dans la zone de saisie.",
+  "48c031224e6f62f6": "Aucune machine ne peut lire tous les fils joints. Choisissez une machine dans la zone de saisie ou retirez les fils.",
+  "6d50bb227e79e08c": "Les nouveaux fils démarrent sur la machine qui a le plus de CPU et de mémoire libres, pondéré par la préférence de chaque machine. Les clusters répartissent toujours sur leurs propres machines ; activez ceci pour répartir aussi sur toutes vos machines.",
+  "ff0f41243bccf129": "Absent de : {machines}",
+  "46c62f145a1736aa": "Répartit uniquement entre les machines qui ont ce projet. Absent de : {machines}",
+  "53992fba6097f02b": "Démarre sur la machine qui a le plus de CPU et de mémoire libres.",
+  "df0f6f7f50068f16": "Répartir sur moins de machines ?",
+  "47bc4354488e55ce": "{machines} n'ont pas ce projet, donc {pool} choisit uniquement parmi les machines qui l'ont. Pour démarrer sur l'une d'elles, revenez en arrière et choisissez-la.",
+  "e6851054810ad073": "Revenir en arrière",
+  "cb54c8d2ec301da8": "Continuer",
+  "c0ad4b16d188d74a": "{cluster} (réparti)"
 }

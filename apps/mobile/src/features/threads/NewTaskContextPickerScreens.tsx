@@ -33,6 +33,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { cn } from "../../lib/cn";
+import { CLUSTER_SYMBOL } from "../../lib/clusterSymbol";
 import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { vcsEnvironment } from "../../state/vcs";
@@ -207,32 +208,57 @@ export function NewTaskEnvironmentPickerRouteScreen() {
           showsVerticalScrollIndicator={false}
         >
           <PickerSurface>
-            {flow.canAutoBalance ? (
+            {flow.autoPools.map((pool) => (
               <Pressable
+                key={pool.key}
                 accessibilityRole="radio"
-                accessibilityState={{ checked: flow.autoEnvironment }}
+                accessibilityLabel={
+                  pool.missingLabels.length > 0
+                    ? `${pool.label}, ${gt("Not on: {machines}", { machines: pool.missingLabels.join(", ") })}`
+                    : pool.label
+                }
+                accessibilityState={{ checked: pool.active }}
                 disabled={flow.switchingToEnvironmentId !== null}
                 onPress={() => {
                   void Haptics.selectionAsync();
-                  flow.chooseAutoEnvironment();
+                  flow.chooseAutoPool(pool.key);
                   navigation.goBack();
                 }}
                 className="min-h-16 flex-row items-center gap-3 border-b border-border-subtle bg-grouped-card px-4 py-3 active:bg-subtle"
               >
-                <SymbolView name="server.rack" size={20} tintColorClassName="accent-icon-muted" />
+                <SymbolView
+                  name={pool.cluster ? CLUSTER_SYMBOL : "slider.horizontal.3"}
+                  size={20}
+                  tintColorClassName="accent-icon-muted"
+                />
                 <View className="min-w-0 flex-1 gap-1">
                   <Text className="text-base font-t3-medium text-foreground" numberOfLines={1}>
-                    {gt("Auto balance")}
+                    {pool.label}
                   </Text>
-                  <Text className="text-xs text-foreground-muted" numberOfLines={2}>
-                    {gt("Starts on the machine with the most free CPU and memory when you send.")}
-                  </Text>
+                  {pool.missingLabels.length > 0 ? (
+                    <View className="flex-row items-start gap-1.5">
+                      <SymbolView
+                        name="exclamationmark.triangle"
+                        size={12}
+                        tintColorClassName="accent-warning-foreground"
+                      />
+                      <Text className="shrink text-xs text-warning-foreground" numberOfLines={3}>
+                        {gt("Balances only across machines with this project. Not on: {machines}", {
+                          machines: pool.missingLabels.join(", "),
+                        })}
+                      </Text>
+                    </View>
+                  ) : (
+                    <Text className="text-xs text-foreground-muted" numberOfLines={2}>
+                      {gt("Starts on the machine with the most free CPU and memory.")}
+                    </Text>
+                  )}
                 </View>
-                {flow.autoEnvironment ? (
+                {pool.active ? (
                   <SymbolView name="checkmark" size={16} tintColorClassName="accent-icon" />
                 ) : null}
               </Pressable>
-            ) : null}
+            ))}
             {flow.environments.map((environment, index) => (
               <EnvironmentPickerRow
                 key={String(environment.environmentId)}
@@ -247,7 +273,8 @@ export function NewTaskEnvironmentPickerRouteScreen() {
                   });
                 }}
                 selected={
-                  !flow.autoEnvironment && flow.selectedEnvironmentId === environment.environmentId
+                  flow.autoBalance === null &&
+                  flow.selectedEnvironmentId === environment.environmentId
                 }
                 title={environment.environmentLabel}
               />

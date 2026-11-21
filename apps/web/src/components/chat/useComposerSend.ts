@@ -248,6 +248,7 @@ interface ComposerSendInput {
   readonly needsLoadBalancing: boolean;
   readonly loadBalancing: DraftEnvironmentRouting["loadBalancing"];
   readonly refreshBeforeSend: DraftEnvironmentRouting["refreshBeforeSend"];
+  readonly confirmAutoBalance: DraftEnvironmentRouting["confirmAutoBalance"];
   readonly readPendingEnvironmentChange: DraftEnvironmentRouting["readPendingEnvironmentChange"];
   readonly pendingApprovals: PendingThreadRequests["pendingApprovals"];
   readonly respondingRequestIds: PendingThreadRequests["respondingRequestIds"];
@@ -345,6 +346,7 @@ export function useComposerSend(input: ComposerSendInput) {
     needsLoadBalancing,
     loadBalancing,
     refreshBeforeSend,
+    confirmAutoBalance,
     readPendingEnvironmentChange,
     pendingApprovals,
     respondingRequestIds,
@@ -1697,10 +1699,9 @@ export function useComposerSend(input: ComposerSendInput) {
   const onSendLatest = useStableCallback(onSend);
   const onSendWithRouting = async (...args: Parameters<typeof onSend>) => {
     args[0]?.preventDefault();
-    const refresh =
-      args[3] || sendInFlightRef.current || readPendingEnvironmentChange() !== null
-        ? null
-        : refreshBeforeSend();
+    const routed = !args[3] && !sendInFlightRef.current && readPendingEnvironmentChange() === null;
+    if (routed && !(await confirmAutoBalance())) return;
+    const refresh = routed ? refreshBeforeSend() : null;
     if (refresh === null) return onSend(...args);
     sendInFlightRef.current = true;
     const ready = await refresh.finally(() => {

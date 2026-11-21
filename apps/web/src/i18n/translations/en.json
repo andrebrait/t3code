@@ -8830,7 +8830,6 @@
   "c66cd1455fe36678": "Off",
   "8c0303c36a69ecc0": "Automatically balance load",
   "ebfef435bd266c26": "{environment} load preference",
-  "a49a651079f9664d": "New threads in shared projects start on the machine with the most free CPU and memory, weighted by each machine's preference.",
   "da16b9e4be45ae09": "Couldn't change this setting.",
   "d1781a918f8a11cf": "Run agents on this computer. Turn off to use T3 Code only with remote environments.",
   "e1391d08740f38f0": "Turned off. Agents only run in remote environments.",
@@ -12315,5 +12314,10 @@
   "27d76249d09eb69f": "Review guide ready",
   "faa3bb26abb39c93": "Review guide failed",
   "b7df38b7d8792d78": "Open guide",
-  "9e91e9a77b664e4e": "Could not start a review guide"
+  "9e91e9a77b664e4e": "Could not start a review guide",
+  "46c62f145a1736aa": "Balances only across machines with this project. Not on: {machines}",
+  "26c88f99d5805f73": "Load balance across fewer machines?\n{machines} don't have this project, so {pool} only picks among the machines that do. To start on one of them, go back and choose it.",
+  "cb54c8d2ec301da8": "Continue",
+  "c0ad4b16d188d74a": "{cluster} (load balanced)",
+  "d9b631005b85a3bd": "New threads start on the machine with the most free CPU and memory, weighted by each machine's preference. Clusters always balance across their own machines; turn this on to also balance across all your machines."
 }

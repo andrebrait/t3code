@@ -4,12 +4,20 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
+  ThreadId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { loadBalancingCandidateIds } from "./load-balancing.ts";
+import { scopeThreadRef } from "./environment/scoped.ts";
+
+import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
+
+import { loadBalancingCandidateIds, loadBalancingSendWarning } from "./load-balancing.ts";
 
 const local = EnvironmentId.make("local");
+const remote = EnvironmentId.make("remote");
+const localThread = threadContextRecord(scopeThreadRef(local, ThreadId.make("a")), "Local");
+const remoteThread = threadContextRecord(scopeThreadRef(remote, ThreadId.make("b")), "Remote");
 
 describe("loadBalancingCandidateIds", () => {
   const codex = ProviderDriverKind.make("codex");
@@ -63,5 +71,37 @@ describe("loadBalancingCandidateIds", () => {
 
   it("leaves out a machine set to Manual only", () => {
     expect(candidateIds({ [other]: 0 })).toEqual([local]);
+  });
+});
+
+describe("loadBalancingSendWarning", () => {
+  it("asks the user to wait while resource checks run", () => {
+    expect(
+      loadBalancingSendWarning({
+        pending: true,
+        threadContexts: [localThread, remoteThread],
+        candidateEnvironmentIds: [],
+      }).title,
+    ).toBe("Checking machine resources");
+  });
+
+  it("blames the attached threads when no machine can read all of them", () => {
+    expect(
+      loadBalancingSendWarning({
+        pending: false,
+        threadContexts: [localThread, remoteThread],
+        candidateEnvironmentIds: [local, remote],
+      }).description,
+    ).toMatch(/No machine can read every attached thread/);
+  });
+
+  it("blames resources when one machine can read every attached thread", () => {
+    expect(
+      loadBalancingSendWarning({
+        pending: false,
+        threadContexts: [localThread],
+        candidateEnvironmentIds: [remote, local],
+      }).description,
+    ).toMatch(/No eligible machine has available resources/);
   });
 });

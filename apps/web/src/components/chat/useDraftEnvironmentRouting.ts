@@ -36,8 +36,10 @@ import { useProjects } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { DraftSessionState } from "../../composerDraftStore";
-import { loadBalancingCandidateIds } from "@t3tools/client-runtime/load-balancing";
-import { loadBalancingSendWarning } from "./composerSend.logic";
+import {
+  loadBalancingCandidateIds,
+  loadBalancingSendWarning,
+} from "@t3tools/client-runtime/load-balancing";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { seedDraftModelSelection } from "../../lib/seedDraftModelSelection";
 import { draftFanoutSelectionsAtom } from "./chatViewSend";
@@ -215,11 +217,14 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       if (!target?.projectId) {
         toastManager.add({
           type: "warning",
-          ...loadBalancingSendWarning({
-            pending: false,
-            threadContexts: referencedThreadContexts,
-            candidateEnvironmentIds: loadBalancingCandidates,
-          }),
+          ...loadBalancingSendWarning(
+            {
+              pending: false,
+              threadContexts: referencedThreadContexts,
+              candidateEnvironmentIds: loadBalancingCandidates,
+            },
+            m,
+          ),
         });
         return false;
       }

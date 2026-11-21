@@ -11,6 +11,8 @@ import {
   type ThreadContextRecord,
 } from "@t3tools/contracts";
 import type { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 import { executeAtomQuery } from "./state/runtime.ts";
 
@@ -148,4 +150,42 @@ export function chooseLoadBalancedEnvironment(
     }
   }
   return selected;
+}
+
+/** Why a send waits for the user to pick a machine when no machine was chosen automatically. */
+export function loadBalancingSendWarning(
+  input: {
+    readonly pending: boolean;
+    readonly threadContexts: ReadonlyArray<ThreadContextRecord>;
+    readonly candidateEnvironmentIds: ReadonlyArray<EnvironmentId>;
+  },
+  resolve: MFunctionType = mFallback,
+) {
+  if (input.pending) {
+    return {
+      title: resolve(msg("Checking machine resources")),
+      description: resolve(
+        msg("Resource checks are still running. You can choose a machine in the composer."),
+      ),
+    };
+  }
+  const noMachineReadsEveryThread =
+    input.threadContexts.length > 0 &&
+    !input.candidateEnvironmentIds.some((environmentId) =>
+      input.threadContexts.every((record) => record.environmentId === environmentId),
+    );
+  return {
+    title: resolve(msg("Choose a machine to continue")),
+    description: noMachineReadsEveryThread
+      ? resolve(
+          msg(
+            "No machine can read every attached thread. Choose a machine in the composer or remove the threads.",
+          ),
+        )
+      : resolve(
+          msg(
+            "No eligible machine has available resources. Choose a machine in the composer to override.",
+          ),
+        ),
+  };
 }

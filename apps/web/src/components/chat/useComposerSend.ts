@@ -99,10 +99,10 @@ import { runMobileComposerTransition } from "./draftHeroTransition";
 import { useClientSettingsHydrated } from "../../hooks/useSettings";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { environmentPresentations } from "../../state/presentation";
+import { loadBalancingSendWarning } from "@t3tools/client-runtime/load-balancing";
 import {
   approvalRedirectNotice,
   composerDraftContentChanged,
-  loadBalancingSendWarning,
   multipleModelSendBlock,
   referencedThreadContexts,
 } from "./composerSend.logic";
@@ -496,13 +496,16 @@ export function useComposerSend(input: ComposerSendInput) {
       const draft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
       toastManager.add({
         type: "warning",
-        ...loadBalancingSendWarning({
-          pending: loadBalancing.pending,
-          threadContexts: draft ? referencedThreadContexts(draft) : [],
-          candidateEnvironmentIds: logicalProjectEnvironments.map(
-            (candidate) => candidate.environmentId,
-          ),
-        }),
+        ...loadBalancingSendWarning(
+          {
+            pending: loadBalancing.pending,
+            threadContexts: draft ? referencedThreadContexts(draft) : [],
+            candidateEnvironmentIds: logicalProjectEnvironments.map(
+              (candidate) => candidate.environmentId,
+            ),
+          },
+          m,
+        ),
       });
       return;
     }

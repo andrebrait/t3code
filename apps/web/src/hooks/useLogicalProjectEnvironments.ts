@@ -1,3 +1,4 @@
+import { sortEnvironmentOptionsByCluster } from "@t3tools/client-runtime/load-balancing";
 import {
   availableScratchWorkspaceRoot,
   clusterCloneEnvironmentIds,
@@ -89,9 +90,5 @@ export function useLogicalProjectEnvironments(
       }
     }
   }
-  envs.sort((a, b) => {
-    if (a.isPrimary !== b.isPrimary) return a.isPrimary ? -1 : 1;
-    return a.label.localeCompare(b.label);
-  });
-  return envs;
+  return sortEnvironmentOptionsByCluster(envs, environments, primaryEnvironmentId);
 }

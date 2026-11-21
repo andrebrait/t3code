@@ -17,6 +17,7 @@ import {
   loadBalancingCandidateIds,
   loadBalancingPools,
   loadBalancingSendWarning,
+  sortEnvironmentOptionsByCluster,
 } from "./load-balancing.ts";
 
 const local = EnvironmentId.make("local");
@@ -111,40 +112,40 @@ describe("loadBalancingSendWarning", () => {
   });
 });
 
+const host = EnvironmentId.make("ai-dev");
+const worker2 = EnvironmentId.make("ai-worker-2");
+const worker3 = EnvironmentId.make("ai-worker-3");
+const laptop = EnvironmentId.make("laptop");
+const machine = (environmentId: EnvironmentId, label: string, member: boolean) => ({
+  environmentId,
+  label,
+  entry: {
+    enabled: true,
+    target: member
+      ? new ClusterConnectionTarget({
+          environmentId,
+          label,
+          hostEnvironmentId: host,
+          hostLabel: "ai-dev",
+          hostConnectionKey: null,
+          status: "online",
+          statusDetail: null,
+        })
+      : new PrimaryConnectionTarget({
+          environmentId,
+          label,
+          httpBaseUrl: "https://example.test/",
+          wsBaseUrl: "wss://example.test/",
+        }),
+  },
+  connection: { phase: "connected" },
+});
+const cluster = [
+  machine(host, "ai-dev", false),
+  machine(worker2, "ai-worker-2", true),
+  machine(worker3, "ai-worker-3", true),
+];
 describe("loadBalancingPools", () => {
-  const host = EnvironmentId.make("ai-dev");
-  const worker2 = EnvironmentId.make("ai-worker-2");
-  const worker3 = EnvironmentId.make("ai-worker-3");
-  const laptop = EnvironmentId.make("laptop");
-  const machine = (environmentId: EnvironmentId, label: string, member: boolean) => ({
-    environmentId,
-    label,
-    entry: {
-      enabled: true,
-      target: member
-        ? new ClusterConnectionTarget({
-            environmentId,
-            label,
-            hostEnvironmentId: host,
-            hostLabel: "ai-dev",
-            hostConnectionKey: null,
-            status: "online",
-            statusDetail: null,
-          })
-        : new PrimaryConnectionTarget({
-            environmentId,
-            label,
-            httpBaseUrl: "https://example.test/",
-            wsBaseUrl: "wss://example.test/",
-          }),
-    },
-    connection: { phase: "connected" },
-  });
-  const cluster = [
-    machine(host, "ai-dev", false),
-    machine(worker2, "ai-worker-2", true),
-    machine(worker3, "ai-worker-3", true),
-  ];
   const pools = (
     environments: ReadonlyArray<ReturnType<typeof machine>>,
     hasProject: ReadonlyArray<EnvironmentId>,
@@ -182,5 +183,40 @@ describe("loadBalancingPools", () => {
     expect(pools([machine(host, "ai-dev", false), machine(laptop, "laptop", false)], [])).toEqual(
       [],
     );
+  });
+});
+
+describe("sortEnvironmentOptionsByCluster", () => {
+  it("groups each cluster, main host first, before standalone machines", () => {
+    const desktop = EnvironmentId.make("desktop");
+    const worker1 = EnvironmentId.make("ai-worker-1");
+    const environments = [
+      ...cluster,
+      machine(worker1, "ai-worker-1", true),
+      machine(laptop, "laptop", false),
+      machine(desktop, "desktop", false),
+    ];
+    const order = (
+      options: ReadonlyArray<{ environmentId: EnvironmentId; cloneRemoteUrl?: string }>,
+      primary: EnvironmentId | null = null,
+    ) =>
+      sortEnvironmentOptionsByCluster(options, environments, primary).map(
+        (option) => option.environmentId,
+      );
+    const clone = "https://example.test/repo.git";
+    expect(
+      order([
+        { environmentId: host },
+        { environmentId: laptop },
+        { environmentId: worker3 },
+        { environmentId: desktop },
+        { environmentId: worker1, cloneRemoteUrl: clone },
+        { environmentId: worker2 },
+      ]),
+    ).toEqual([host, worker2, worker3, worker1, desktop, laptop]);
+    expect(order([{ environmentId: desktop }, { environmentId: laptop }], laptop)).toEqual([
+      laptop,
+      desktop,
+    ]);
   });
 });

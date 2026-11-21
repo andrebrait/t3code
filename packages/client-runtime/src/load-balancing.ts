@@ -128,6 +128,61 @@ export function clusterEnvironmentIds(
   );
 }
 
+/**
+ * Machine picker order, matching the pools': each cluster together (by label, the primary's
+ * first), its main host then members by label, and machines that would clone the project
+ * after those that have it; then standalone machines, the primary first, then by label.
+ */
+export function sortEnvironmentOptionsByCluster<
+  T extends { readonly environmentId: EnvironmentId; readonly cloneRemoteUrl?: string | undefined },
+>(
+  options: ReadonlyArray<T>,
+  environments: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly label: string;
+    readonly entry: Pick<ConnectionCatalogEntry, "target">;
+  }>,
+  primaryEnvironmentId: EnvironmentId | null = null,
+): T[] {
+  const labels = new Map(
+    environments.map((environment) => [environment.environmentId, environment.label]),
+  );
+  const hostOf = new Map<EnvironmentId, EnvironmentId>();
+  for (const {
+    entry: { target },
+  } of environments) {
+    if (target._tag !== "ClusterConnectionTarget") continue;
+    hostOf.set(target.environmentId, target.hostEnvironmentId);
+    hostOf.set(target.hostEnvironmentId, target.hostEnvironmentId);
+    if (!labels.has(target.hostEnvironmentId)) {
+      labels.set(target.hostEnvironmentId, target.hostLabel);
+    }
+  }
+  const labelOf = (environmentId: EnvironmentId) => labels.get(environmentId) ?? environmentId;
+  const primaryHost = primaryEnvironmentId === null ? undefined : hostOf.get(primaryEnvironmentId);
+  const sortKey = (option: T) => {
+    const host = hostOf.get(option.environmentId);
+    return {
+      group: host === undefined ? 2 : host === primaryHost ? 0 : 1,
+      host: host === undefined ? "" : `${labelOf(host)}\0${host}`,
+      clones: option.cloneRemoteUrl === undefined ? 0 : 1,
+      leads: option.environmentId === (host ?? primaryEnvironmentId) ? 0 : 1,
+      label: labelOf(option.environmentId),
+    };
+  };
+  return options
+    .map((option) => ({ option, key: sortKey(option) }))
+    .sort(
+      ({ key: left }, { key: right }) =>
+        left.group - right.group ||
+        left.host.localeCompare(right.host) ||
+        left.clones - right.clones ||
+        left.leads - right.leads ||
+        left.label.localeCompare(right.label),
+    )
+    .map(({ option }) => option);
+}
+
 /** The pool a draft balances in: its chosen one while offered, else Auto, else its machine's cluster. */
 export function activeLoadBalancingPool(
   pools: ReadonlyArray<LoadBalancingPool>,

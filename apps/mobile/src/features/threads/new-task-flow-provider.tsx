@@ -35,6 +35,7 @@ import {
   loadBalancingPools,
   loadBalancingSendWarning,
   pickLoadBalancedEnvironment,
+  sortEnvironmentOptionsByCluster,
 } from "@t3tools/client-runtime/load-balancing";
 import { AsyncResult } from "effect/reactivity";
 import { isTriagePrompt, replaceTriagePlaybookLink } from "@t3tools/shared/triagePrompt";
@@ -1051,10 +1052,13 @@ export function NewTaskFlowProvider(
   const selectedProjectTitle = selectedProject?.title ?? null;
   const environments: NewTaskFlowContextValue["environments"] = (() => {
     if (isScratchDraft) {
-      return scratchEnvironments.map((environment) => ({
-        environmentId: environment.environmentId,
-        environmentLabel: environment.environmentLabel,
-      }));
+      return sortEnvironmentOptionsByCluster(
+        scratchEnvironments.map((environment) => ({
+          environmentId: environment.environmentId,
+          environmentLabel: environment.environmentLabel,
+        })),
+        environmentPresentations,
+      );
     }
     const seen = new Set<EnvironmentId>();
     const result: Array<NewTaskFlowContextValue["environments"][number]> = [];
@@ -1106,7 +1110,7 @@ export function NewTaskFlowProvider(
         });
       }
     }
-    return result;
+    return sortEnvironmentOptionsByCluster(result, environmentPresentations);
   })();
 
   const sameRepositoryProjectOn = (environmentId: EnvironmentId) =>

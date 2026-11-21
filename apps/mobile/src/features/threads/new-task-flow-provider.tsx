@@ -206,6 +206,7 @@ function useAutoPools(input: {
   readonly projects: ReadonlyArray<EnvironmentProject>;
   readonly flowState: NewTaskFlowState;
   readonly loadBalancing: ComposerDraftLoadBalancing | undefined;
+  readonly workspaceSelection: ComposerDraftWorkspaceSelection | undefined;
 }) {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const { selectedProject, flowState } = input;
@@ -226,8 +227,17 @@ function useAutoPools(input: {
         hasProject: sameRepository,
         autoEnabled: preferences.loadBalancingEnabled === true,
       });
+  // Read from the saved draft, so a reopened draft stays where its branch or worktree lives.
+  // A pull request checkout is recreated on whichever machine Auto picks.
+  const selection = input.workspaceSelection;
+  const pinnedByWorkspace =
+    selection !== undefined &&
+    selection.pullRequestReference === undefined &&
+    (selection.branch !== null ||
+      (selection.worktreePath !== null &&
+        selection.worktreePath !== selectedProject?.workspaceRoot));
   const activePool =
-    selectedProject && !flowState.manualEnvironment
+    selectedProject && !flowState.manualEnvironment && !pinnedByWorkspace
       ? activeLoadBalancingPool(pools, input.loadBalancing?.pool, selectedProject.environmentId)
       : null;
   return {
@@ -518,6 +528,7 @@ export function NewTaskFlowProvider(
     projects,
     flowState,
     loadBalancing: selectedProjectDraft.loadBalancing,
+    workspaceSelection: selectedProjectDraft.workspaceSelection,
   });
   const activePendingKey =
     props.active === false

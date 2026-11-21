@@ -141,13 +141,17 @@ export function LoadBalancingSettings({
     );
   }
 
+  // With one cluster and nothing outside it, balancing across all machines is that cluster's.
+  const showOtherMachines = clusters.length > 1 || standalone.length > 0;
   return (
     <FoldedSettingsSection
       id={id}
       title={title}
       summary={[
         ...clusters.map((cluster) => gt("{host} cluster", { host: cluster.label })),
-        switchSummary ?? gt("On", { $context: "load balancing is turned on" }),
+        ...(showOtherMachines
+          ? [switchSummary ?? gt("On", { $context: "load balancing is turned on" })]
+          : []),
       ].join(" · ")}
     >
       {clusters.flatMap((cluster) => [
@@ -165,13 +169,15 @@ export function LoadBalancingSettings({
         />,
         ...cluster.environments.map((environment) => preferenceRow(environment, true)),
       ])}
-      <SettingsRow
-        title={gt("Other machines")}
-        description={gt(
-          "Balance across all machines: when on, new threads in shared projects may also start on any machine, cluster machines included, weighted by the same preferences.",
-        )}
-        control={switchControl(gt("Balance across all machines"))}
-      />
+      {showOtherMachines ? (
+        <SettingsRow
+          title={gt("Other machines")}
+          description={gt(
+            "Balance across all machines: when on, new threads in shared projects may also start on any machine, cluster machines included, weighted by the same preferences.",
+          )}
+          control={switchControl(gt("Balance across all machines"))}
+        />
+      ) : null}
       {standalone.map((environment) => preferenceRow(environment, settings.loadBalancingEnabled))}
     </FoldedSettingsSection>
   );

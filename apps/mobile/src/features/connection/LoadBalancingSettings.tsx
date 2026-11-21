@@ -135,15 +135,18 @@ export function LoadBalancingSettings() {
           {cluster.environments.map((environment) => preferenceRow(environment, true))}
         </SettingsSection>
       ))}
-      <SettingsSection
-        title={`${gt("Load balancing")} · ${gt("Other machines")}`}
-        footer={gt(
-          "Balance across all machines: when on, new threads in shared projects may also start on any machine, cluster machines included, weighted by the same preferences.",
-        )}
-      >
-        {switchRow(gt("Balance across all machines"))}
-        {standalone.map((environment) => preferenceRow(environment, enabled))}
-      </SettingsSection>
+      {/* With one cluster and nothing outside it, balancing across all machines is that cluster's. */}
+      {clusters.length > 1 || standalone.length > 0 ? (
+        <SettingsSection
+          title={`${gt("Load balancing")} · ${gt("Other machines")}`}
+          footer={gt(
+            "Balance across all machines: when on, new threads in shared projects may also start on any machine, cluster machines included, weighted by the same preferences.",
+          )}
+        >
+          {switchRow(gt("Balance across all machines"))}
+          {standalone.map((environment) => preferenceRow(environment, enabled))}
+        </SettingsSection>
+      ) : null}
     </View>
   );
 }

@@ -209,8 +209,9 @@ which picks among that cluster's machines. Clusters do this by default. To also 
 **Auto balance**, which picks among all your machines, cluster machines included, open
 **Settings → Environments → Load balancing** and turn on **Balance across all
 machines** under **Other machines** (**Automatically balance load** when you have no
-cluster). The section appears once two or more machines are switched on, on web,
-desktop and mobile.
+cluster). With one cluster and no other machines, the cluster's choice already covers
+every machine, so the switch is not shown. The section appears once two or more
+machines are switched on, on web, desktop and mobile.
 
 Each machine starts at **Normal**. Choose **Prefer** to favor it when it has CPU and
 memory available, **Less often** to reduce its share, or **Manual only** to exclude

@@ -180,6 +180,17 @@ const resolveDirectPairingBaseUrl = (
     platform,
   });
 
+export class InvalidPairUrlError extends Schema.TaggedError<InvalidPairUrlError>()(
+  "InvalidPairUrlError",
+  { url: Schema.String, withTailscale: Schema.Boolean },
+) {
+  override get message(): string {
+    return this.withTailscale
+      ? "--url and --tailscale both choose the pairing address; pass only one."
+      : `${this.url} is not an http or https address.`;
+  }
+}
+
 export class DevServerNotProxiableError extends Schema.TaggedError<DevServerNotProxiableError>()(
   "DevServerNotProxiableError",
   { devUrl: Schema.String },
@@ -528,6 +539,13 @@ const tailscaleServePortFlag = Flag.Int("tailscale-serve-port").pipe(
   Flag.withDefault(DEFAULT_TAILSCALE_SERVE_PORT),
 );
 
+const urlFlag = Flag.String("url").pipe(
+  Flag.withDescription(
+    "Where other devices reach this server, such as https://t3.example.com behind a reverse proxy. Used for the pairing URL and QR code.",
+  ),
+  Flag.optional,
+);
+
 export const pairCommand = Command.make("pair", {
   baseDir: baseDirFlag,
   scopes: authScopesFlag(AuthStandardClientScopes),
@@ -535,6 +553,7 @@ export const pairCommand = Command.make("pair", {
   label: labelFlag,
   tailscale: tailscaleFlag,
   tailscaleServePort: tailscaleServePortFlag,
+  url: urlFlag,
 }).pipe(
   Command.withDescription(
     "Mint a pairing token for a running T3 Code server and print it as a QR code.",
@@ -543,6 +562,16 @@ export const pairCommand = Command.make("pair", {
     Effect.gen(function* () {
       const cliLogLevel = yield* GlobalFlag.LogLevel;
       const logLevel = Option.getOrElse(cliLogLevel, () => "Warn" as const);
+
+      if (Option.isSome(flags.url)) {
+        const url = URL.parse(flags.url.value);
+        if (flags.tailscale || url === null || !["http:", "https:"].includes(url.protocol)) {
+          return yield* new InvalidPairUrlError({
+            url: flags.url.value,
+            withTailscale: flags.tailscale,
+          });
+        }
+      }
 
       const explicitBaseDir = Option.getOrUndefined(flags.baseDir);
       const target = yield* discoverPairTarget(explicitBaseDir);
@@ -565,7 +594,9 @@ export const pairCommand = Command.make("pair", {
 
       const notes: Array<string> = [];
       let pairingBaseUrl: string;
-      if (flags.tailscale) {
+      if (Option.isSome(flags.url)) {
+        pairingBaseUrl = flags.url.value;
+      } else if (flags.tailscale) {
         // Serve stays on after this command exits, so refuse before turning it on.
         const policy = yield* ManagedPolicy.ManagedPolicy.pipe(Effect.provide(ManagedPolicy.layer));
         if (!ManagedLimits.allowsRemoteClients(policy)) {

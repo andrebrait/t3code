@@ -447,3 +447,108 @@ it.effect("bounds the session handshake, not a tool call that waits longer", () 
     expect(yield* Fiber.join(waiting)).toEqual({ modes: "approval-required/plan" });
   }),
 );
+
+it.effect(
+  "calls a cluster member's route with its own client and token, renews it after the member restarts, and names it when it is down",
+  () =>
+    Effect.gen(function* () {
+      const seen: Array<{ readonly target: string; readonly session: string | undefined }> = [];
+      const outcomes: Array<string | null> = [];
+      const arrived = yield* Queue.unbounded<void>();
+      const down = yield* Ref.make(false);
+      // The member restarts after the first call: it forgets the session and answers 404 once.
+      const statuses = [200, 202, 200, 404, 200, 202, 200];
+      const routeHttp = HttpClient.make((request) =>
+        Effect.gen(function* () {
+          yield* Queue.offer(arrived, undefined);
+          if (yield* Ref.get(down)) return yield* Effect.never;
+          const index = seen.length;
+          seen.push({
+            target: `${request.url} ${request.headers.authorization}`,
+            session: request.headers["mcp-session-id"],
+          });
+          return HttpClientResponse.fromWeb(
+            request,
+            new Response(index === 2 || index === 6 ? probeResult : "", {
+              status: statuses[index] ?? 500,
+              headers:
+                index === 0
+                  ? { "mcp-session-id": "before-restart" }
+                  : index === 4
+                    ? { "mcp-session-id": "after-restart" }
+                    : {},
+            }),
+          );
+        }),
+      );
+      const route: PeerMcpClient.McpRoute = {
+        key: "cluster environment-box https://box.example",
+        origin: "https://box.example",
+        token: "cluster-host-token",
+        httpClient: routeHttp,
+        messages: {
+          name: 'Cluster member "Box"',
+          revoked: "Box no longer accepts this main host.",
+          off: "Box has clusters turned off.",
+          unreachable: 'Cluster member "Box" is not answering.',
+        },
+        recordOutcome: (error) => Effect.sync(() => outcomes.push(error)),
+      };
+      const context = yield* Layer.build(
+        PeerMcpClient.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              // A routed call never touches peer links or the default client.
+              Layer.succeed(
+                HttpClient.HttpClient,
+                HttpClient.make(() => Effect.die("the default client was used")),
+              ),
+              Layer.mock(PeerLinks.PeerLinks)({}),
+            ),
+          ),
+        ),
+      );
+      const client = Context.get(context, PeerMcpClient.PeerMcpClient);
+      const probe = (via: PeerMcpClient.McpRoute) =>
+        client.call({
+          environmentId: EnvironmentId.make("environment-box"),
+          route: via,
+          tool: "probe",
+          arguments: {},
+          limits: { runtimeMode: "approval-required", interactionMode: "plan" },
+          success: Result,
+        });
+
+      expect(yield* probe(route)).toEqual({ modes: "approval-required/plan" });
+      expect(yield* probe(route)).toEqual({ modes: "approval-required/plan" });
+      expect(seen.map(({ session }) => session)).toEqual([
+        undefined,
+        "before-restart",
+        "before-restart",
+        "before-restart",
+        undefined,
+        "after-restart",
+        "after-restart",
+      ]);
+      expect(new Set(seen.map(({ target }) => target))).toEqual(
+        new Set(["https://box.example/mcp Bearer cluster-host-token"]),
+      );
+      expect(outcomes).toEqual([null, null]);
+
+      // Down: a new session's handshake never answers, so the agent hears the route's own words.
+      yield* Ref.set(down, true);
+      yield* Queue.takeAll(arrived);
+      const stalled = yield* probe({ ...route, key: "after-outage" }).pipe(
+        Effect.flip,
+        Effect.forkScoped,
+      );
+      yield* Queue.take(arrived);
+      yield* TestClock.adjust(Duration.seconds(10));
+      expect(yield* Fiber.join(stalled)).toMatchObject({
+        code: "orchestration_error",
+        message: route.messages.unreachable,
+      });
+      expect(outcomes).toHaveLength(3);
+      expect(outcomes[2]).not.toBeNull();
+    }),
+);

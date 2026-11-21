@@ -22,6 +22,7 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as CloudLink from "../cloud/CloudLink.ts";
 import * as ServerConfig from "../config.ts";
@@ -43,7 +44,7 @@ class AuthTestApi extends HttpApi.make("environment")
 const layerConfig = ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-oauth-test-" });
 const layerEnvironmentAuth = EnvironmentAuth.layer.pipe(
   Layer.provide(ManagedPolicy.layerTest()),
-  Layer.provide(Sqlite.layerMemory),
+  Layer.provideMerge(Sqlite.layerMemory),
   Layer.provideMerge(ServerSecretStore.layer),
   Layer.provideMerge(ServerEnvironment.layerIdentity),
   Layer.provide(layerConfig),
@@ -56,12 +57,14 @@ const notLinked: EnvironmentCloudLinkStateResult = {
   publishAgentActivity: false,
 };
 const makeLayerRoutes = (
-  capture: (auth: EnvironmentAuth.EnvironmentAuth["Service"]) => void,
+  capture: (auth: EnvironmentAuth.EnvironmentAuth["Service"], sql: SqlClient.SqlClient) => void,
   linkState: EnvironmentCloudLinkStateResult,
 ) =>
   Layer.mergeAll(
     Layer.effectDiscard(
-      EnvironmentAuth.EnvironmentAuth.pipe(Effect.tap((auth) => Effect.sync(() => capture(auth)))),
+      Effect.all([EnvironmentAuth.EnvironmentAuth, SqlClient.SqlClient]).pipe(
+        Effect.tap(([auth, sql]) => Effect.sync(() => capture(auth, sql))),
+      ),
     ),
     HttpApiBuilder.layer(AuthTestApi).pipe(
       Layer.provide(AuthHttp.layer),
@@ -108,15 +111,21 @@ const form = (body: Record<string, string>) => ({
 type Handler = (request: Request) => Effect.Effect<Response>;
 
 const withRoutes = <A, E>(
-  use: (handler: Handler, auth: EnvironmentAuth.EnvironmentAuth["Service"]) => Effect.Effect<A, E>,
+  use: (
+    handler: Handler,
+    auth: EnvironmentAuth.EnvironmentAuth["Service"],
+    sql: SqlClient.SqlClient,
+  ) => Effect.Effect<A, E>,
   linkState = notLinked,
 ) =>
   Effect.gen(function* () {
     const random = yield* SecureRandom.SecureRandom;
     const context = Context.make(SecureRandom.SecureRandom, random);
     let routerAuth: EnvironmentAuth.EnvironmentAuth["Service"] | undefined;
-    const layerRoutes = makeLayerRoutes((auth) => {
+    let routerSql: SqlClient.SqlClient | undefined;
+    const layerRoutes = makeLayerRoutes((auth, sql) => {
       routerAuth = auth;
+      routerSql = sql;
     }, linkState);
     return yield* Effect.acquireUseRelease(
       Effect.sync(() => HttpRouter.toWebHandler(layerRoutes, { disableLogger: true })),
@@ -124,7 +133,7 @@ const withRoutes = <A, E>(
         Effect.gen(function* () {
           const handler: Handler = (request) => Effect.promise(() => web.handler(request, context));
           yield* handler(at("/.well-known/oauth-authorization-server"));
-          return yield* use(handler, routerAuth!);
+          return yield* use(handler, routerAuth!, routerSql!);
         }),
       (web) => Effect.promise(() => web.dispose()),
     );
@@ -211,6 +220,35 @@ it.effect("derives discovery metadata from the origin the client reached", () =>
         registration_endpoint: `${ORIGIN}/oauth/mcp/register`,
         code_challenge_methods_supported: ["S256"],
       });
+    }),
+  ),
+);
+
+it.effect("refuses to register a peer link on a clustered environment", () =>
+  withRoutes((handler, _auth, sql) =>
+    Effect.gen(function* () {
+      yield* sql`
+        INSERT INTO cluster_membership (singleton, host_environment_id, host_label, joined_at, host_session_id)
+        VALUES (1, 'environment-studio', 'Studio', '2026-11-19T00:00:00.000Z', 'session-1')
+      `;
+      const response = yield* handler(
+        at("/oauth/mcp/register", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: encodeJson({
+            client_name: "Laptop",
+            software_id: MCP_PEER_LINK_SOFTWARE_ID,
+            redirect_uris: [REDIRECT],
+          }),
+        }),
+      );
+      expect(response.status).toBe(400);
+      expect(yield* json<unknown>(response)).toMatchObject({
+        error: "invalid_client_metadata",
+        error_description:
+          "Linking to this environment is not available here: this environment is a member of the cluster hosted by Studio.",
+      });
+      expect((yield* register(handler)).status).toBe(201);
     }),
   ),
 );

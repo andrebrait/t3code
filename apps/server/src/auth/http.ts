@@ -514,6 +514,8 @@ export const layer = HttpApiBuilder.group(
           Effect.catchTags({
             ManagedPolicyRefusedError: (error) =>
               Effect.fail(new EnvironmentHttpForbiddenError({ message: error.message })),
+            ClusterError: (error) =>
+              Effect.fail(new EnvironmentHttpForbiddenError({ message: error.message })),
           }),
         ),
       )

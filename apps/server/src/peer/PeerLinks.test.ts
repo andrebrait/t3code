@@ -247,6 +247,49 @@ it.effect(
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
+const makeMainHost = (sql: SqlClient.SqlClient) =>
+  sql`
+    INSERT INTO cluster_members (environment_id, label, transport, url, cert_sha256, secret_name, status, joined_at)
+    VALUES ('environment-member', 'Member', 'https', 'https://member:3773', ${"a".repeat(64)}, 'cluster-member-1', 'online', '2026-11-19T00:00:00.000Z')
+  `;
+
+it.effect("a clustered environment neither links out nor answers its existing links", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const b = yield* serveB(box);
+      const a = yield* makeA(laptop);
+      yield* a.links.link({
+        url: b.url,
+        pairingCode: (yield* b.auth.issuePairingCredential()).credential,
+        access: "auto",
+      });
+
+      yield* makeMainHost(a.sql);
+      const refused = yield* a.links
+        .link({
+          url: b.url,
+          pairingCode: (yield* b.auth.issuePairingCredential()).credential,
+          access: "auto",
+        })
+        .pipe(Effect.flip);
+      expect(refused).toMatchObject({
+        reason: "clustered",
+        message:
+          "Linking environments is not available here: this environment is the main host of a cluster.",
+      });
+      yield* a.sql`DELETE FROM cluster_members`;
+
+      yield* makeMainHost(b.sql);
+      expect((yield* probe(a).pipe(Effect.flip)).code).toBe("orchestration_error");
+      yield* b.sql`DELETE FROM cluster_members`;
+      expect(yield* probe(a)).toEqual({ caller: "T3 Code · Laptop", modes: "auto/default" });
+
+      expect(yield* a.links.unlinkAll).toBe(1);
+      expect(yield* a.links.get(box.environmentId)).toEqual(Option.none());
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
 it.effect("a link whose row cannot be stored keeps none of its token", () =>
   Effect.scoped(
     Effect.gen(function* () {

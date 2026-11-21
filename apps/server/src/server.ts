@@ -40,6 +40,8 @@ import {
   keepIdleConnections,
   rejectRequestsUntilServing,
 } from "./httpResponseErrorGuard.ts";
+import { serveTlsOnSamePort } from "./tls/tlsSniff.ts";
+import * as PlainHttpPolicy from "./tls/plainHttpPolicy.ts";
 import { resolveLauncherPath } from "./cloud/pinnedRuntime.ts";
 import { fixPath } from "./os-jank.ts";
 import * as Ws from "./ws.ts";
@@ -166,6 +168,7 @@ import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as AuthHttp from "./auth/http.ts";
 import * as ReplayMarkers from "./auth/replayMarkers.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
+import * as ServerTls from "./tls/ServerTls.ts";
 import * as CodexManagedTokenBroker from "./provider/CodexManagedTokenBroker.ts";
 import * as WebhookRoute from "./scheduledTasks/webhookRoute.ts";
 import * as RelayDeliveryProof from "./scheduledTasks/RelayDeliveryProof.ts";
@@ -184,6 +187,12 @@ import {
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as EnvironmentAuthPolicy from "./auth/EnvironmentAuthPolicy.ts";
 import * as CloudHttp from "./cloud/http.ts";
+import * as ClusterProxy from "./cluster/ClusterProxy.ts";
+import * as ClusterHttp from "./cluster/http.ts";
+import * as ClusterService from "./cluster/ClusterService.ts";
+import * as ClusterSshKey from "./cluster/ClusterSshKey.ts";
+import * as ClusterUpstream from "./cluster/ClusterUpstream.ts";
+import * as ClusterHostRequests from "./mcp/ClusterHostRequests.ts";
 import * as GuestHttp from "./guest/http.ts";
 import * as LinkThreadHttp from "./peer/linkThreadHttp.ts";
 import * as CloudLink from "./cloud/CloudLink.ts";
@@ -238,6 +247,7 @@ import { closeNonPrivateNetworkConnections, loopbackUrlHostForAddress } from "./
 import * as OrchestrationHttp from "./orchestration-v2/http.ts";
 import * as ProjectHttp from "./project/http.ts";
 import * as NetService from "@t3tools/shared/Net";
+import * as SshAuth from "@t3tools/ssh/auth";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import {
   disableTailscaleServe,
@@ -379,11 +389,16 @@ const layerHttpServer = Layer.unwrap(
       privateNetworkOnly: config.privateNetworkOnly,
     });
     yield* ManagedLimits.closeTailscaleServeTo(policy, { host: bindHost, port: config.port });
+    const tls = yield* ServerTls.ServerTls;
     const runSync = Effect.runSyncWith(yield* Effect.context<never>());
     return NodeHttpServer.layer(
       () => {
         const server = rejectRequestsUntilServing(
-          keepIdleConnections(guardHttpResponseWriteErrors(NodeHttp.createServer())),
+          keepIdleConnections(
+            guardHttpResponseWriteErrors(
+              serveTlsOnSamePort(NodeHttp.createServer(), tls.secureContext),
+            ),
+          ),
         );
         if (config.privateNetworkOnly) {
           runSync(closeNonPrivateNetworkConnections(server));
@@ -404,6 +419,7 @@ const layerHttpServer = Layer.unwrap(
   }),
 ).pipe(
   Layer.provide(ManagedPolicy.layer),
+  Layer.provideMerge(ServerTls.layer.pipe(Layer.provide(ServerSecretStore.layer))),
   // NodeHttpServer.layer also outputs NodeServices, whose spawner would shadow the wrapped one.
   (layer) => NonBlockingSpawner.layer.pipe(Layer.provideMerge(layer)),
 );
@@ -880,6 +896,7 @@ const layerMakeRoutes = Layer.mergeAll(
       Layer.provide(speechHttpApiLayer),
       Layer.provide(ServerHttp.layerServerEnvironmentHttpApi),
       Layer.provide(WebhookRoute.layer.pipe(Layer.provide(RelayDeliveryProof.layer))),
+      Layer.provide(ClusterHttp.layer),
       Layer.provide(AuthHttp.layerAuthenticatedAuth),
     ),
     ServerHttp.layerOtlpTracesProxyRoute,
@@ -888,16 +905,30 @@ const layerMakeRoutes = Layer.mergeAll(
     GuestHttp.layer,
     LinkThreadHttp.layer,
     DeviceHubProxy.layer,
+    ClusterHttp.layerEvents,
+    ClusterProxy.layer,
     ServerBrowserStream.routeLayer,
     PreviewTunnel.routeLayer,
     ServerHttp.layerStaticAndDevRoute,
     Ws.layer,
     speechStreamRouteLayer,
   ),
-  McpHttpServer.layer.pipe(
-    Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
-    Layer.provide(McpOAuth.layerMcpClientAuthenticator),
-    Layer.provide(ProjectionStoreV2.layer),
+  // One control link to each member; their agents' calls run here with the same /mcp tools.
+  Layer.effectDiscard(
+    Effect.gen(function* () {
+      const cluster = yield* ClusterService.ClusterService;
+      const environment = yield* ServerEnvironment.ServerEnvironment;
+      const serve = yield* ClusterHostRequests.make(yield* environment.getEnvironmentId);
+      yield* cluster.start(serve);
+    }),
+  ).pipe(
+    Layer.provideMerge(
+      McpHttpServer.layer.pipe(
+        Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
+        Layer.provide(McpOAuth.layerMcpClientAuthenticator),
+        Layer.provide(ProjectionStoreV2.layer),
+      ),
+    ),
   ),
   // Follows delegated tasks running in linked environments, including after a restart.
   Layer.effectDiscard(
@@ -922,9 +953,23 @@ const layerMakeRoutes = Layer.mergeAll(
     ),
   ),
   Layer.provide(PreviewBrowser.layer),
-  // Links to other environments, shared by clients (WebSocket) and agents (/mcp).
+  // Links to other environments and the cluster, shared by Settings (WebSocket), HTTP, the
+  // proxy and agents (/mcp). ServerTls comes from layerHttpServer.
   Layer.provide(
     Layer.mergeAll(PeerForwarding.layer, PeerThreadRelay.layer, PeerClientPairing.layer).pipe(
+      Layer.provideMerge(
+        ClusterService.layer.pipe(
+          Layer.provide(
+            ClusterUpstream.layer.pipe(
+              Layer.provide(ClusterSshKey.layerSshManager),
+              // Only the cluster key signs in; no client answers its prompts, desktop included.
+              Layer.provide(SshAuth.SshPasswordPrompt.disabledLayer),
+              Layer.provide(NetService.layer),
+            ),
+          ),
+          Layer.provide(ClusterSshKey.layer),
+        ),
+      ),
       Layer.provideMerge(PeerMcpClient.layer),
       Layer.provideMerge(PeerLinks.layer),
     ),
@@ -939,6 +984,7 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.provide(layerServerSettings),
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(layerDesktopAppUpdate))),
+  Layer.provide(PlainHttpPolicy.layer.pipe(Layer.provide(layerServerSettings))),
   Layer.provide(layerCommandReadiness),
   Layer.provide(ServerHttp.layerBrowserApiCors),
   Layer.provide(ServerHttp.layerHttpCompression),

@@ -2,19 +2,25 @@ import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   authScopeResponse,
+  AuthAccessWriteScope,
   AuthAdministrativeClientScopes,
+  AuthStandardClientScopes,
+  CLUSTER_SCOPES_HEADER,
   connectDeviceVerificationCode,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import { HttpServerRequest } from "effect/http";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as TestClock from "effect/testing/TestClock";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
 import { makeDpopKey } from "./dpop.testkit.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { CLUSTER_MEMBER_PAIRING_SUBJECT } from "../persistence/AuthPairingLinks.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 
@@ -70,6 +76,14 @@ const makeBearerRequest = (
   }) as unknown as Parameters<
     EnvironmentAuth.EnvironmentAuth["Service"]["authenticateHttpRequest"]
   >[0];
+
+const withHeaders = (
+  request: ReturnType<typeof makeBearerRequest>,
+  headers: Record<string, string>,
+): ReturnType<typeof makeBearerRequest> =>
+  ({ ...request, headers: { ...request.headers, ...headers } }) as unknown as ReturnType<
+    typeof makeBearerRequest
+  >;
 
 const requestMetadata = {
   deviceType: "desktop" as const,
@@ -719,6 +733,195 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
       }).pipe(Effect.provide(layerEnvironmentAuth())),
     );
 
+    it.effect("spends a cluster join code only as a cluster join, for a cluster-host session", () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const joinCode = yield* serverAuth.createPairingLink({
+          subject: CLUSTER_MEMBER_PAIRING_SUBJECT,
+          scopes: AuthStandardClientScopes,
+          label: "Cluster join code",
+        });
+        const ordinary = yield* serverAuth
+          .exchangeBootstrapCredentialForAccessToken(
+            joinCode.credential,
+            undefined,
+            requestMetadata,
+          )
+          .pipe(Effect.flip);
+        expect(ordinary._tag).toBe("ServerAuthInvalidCredentialError");
+        expect(yield* serverAuth.listPairingLinks()).toEqual([]);
+
+        const host = yield* serverAuth.consumeClusterJoinCode(joinCode.credential, {
+          hostLabel: "Studio",
+          client: requestMetadata,
+        });
+        const reused = yield* serverAuth
+          .consumeClusterJoinCode(joinCode.credential, {
+            hostLabel: "Studio",
+            client: requestMetadata,
+          })
+          .pipe(Effect.flip);
+        expect(reused._tag).toBe("ServerAuthInvalidCredentialError");
+
+        const pairing = yield* serverAuth.issuePairingCredential();
+        const notAJoinCode = yield* serverAuth
+          .consumeClusterJoinCode(pairing.credential, {
+            hostLabel: "Studio",
+            client: requestMetadata,
+          })
+          .pipe(Effect.flip);
+        expect(notAJoinCode._tag).toBe("ServerAuthInvalidCredentialError");
+        yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+          pairing.credential,
+          undefined,
+          requestMetadata,
+        );
+
+        const session = yield* serverAuth.authenticateHttpRequest(makeBearerRequest(host.token));
+        expect(session.subject).toBe(EnvironmentAuth.CLUSTER_HOST_SUBJECT);
+        expect(session.scopes).toEqual([...AuthStandardClientScopes]);
+        expect(
+          (yield* serverAuth.listSessions()).find((listed) => listed.sessionId === host.sessionId)
+            ?.client.label,
+        ).toBe("Cluster host · Studio");
+        expect(
+          yield* serverAuth.authenticateMcpClient(makeBearerRequest(host.token)),
+        ).toMatchObject({ access: "full-access", peerLink: false, cluster: true });
+      }).pipe(Effect.provide(layerEnvironmentAuth())),
+    );
+
+    it.effect("caps a cluster-host request to the forwarded scopes, failing closed", () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const joinCode = yield* serverAuth.createPairingLink({
+          subject: CLUSTER_MEMBER_PAIRING_SUBJECT,
+        });
+        const host = yield* serverAuth.consumeClusterJoinCode(joinCode.credential, {
+          hostLabel: "Studio",
+          client: requestMetadata,
+        });
+        const capped = yield* serverAuth.authenticateHttpRequest(
+          withHeaders(makeBearerRequest(host.token), {
+            [CLUSTER_SCOPES_HEADER]: "terminal:read orchestration:read",
+          }),
+        );
+        expect(capped.scopes).toEqual(["orchestration:read", "terminal:read"]);
+        const standard = yield* serverAuth.authenticateHttpRequest(
+          withHeaders(makeBearerRequest(host.token), {
+            [CLUSTER_SCOPES_HEADER]: AuthStandardClientScopes.join(" "),
+          }),
+        );
+        expect(standard.scopes).not.toContain(AuthAccessWriteScope);
+        expect(standard.scopes).toContain("orchestration:read");
+        const garbled = yield* serverAuth.authenticateHttpRequest(
+          withHeaders(makeBearerRequest(host.token), { [CLUSTER_SCOPES_HEADER]: "" }),
+        );
+        expect(garbled.scopes).toEqual([]);
+        const mcpAccess = (headers: Record<string, string>) =>
+          serverAuth
+            .authenticateMcpClient(withHeaders(makeBearerRequest(host.token), headers))
+            .pipe(Effect.map((session) => session.access));
+        expect(yield* mcpAccess({ [CLUSTER_SCOPES_HEADER]: "orchestration:read" })).toBe(
+          "read-only",
+        );
+        expect(yield* mcpAccess({ [CLUSTER_SCOPES_HEADER]: "" })).toBe("read-only");
+        expect(
+          yield* mcpAccess({
+            [CLUSTER_SCOPES_HEADER]: "orchestration:read orchestration:operate",
+          }),
+        ).toBe("full-access");
+        expect(yield* mcpAccess({})).toBe("full-access");
+      }).pipe(Effect.provide(layerEnvironmentAuth())),
+    );
+
+    it.effect("keeps the cluster scope cap on a websocket ticket redeemed without the header", () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const joinCode = yield* serverAuth.createPairingLink({
+          subject: CLUSTER_MEMBER_PAIRING_SUBJECT,
+        });
+        const host = yield* serverAuth.consumeClusterJoinCode(joinCode.credential, {
+          hostLabel: "Studio",
+          client: requestMetadata,
+        });
+        const capped = yield* serverAuth.authenticateHttpRequest(
+          withHeaders(makeBearerRequest(host.token), {
+            [CLUSTER_SCOPES_HEADER]: "orchestration:read",
+          }),
+        );
+        const ticket = yield* serverAuth.issueWebSocketTicket(capped, { use: "rpc" });
+        const upgrade = (headers: Record<string, string>) =>
+          withHeaders(
+            {
+              cookies: {},
+              headers: {},
+              url: `/ws?wsTicket=${Redacted.value(ticket.ticket)}`,
+            } as unknown as ReturnType<typeof makeBearerRequest>,
+            headers,
+          );
+        const bare = yield* serverAuth.authenticateWebSocketUpgrade(upgrade({}), "rpc");
+        expect(bare.scopes).toEqual(["orchestration:read"]);
+        const narrower = yield* serverAuth.authenticateWebSocketUpgrade(
+          upgrade({ [CLUSTER_SCOPES_HEADER]: "terminal:read" }),
+          "rpc",
+        );
+        expect(narrower.scopes).toEqual([]);
+      }).pipe(Effect.provide(layerEnvironmentAuth())),
+    );
+
+    it.effect("ignores the cluster scope header on any other session", () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const pairing = yield* serverAuth.issuePairingCredential({
+          scopes: ["orchestration:read"],
+        });
+        const client = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+          pairing.credential,
+          undefined,
+          requestMetadata,
+        );
+        const forged = yield* serverAuth.authenticateHttpRequest(
+          withHeaders(makeBearerRequest(client.access_token), {
+            [CLUSTER_SCOPES_HEADER]: AuthStandardClientScopes.join(" "),
+          }),
+        );
+        expect(forged.scopes).toEqual(["orchestration:read"]);
+      }).pipe(Effect.provide(layerEnvironmentAuth())),
+    );
+
+    it.effect(
+      "refuses client pairing on a cluster member but mints join codes and startup links",
+      () =>
+        Effect.gen(function* () {
+          const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+          const sql = yield* SqlClient.SqlClient;
+          yield* serverAuth.issueConnectCredential({
+            proofKeyThumbprint: "thumb",
+            requireApproval: true,
+          });
+          yield* sql`
+          INSERT INTO cluster_membership (singleton, host_environment_id, host_label, joined_at, host_session_id)
+          VALUES (1, 'environment-studio', 'Studio', '2026-11-19T00:00:00.000Z', 'session-1')
+        `;
+          expect(yield* serverAuth.issuePairingCredential().pipe(Effect.flip)).toMatchObject({
+            _tag: "ClusterError",
+            reason: "is_member",
+            message:
+              "Pairing a client is not available here: this environment is a member of the cluster hosted by Studio.",
+          });
+          expect(
+            yield* serverAuth
+              .issueConnectCredential({ proofKeyThumbprint: "thumb", requireApproval: true })
+              .pipe(Effect.flip),
+          ).toMatchObject({ _tag: "ClusterError" });
+          yield* serverAuth.createPairingLink({ subject: CLUSTER_MEMBER_PAIRING_SUBJECT });
+          yield* serverAuth.issueStartupPairingCredential();
+
+          yield* sql`DELETE FROM cluster_membership`;
+          yield* serverAuth.issuePairingCredential();
+        }).pipe(Effect.provide(layerEnvironmentAuth())),
+    );
+
     it.effect("narrows seeded desktop grants to the requested scopes", () =>
       Effect.gen(function* () {
         const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
@@ -1048,6 +1251,26 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
           key.sign({ method: "GET", url: socketUrl, token: Redacted.value(rpc.ticket), iat }),
         );
         expect(signed.sessionId).toBe(session.sessionId);
+
+        // Traefik forwards TLS WebSocket upgrades as X-Forwarded-Proto: wss.
+        const proxied = Redacted.value(
+          (yield* serverAuth.issueWebSocketTicket(session, { use: "rpc" })).ticket,
+        );
+        const proof = key.sign({
+          method: "GET",
+          url: "https://t3.example.com/ws",
+          token: proxied,
+          iat,
+        });
+        const behindProxy = yield* serverAuth.authenticateWebSocketUpgrade(
+          HttpServerRequest.fromWeb(
+            new Request(`http://127.0.0.1/ws?wsTicket=${proxied}&dpop=${proof}`, {
+              headers: { host: "t3.example.com", "x-forwarded-proto": "wss" },
+            }),
+          ),
+          "rpc",
+        );
+        expect(behindProxy.sessionId).toBe(session.sessionId);
 
         const wrongKey = yield* Effect.flip(
           upgrade(

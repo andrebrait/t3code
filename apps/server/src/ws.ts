@@ -7,6 +7,7 @@ import * as NodeHttpServerRequest from "@effect/platform-node/NodeHttpServerRequ
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as PeerClientPairing from "./peer/PeerClientPairing.ts";
+import * as ClusterService from "./cluster/ClusterService.ts";
 import * as PeerLinkRequests from "./peer/PeerLinkRequests.ts";
 import * as PeerLinks from "./peer/PeerLinks.ts";
 import * as PeerThreadRelay from "./peer/PeerThreadRelay.ts";
@@ -1565,6 +1566,7 @@ export const layerWsRpc = (
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const secretResolver = yield* SecretResolver.SecretResolver;
       const peerLinks = yield* PeerLinks.PeerLinks;
+      const cluster = yield* ClusterService.ClusterService;
       const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
       const peerThreadRelay = yield* PeerThreadRelay.PeerThreadRelay;
       const peerClientPairing = yield* PeerClientPairing.PeerClientPairing;
@@ -1867,11 +1869,13 @@ export const layerWsRpc = (
             : directEndpoints.resolve(),
         });
 
+        const homeDirectory = (yield* HostProcess.HomeDirectory).trim();
         return {
           environment,
           auth,
           cwd: config.cwd,
           hostname: yield* HostProcess.Hostname,
+          ...(homeDirectory ? { homeDirectory } : {}),
           keybindingsConfigPath: config.keybindingsConfigPath,
           keybindings: keybindingsConfig.keybindings,
           issues: keybindingsConfig.issues,
@@ -2741,6 +2745,14 @@ export const layerWsRpc = (
           peerClientPairing.request(input, currentSession),
         [WS_METHODS.peerLinksPairLink]: (input) =>
           peerClientPairing.requestForLink(input, currentSession),
+        [WS_METHODS.clusterStatus]: (_input) => cluster.status,
+        [WS_METHODS.clusterMembers]: (_input) => cluster.members,
+        [WS_METHODS.clusterCreateJoinCode]: (input) => cluster.createJoinCode(input),
+        [WS_METHODS.clusterAddMember]: (input) => cluster.addMember(input),
+        [WS_METHODS.clusterRemoveMember]: ({ memberId }) => cluster.removeMember(memberId),
+        [WS_METHODS.clusterRenameMember]: (input) => cluster.renameMember(input),
+        [WS_METHODS.clusterLeave]: (_input) => cluster.leave,
+        [WS_METHODS.clusterSshKeys]: (_input) => cluster.sshKeys,
         [WS_METHODS.peerLinksAnswerRequest]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
             Effect.andThen(peerLinkRequests.answer(input)),
@@ -3690,6 +3702,7 @@ export const layer = Layer.unwrap(
     const issueTrackers = yield* IssueTrackerConnections.IssueTrackerConnections;
     const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
     const peerLinks = yield* PeerLinks.PeerLinks;
+    const cluster = yield* ClusterService.ClusterService;
     const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
     const peerThreadRelay = yield* PeerThreadRelay.PeerThreadRelay;
     const peerClientPairing = yield* PeerClientPairing.PeerClientPairing;
@@ -3792,6 +3805,7 @@ export const layer = Layer.unwrap(
                 ),
               ),
               Layer.provide(Layer.succeed(PeerLinks.PeerLinks, peerLinks)),
+              Layer.provide(Layer.succeed(ClusterService.ClusterService, cluster)),
               Layer.provide(Layer.succeed(PeerLinkRequests.PeerLinkRequests, peerLinkRequests)),
               Layer.provide(Layer.succeed(PeerThreadRelay.PeerThreadRelay, peerThreadRelay)),
               Layer.provide(Layer.succeed(PeerClientPairing.PeerClientPairing, peerClientPairing)),

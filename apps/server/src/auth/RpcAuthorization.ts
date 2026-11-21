@@ -104,6 +104,9 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.peerLinksSubscribeThread]: AuthOrchestrationReadScope,
   [WS_METHODS.peerLinksThreadHistoryPage]: AuthOrchestrationReadScope,
   [WS_METHODS.peerLinksThreadItem]: AuthOrchestrationReadScope,
+  // Every client lists members: they are the environments it drives through the main host.
+  [WS_METHODS.clusterStatus]: AuthOrchestrationReadScope,
+  [WS_METHODS.clusterMembers]: AuthOrchestrationReadScope,
   [WS_METHODS.serverUpdateSettings]: AuthSettingsWriteScope,
   [WS_METHODS.serverSearchAcpRegistry]: AuthOrchestrationReadScope,
   [WS_METHODS.serverPrepareAcpRegistryAgent]: AuthProvidersManageScope,

@@ -48,7 +48,6 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as PeerForwarding from "./PeerForwarding.ts";
-import * as PeerLinks from "./PeerLinks.ts";
 
 /** How long one follow of a remote task waits on its thread there before checking again. */
 const FOLLOW_WAIT_MS = 10 * 60 * 1_000;
@@ -80,7 +79,7 @@ const RemoteCapabilitiesTool = Tool.make("orchestrator_capabilities", {
 });
 
 /**
- * `delegate_task` to a linked environment. The task's child is an ordinary
+ * `delegate_task` to a linked environment or a cluster member. The task's child is an ordinary
  * thread there, launched through the link; the parent here records the task
  * like a local one, without a child thread, and a follower completes it when
  * the thread there ends, so the parent wakes as it would for a local child.
@@ -155,7 +154,6 @@ const isFinal = (error: OrchestratorMcpFailure) =>
 const make = Effect.gen(function* () {
   const followRetry = yield* FollowRetrySchedule;
   const forwarding = yield* PeerForwarding.PeerForwarding;
-  const links = yield* PeerLinks.PeerLinks;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const projects = yield* ProjectService.ProjectService;
@@ -364,7 +362,7 @@ const make = Effect.gen(function* () {
           },
         },
       );
-      const link = yield* links.get(target.environmentId).pipe(
+      const label = yield* forwarding.routeLabel(target.environmentId).pipe(
         Effect.map(Option.getOrUndefined),
         Effect.orElseSucceed(() => undefined),
       );
@@ -374,7 +372,7 @@ const make = Effect.gen(function* () {
       const remoteChild: OrchestrationV2RemoteTaskChild = {
         environmentId: target.environmentId,
         threadId: launched.threadId,
-        label: link?.label ?? target.environmentId,
+        label: label ?? target.environmentId,
         title,
         ...(launched.runId === null ? {} : { runId: launched.runId }),
       };
@@ -705,8 +703,9 @@ const make = Effect.gen(function* () {
       const { task } = yield* readTask(parentThreadId, taskId);
       const environmentId = task?.remoteChild?.environmentId;
       if (environmentId === undefined) return error.message;
-      const link = yield* links.get(environmentId);
-      return Option.isSome(link) ? undefined : error.message;
+      // No link here, or no longer in this cluster: nothing can reach it again.
+      const routed = yield* forwarding.routeLabel(environmentId);
+      return Option.isSome(routed) ? undefined : error.message;
     },
     Effect.orElseSucceed(() => undefined),
   );

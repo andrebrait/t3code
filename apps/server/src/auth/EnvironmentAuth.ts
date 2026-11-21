@@ -1,4 +1,6 @@
 import {
+  CLUSTER_SCOPES_HEADER,
+  type ClusterError,
   AuthAccessTokenType,
   AuthAccessWriteScope,
   AuthMcpClientAccess,
@@ -26,7 +28,7 @@ import {
   mcpClientScopes,
 } from "@t3tools/contracts";
 import { isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
-import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
+import { encodeOAuthScope, parseOAuthScope } from "@t3tools/shared/oauthScope";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
@@ -39,6 +41,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 
+import * as ClusterRole from "../cluster/ClusterRole.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerConfig from "../config.ts";
 import * as EnvironmentAuthPolicy from "./EnvironmentAuthPolicy.ts";
@@ -52,6 +55,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ManagedLimits from "../policy/managedLimits.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import {
+  CLUSTER_MEMBER_PAIRING_SUBJECT,
   MCP_APPROVAL_SUBJECT_PREFIX,
   PEER_LINK_PAIRING_SUBJECT_PREFIX,
 } from "../persistence/AuthPairingLinks.ts";
@@ -84,6 +88,10 @@ export interface IssuedBearerSession {
 
 // MCP client tokens are restricted to /mcp; HTTP API and WebSocket RPC would bypass their access cap.
 const MCP_CLIENT_SUBJECT = "mcp-client";
+/** A member's session for its cluster's main host. */
+export const CLUSTER_HOST_SUBJECT = "cluster-host";
+// Lasts until either side leaves; nothing renews it.
+const CLUSTER_HOST_SESSION_TTL = Duration.days(3650);
 const MCP_CLIENT_SESSION_TTL = Duration.days(30);
 // A peer link's session moves back out to its full lifetime when a call finds it this far
 // short, so a used link never expires and a busy one writes at most once per step.
@@ -103,6 +111,8 @@ export interface McpClientSession {
   readonly peerLink: boolean;
   /** When a peer link's session ends unless it is used again; the linking side keeps this. */
   readonly linkExpiresAt?: DateTime.Utc;
+  /** The cluster's main host on this member: full trust, and never a peer link. */
+  readonly cluster?: boolean;
 }
 
 export interface AuthenticatedSession {
@@ -545,7 +555,7 @@ export class EnvironmentAuth extends Context.Service<
       readonly requiresConnectApproval?: boolean;
     }) => Effect.Effect<
       IssuedPairingLink,
-      ServerAuthInternalError | ManagedLimits.ManagedPolicyRefusedError
+      ServerAuthInternalError | ManagedLimits.ManagedPolicyRefusedError | ClusterError
     >;
     /**
      * The one-time credential T3 Connect hands a device. With approval required, an untrusted
@@ -556,7 +566,7 @@ export class EnvironmentAuth extends Context.Service<
       readonly requireApproval: boolean;
     }) => Effect.Effect<
       { readonly credential: string; readonly expiresAt: DateTime.Utc },
-      ServerAuthInternalError | ManagedLimits.ManagedPolicyRefusedError
+      ServerAuthInternalError | ManagedLimits.ManagedPolicyRefusedError | ClusterError
     >;
     readonly approveConnectDevice: (
       pairingLinkId: string,
@@ -581,7 +591,7 @@ export class EnvironmentAuth extends Context.Service<
       input?: AuthCreatePairingCredentialInput,
     ) => Effect.Effect<
       AuthPairingCredentialResult,
-      ServerAuthInternalError | ManagedLimits.ManagedPolicyRefusedError
+      ServerAuthInternalError | ManagedLimits.ManagedPolicyRefusedError | ClusterError
     >;
     readonly issueStartupPairingCredential: () => Effect.Effect<
       AuthPairingCredentialResult,
@@ -589,6 +599,8 @@ export class EnvironmentAuth extends Context.Service<
     >;
     readonly listPairingLinks: (input?: {
       readonly excludeSubjects?: ReadonlyArray<string>;
+      /** Also lists cluster join codes and app sign-in codes, which Connections never shows. */
+      readonly includePurposeBound?: boolean;
     }) => Effect.Effect<ReadonlyArray<AuthPairingLink>, ServerAuthInternalError>;
     readonly revokePairingLink: (id: string) => Effect.Effect<boolean, ServerAuthInternalError>;
     readonly issueSession: (input?: {
@@ -626,7 +638,9 @@ export class EnvironmentAuth extends Context.Service<
       use: AuthWebSocketTicketUse,
     ) => Effect.Effect<AuthenticatedSession, ServerAuthCredentialError | ServerAuthInternalError>;
     readonly issueWebSocketTicket: (
-      session: Pick<AuthenticatedSession, "sessionId" | "proofKeyThumbprint">,
+      session: Pick<AuthenticatedSession, "sessionId" | "proofKeyThumbprint" | "subject"> & {
+        readonly scopes: Iterable<AuthEnvironmentScope>;
+      },
       input?: { readonly use?: AuthWebSocketTicketUse },
     ) => Effect.Effect<AuthWebSocketTicketResult, ServerAuthInternalError>;
     readonly issueStartupPairingUrl: (
@@ -659,6 +673,14 @@ export class EnvironmentAuth extends Context.Service<
     ) => Effect.Effect<
       AuthMcpClientAccess,
       ServerAuthMcpApprovalCodeError | ServerAuthInternalError
+    >;
+    /** Spends a cluster join code for a `cluster-host` session. Any other code is refused. */
+    readonly consumeClusterJoinCode: (
+      code: string,
+      input: { readonly hostLabel: string; readonly client: AuthClientMetadata },
+    ) => Effect.Effect<
+      { readonly sessionId: AuthSessionId; readonly token: string },
+      ServerAuthInvalidCredentialError | ServerAuthInternalError
     >;
   }
 >()("t3/auth/EnvironmentAuth") {}
@@ -715,6 +737,20 @@ const toSessionVerificationError = (cause: SessionStore.SessionCredentialError) 
   SessionStore.isSessionCredentialInvalidError(cause)
     ? new ServerAuthInvalidCredentialError({ cause })
     : new ServerAuthSessionCredentialValidationError({ cause });
+/**
+ * The member side of the proxy's per-socket cap; any other session ignores the header. A proxied
+ * client never manages the member's access: that stays with the member's own UI and CLI.
+ */
+const capClusterHostScopes = (
+  request: HttpServerRequest.HttpServerRequest,
+  session: AuthenticatedSession,
+): AuthenticatedSession => {
+  const header = request.headers[CLUSTER_SCOPES_HEADER];
+  if (session.subject !== CLUSTER_HOST_SUBJECT || header === undefined) return session;
+  const allowed = new Set(parseOAuthScope(header) ?? []);
+  allowed.delete(AuthAccessWriteScope);
+  return { ...session, scopes: session.scopes.filter((scope) => allowed.has(scope)) };
+};
 
 const mapSessionVerificationErrors = <A, R>(
   effect: Effect.Effect<A, SessionStore.SessionCredentialError, R>,
@@ -811,6 +847,7 @@ export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const managedPolicy = yield* ManagedPolicy.ManagedPolicy;
   const devAuth = resolveReusableDevAuth(config);
+  const clusterRole = yield* ClusterRole.ClusterRole;
 
   const authenticateToken = (
     token: string,
@@ -912,6 +949,7 @@ export const make = Effect.gen(function* () {
         }
         return Effect.succeed(session);
       }),
+      Effect.map((session) => capClusterHostScopes(request, session)),
     );
   };
 
@@ -1206,6 +1244,10 @@ export const make = Effect.gen(function* () {
         "so this server cannot create pairing links",
       );
     }
+    // A member pairs only its cluster host; the startup link stays for this machine's browser.
+    if (input?.purpose !== "startup" && input?.subject !== CLUSTER_MEMBER_PAIRING_SUBJECT) {
+      yield* clusterRole.refuseIfMember("Pairing a client");
+    }
     return yield* issuePairingLink(input);
   });
 
@@ -1219,7 +1261,8 @@ export const make = Effect.gen(function* () {
           .filter(
             (pairingLink) =>
               !excludedSubjects.includes(pairingLink.subject) &&
-              !pairingLink.subject.startsWith(MCP_APPROVAL_SUBJECT_PREFIX),
+              (input?.includePurposeBound === true ||
+                !pairingLink.subject.startsWith(MCP_APPROVAL_SUBJECT_PREFIX)),
           )
           .map((link) => ({ ...link, ...authScopeResponse(link.scopes) }))
           .toSorted(
@@ -1255,6 +1298,7 @@ export const make = Effect.gen(function* () {
     proofKeyThumbprint,
     requireApproval,
   }: Parameters<EnvironmentAuth["Service"]["issueConnectCredential"]>[0]) {
+    yield* clusterRole.refuseIfMember("Pairing a client");
     const mustWait =
       requireApproval &&
       !(yield* bootstrapCredentials
@@ -1510,6 +1554,8 @@ export const make = Effect.gen(function* () {
         ...(input?.use === "rpc" && session.proofKeyThumbprint
           ? { proofKeyThumbprint: session.proofKeyThumbprint }
           : {}),
+        // The upgrade request carries no cap header, so the ticket keeps the cap.
+        ...(session.subject === CLUSTER_HOST_SUBJECT ? { scopes: [...session.scopes] } : {}),
       })
       .pipe(
         Effect.mapError((cause) => new ServerAuthWebSocketTokenIssueError({ cause })),
@@ -1566,7 +1612,7 @@ export const make = Effect.gen(function* () {
               Effect.provideService(Digest.Digest, digest),
             );
           }
-          return {
+          return capClusterHostScopes(request, {
             sessionId: session.sessionId,
             subject: session.subject,
             method: session.method,
@@ -1575,7 +1621,7 @@ export const make = Effect.gen(function* () {
               ? { proofKeyThumbprint: session.proofKeyThumbprint }
               : {}),
             ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
-          };
+          });
         }
       }
 
@@ -1613,6 +1659,23 @@ export const make = Effect.gen(function* () {
       mapSessionVerificationErrors,
       Effect.flatMap(
         Effect.fnUntraced(function* (session) {
+          if (
+            session.method === "bearer-access-token" &&
+            session.subject === CLUSTER_HOST_SUBJECT
+          ) {
+            return {
+              sessionId: session.sessionId,
+              label: session.client.label ?? "Cluster host",
+              // The main host's own forwarding sends no cap; a capped call carries a client's scopes.
+              access: capClusterHostScopes(request, session).scopes.includes(
+                AuthOrchestrationOperateScope,
+              )
+                ? "full-access"
+                : "read-only",
+              peerLink: false,
+              cluster: true,
+            } satisfies McpClientSession;
+          }
           if (session.subject !== MCP_CLIENT_SUBJECT || session.method !== "bearer-access-token") {
             return yield* new ServerAuthInvalidCredentialError({
               diagnostic: "Only MCP client sessions are accepted here.",
@@ -1683,6 +1746,32 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("EnvironmentAuth.consumeMcpApprovalCode"),
     );
 
+  const consumeClusterJoinCode: EnvironmentAuth["Service"]["consumeClusterJoinCode"] = Effect.fn(
+    "EnvironmentAuth.consumeClusterJoinCode",
+  )(function* (code, input) {
+    const grant = yield* bootstrapCredentials
+      .consume(code.trim(), {
+        allowedSubject: CLUSTER_MEMBER_PAIRING_SUBJECT,
+        exactSubject: CLUSTER_MEMBER_PAIRING_SUBJECT,
+      })
+      .pipe(Effect.mapError(toBootstrapExchangeError));
+    if (grant.subject !== CLUSTER_MEMBER_PAIRING_SUBJECT) {
+      return yield* new ServerAuthInvalidCredentialError({
+        diagnostic: "Only a cluster join code can add this environment to a cluster.",
+      });
+    }
+    const issued = yield* sessions
+      .issue({
+        subject: CLUSTER_HOST_SUBJECT,
+        method: "bearer-access-token",
+        scopes: AuthStandardClientScopes,
+        ttl: CLUSTER_HOST_SESSION_TTL,
+        client: { ...input.client, label: `Cluster host · ${input.hostLabel}`, deviceType: "bot" },
+      })
+      .pipe(Effect.mapError((cause) => new ServerAuthSessionTokenIssueError({ cause })));
+    return { sessionId: issued.sessionId, token: issued.token };
+  });
+
   yield* revokePairedClientsThePolicyDisallows(managedPolicy, {
     sessions,
     pairingLinks: bootstrapCredentials,
@@ -1721,6 +1810,7 @@ export const make = Effect.gen(function* () {
     authenticateMcpClient,
     issueMcpClientSession,
     consumeMcpApprovalCode,
+    consumeClusterJoinCode,
   });
 });
 
@@ -1788,6 +1878,7 @@ export const layer = Layer.effect(EnvironmentAuth, make).pipe(
   Layer.provideMerge(PairingGrantStore.layer),
   Layer.provideMerge(SessionStore.layer),
   Layer.provideMerge(EnvironmentAuthPolicy.layer),
+  Layer.provideMerge(ClusterRole.layer),
 );
 
 const layerStorage = Layer.mergeAll(ServerSecretStore.layer, SqlitePersistence.layerCliConfig);

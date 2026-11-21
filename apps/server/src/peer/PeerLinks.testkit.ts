@@ -23,9 +23,10 @@ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as AuthHttp from "../auth/http.ts";
 import * as McpOAuth from "../auth/McpOAuth.ts";
 import * as McpOAuthHttp from "../auth/mcpOAuthHttp.ts";
-import type * as SqlClient from "effect/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as CloudLink from "../cloud/CloudLink.ts";
+import * as ClusterRole from "../cluster/ClusterRole.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerHttp from "../http.ts";
@@ -66,7 +67,7 @@ export const layerEnvironmentAuth = (prefix: string) =>
   EnvironmentAuth.layer.pipe(
     Layer.provide(ManagedPolicy.layerTest()),
     Layer.provideMerge(ServerSettings.layerTest({ linkedEnvironmentsEnabled: true })),
-    Layer.provide(Sqlite.layerMemory),
+    Layer.provideMerge(Sqlite.layerMemory),
     Layer.provideMerge(ServerSecretStore.layer),
     Layer.provideMerge(ServerEnvironment.layerIdentity),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix })),
@@ -173,6 +174,8 @@ export const servePeer = <E, R, E2 = never, R2 = never>(
       auth,
       /** Its settings, as for turning its Linked environments beta off. */
       settings: Context.get(authContext, ServerSettings.ServerSettingsService),
+      /** Its database, as for making it a cluster's main host. */
+      sql: Context.get(authContext, SqlClient.SqlClient),
       descriptor,
       bearers,
       /** How often its descriptor was asked for, as a probe of whether it answers. */
@@ -209,6 +212,7 @@ export const layerLinkingEnvironment = <E = never>(
   PeerMcpClient.layer.pipe(
     Layer.provideMerge(PeerLinks.layer),
     Layer.provideMerge(ServerSettings.layerTest({ linkedEnvironmentsEnabled: true })),
+    Layer.provideMerge(ClusterRole.layer),
     Layer.provideMerge(database),
     Layer.provide(Layer.mergeAll(secrets, FetchHttpClient.layer)),
     // Peers here are served on 127.0.0.1, so only `localhost` stands for this machine.

@@ -94,6 +94,22 @@ describe("RPC authorization scopes", () => {
     expect(requiredScopeForRpcMethod("server.getSettings")).toBe(AuthOrchestrationReadScope);
   });
 
+  it("keeps cluster membership changes behind access write and lets readers see members", () => {
+    for (const method of [
+      WS_METHODS.clusterCreateJoinCode,
+      WS_METHODS.clusterAddMember,
+      WS_METHODS.clusterRemoveMember,
+      WS_METHODS.clusterRenameMember,
+      WS_METHODS.clusterLeave,
+      WS_METHODS.clusterSshKeys,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthAccessWriteScope);
+    }
+    for (const method of [WS_METHODS.clusterStatus, WS_METHODS.clusterMembers]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+    }
+  });
+
   it("rejects unknown RPC method names", () => {
     for (const method of ["server.notRegistered", "toString", "constructor"]) {
       expect(() => requiredScopeForRpcMethod(method)).toThrow(
@@ -504,6 +520,11 @@ describe("settings mutation authorization", () => {
         expect(
           yield* client[WS_METHODS.serverUpdateSettings]({
             patch: { requireConnectDeviceApproval: false },
+          }).pipe(Effect.flip),
+        ).toMatchObject({ requiredPermission: AuthAccessWriteScope });
+        expect(
+          yield* client[WS_METHODS.serverUpdateSettings]({
+            patch: { networkPlainHttp: "allow" },
           }).pipe(Effect.flip),
         ).toMatchObject({ requiredPermission: AuthAccessWriteScope });
         // A reference names any secret the store holds, and the host entry names where it goes.

@@ -129,7 +129,12 @@ const makeIssuer = Effect.gen(function* () {
           purpose: "peer-link",
           label: `Link · via ${via}`,
         })
-        .pipe(Effect.catchTags({ ManagedPolicyRefusedError: refusedByPolicy }));
+        .pipe(
+          Effect.catchTags({
+            ManagedPolicyRefusedError: refusedByPolicy,
+            ClusterError: refusedByPolicy,
+          }),
+        );
       return { credential: issued.credential, expiresAt: issued.expiresAt };
     }
     // Never more than the client holds where it asked, nor more than a pairing code grants.
@@ -147,7 +152,12 @@ const makeIssuer = Effect.gen(function* () {
         ttl: CLIENT_PAIRING_TTL,
         label: `${clientLabel} · via ${via}`,
       })
-      .pipe(Effect.catchTags({ ManagedPolicyRefusedError: refusedByPolicy }));
+      .pipe(
+        Effect.catchTags({
+          ManagedPolicyRefusedError: refusedByPolicy,
+          ClusterError: refusedByPolicy,
+        }),
+      );
     return { credential: issued.credential, expiresAt: issued.expiresAt };
   });
 

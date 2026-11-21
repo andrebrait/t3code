@@ -277,11 +277,17 @@ function setup() {
     get current() {
       return current;
     },
-    async render(active: boolean, pickOnMount?: EnvironmentProject) {
+    async render(
+      active: boolean,
+      pickOnMount?: EnvironmentProject,
+      route: { readonly flowKey: string; readonly routeDraftId?: string } = {
+        flowKey: "test-flow",
+      },
+    ) {
       await act(async () =>
         root.render(
           <RegistryContext.Provider value={registry}>
-            <NewTaskFlowProvider active={active} flowKey="test-flow">
+            <NewTaskFlowProvider active={active} {...route}>
               <Probe pickOnMount={pickOnMount} />
             </NewTaskFlowProvider>
           </RegistryContext.Provider>,
@@ -472,6 +478,22 @@ it("keeps a saved draft with a chosen branch or worktree on its machine", async 
     workspaceSelection: { mode: "worktree", branch: "feature", worktreePath: null },
   });
   expect(screen.current.autoBalance).toBeNull();
+});
+
+it("keeps a reopened draft on the machine chosen for it", async () => {
+  using screen = setup();
+  mocks.environments.mockReturnValue(clusterMachines());
+  await screen.render(true);
+  const draftKey = screen.current.draftKey!;
+  act(() => screen.current.pinEnvironment());
+  expect(screen.current.autoBalance).toBeNull();
+
+  await screen.render(true, undefined, { flowKey: "reopened", routeDraftId: draftKey });
+  expect(screen.current.draftKey).toBe(draftKey);
+  expect(screen.current.autoBalance).toBeNull();
+
+  act(() => screen.current.chooseAutoPool(EnvironmentId.make("one")));
+  expect(screen.current.autoBalance).not.toBeNull();
 });
 
 it("picks again on send after Auto found no machine", async () => {

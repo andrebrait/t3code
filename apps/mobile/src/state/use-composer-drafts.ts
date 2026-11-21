@@ -461,6 +461,8 @@ export interface ComposerDraftLoadBalancing {
   readonly pool: string | null;
   /** The pool whose machines without the project the user accepted leaving out. */
   readonly acknowledged: string | null;
+  /** The user picked the machine, so Auto no longer chooses one. */
+  readonly manual?: boolean;
 }
 
 export interface ComposerDraftProject {
@@ -537,6 +539,7 @@ const ComposerDraftSchema = Schema.Struct({
     Schema.Struct({
       pool: Schema.NullOr(Schema.String),
       acknowledged: Schema.NullOr(Schema.String),
+      manual: Schema.optional(Schema.Boolean),
     }),
   ),
 });

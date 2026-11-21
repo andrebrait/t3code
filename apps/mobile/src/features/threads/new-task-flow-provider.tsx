@@ -237,7 +237,7 @@ function useAutoPools(input: {
       (selection.worktreePath !== null &&
         selection.worktreePath !== selectedProject?.workspaceRoot));
   const activePool =
-    selectedProject && !flowState.manualEnvironment && !pinnedByWorkspace
+    selectedProject && !input.loadBalancing?.manual && !pinnedByWorkspace
       ? activeLoadBalancingPool(pools, input.loadBalancing?.pool, selectedProject.environmentId)
       : null;
   return {
@@ -786,7 +786,7 @@ export function NewTaskFlowProvider(
   const latestSwitchRef = useRef<object | null>(null);
   const switchEnvironment = async (environmentId: EnvironmentId): Promise<boolean> => {
     const switched = await switchEnvironmentTo(environmentId);
-    if (switched) updateFlow({ manualEnvironment: true });
+    if (switched) updateLoadBalancing({ manual: true });
     return switched;
   };
   const switchEnvironmentTo = async (environmentId: EnvironmentId): Promise<boolean> => {
@@ -937,7 +937,7 @@ export function NewTaskFlowProvider(
       return;
     }
     // A chosen branch keeps the draft on this machine.
-    updateFlow({ manualEnvironment: true });
+    updateLoadBalancing({ manual: true });
     updateComposerDraftSettings(selectedProjectDraftKey, {
       workspaceSelection: {
         mode: workspaceMode,
@@ -1168,9 +1168,9 @@ export function NewTaskFlowProvider(
   const autoPickRequestRef = useRef<object | null>(null);
   const pickAutoEnvironment = async (request: object) => {
     const { projectKey, draftKey, autoPick } = readFlow();
-    const pool = (key: string | null) =>
-      key === null ? undefined : getComposerDraftSnapshot(key).loadBalancing?.pool;
-    const autoPool = pool(draftKey);
+    const balancing = (key: string | null) =>
+      key === null ? undefined : getComposerDraftSnapshot(key).loadBalancing;
+    const autoPool = balancing(draftKey)?.pool;
     const target = await pickLoadBalancedEnvironment(
       appAtomRegistry,
       serverEnvironment.hostResources,
@@ -1181,8 +1181,8 @@ export function NewTaskFlowProvider(
     if (
       autoPickRequestRef.current !== request ||
       flow.projectKey !== projectKey ||
-      pool(flow.draftKey) !== autoPool ||
-      flow.manualEnvironment ||
+      balancing(flow.draftKey)?.pool !== autoPool ||
+      balancing(flow.draftKey)?.manual === true ||
       flow.autoPick !== autoPick ||
       flow.submitting
     ) {
@@ -1222,12 +1222,21 @@ export function NewTaskFlowProvider(
       if (autoPickRequestRef.current === request) autoPickRequestRef.current = null;
     };
   }, [autoPickPool]);
+  const updateLoadBalancing = (patch: Partial<ComposerDraftLoadBalancing>) => {
+    const key = readFlow().draftKey;
+    if (key === null) return;
+    const current = getComposerDraftSnapshot(key).loadBalancing;
+    updateComposerDraftSettings(key, {
+      loadBalancing: { pool: null, acknowledged: null, ...current, ...patch },
+    });
+  };
   const chooseAutoPool = (poolKey: string) => {
-    updateFlow({ manualEnvironment: false, autoPick: null });
+    updateFlow({ autoPick: null });
     if (!selectedProjectDraftKey) return;
     const draft = getComposerDraftSnapshot(selectedProjectDraftKey);
     const selection = draft.workspaceSelection;
     updateComposerDraftSettings(selectedProjectDraftKey, {
+      // Dropping `manual` hands the machine back to Auto.
       loadBalancing: { pool: poolKey, acknowledged: draft.loadBalancing?.acknowledged ?? null },
       // Choosing Auto drops a branch or worktree that pinned the draft to its machine.
       ...(selection && !selection.pullRequestReference
@@ -1290,7 +1299,7 @@ export function NewTaskFlowProvider(
     autoPools,
     autoBalance,
     chooseAutoPool,
-    pinEnvironment: () => updateFlow({ manualEnvironment: true }),
+    pinEnvironment: () => updateLoadBalancing({ manual: true }),
     retryAutoBalance: async () => {
       if (readFlow().autoPick?.environmentId !== null) return null;
       const request = {};
@@ -1298,15 +1307,7 @@ export function NewTaskFlowProvider(
       await pickAutoEnvironment(request);
       return readFlow().autoPick?.environmentId ?? null;
     },
-    acknowledgeAutoBalance: () => {
-      if (!selectedProjectDraftKey) return;
-      updateComposerDraftSettings(selectedProjectDraftKey, {
-        loadBalancing: {
-          pool: getComposerDraftSnapshot(selectedProjectDraftKey).loadBalancing?.pool ?? null,
-          acknowledged: activePool?.key ?? null,
-        },
-      });
-    },
+    acknowledgeAutoBalance: () => updateLoadBalancing({ acknowledged: activePool?.key ?? null }),
     autoBalanceWarning,
     switchEnvironment,
     switchingToEnvironmentId,

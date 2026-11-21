@@ -30,8 +30,6 @@ export interface NewTaskFlowState {
   readonly draftKey: string | null;
   readonly submitting: boolean;
   readonly expandedProvider: string | null;
-  /** The user picked a machine or branch, so Auto balance no longer chooses one. */
-  readonly manualEnvironment: boolean;
   /** Auto's pick for the draft, once made; a null machine means none qualified. */
   readonly autoPick: { readonly environmentId: EnvironmentId | null } | null;
 }
@@ -42,7 +40,6 @@ export const INITIAL_NEW_TASK_FLOW_STATE: NewTaskFlowState = {
   draftKey: null,
   submitting: false,
   expandedProvider: null,
-  manualEnvironment: false,
   autoPick: null,
 };
 

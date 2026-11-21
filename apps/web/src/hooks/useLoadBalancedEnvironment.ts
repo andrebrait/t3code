@@ -1,6 +1,8 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
-import { chooseLoadBalancedEnvironment } from "@t3tools/client-runtime/load-balancing";
-import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
+import {
+  chooseLoadBalancedEnvironment,
+  pickLoadBalancedEnvironment,
+} from "@t3tools/client-runtime/load-balancing";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import { useContext } from "react";
@@ -51,33 +53,23 @@ export function useLoadBalancedEnvironment(
       registry.refresh(serverEnvironment.hostResources({ environmentId, input: {} }));
     }
   };
-  const refreshSelection = async (ids: readonly EnvironmentId[]) => {
-    const candidates = await Promise.all(
-      ids.map(async (environmentId) => {
-        const result = await executeAtomQuery(
-          registry,
-          serverEnvironment.hostResources({ environmentId, input: {} }),
-          { refresh: true, reportFailure: false, signal: AbortSignal.timeout(5_000) },
-        );
-        return {
-          environmentId,
-          resources: result._tag === "Success" ? result.value : null,
-          receivedAt: Date.now(),
-          weight: weights[environmentId] ?? 50,
-        };
-      }),
-    );
-    return chooseLoadBalancedEnvironment(candidates, Date.now()) as EnvironmentId | null;
-  };
-  const { evaluatedAt, resources } = useAtomValue(hostResourcesAtom(environmentIds.join("\n")));
+  const refreshSelection = (ids: readonly EnvironmentId[]) =>
+    pickLoadBalancedEnvironment(registry, serverEnvironment.hostResources, ids, weights);
+  // A lone candidate needs no resource check, as in pickLoadBalancedEnvironment.
+  const lone = environmentIds.length === 1 ? environmentIds[0]! : null;
+  const { evaluatedAt, resources } = useAtomValue(
+    hostResourcesAtom(lone === null ? environmentIds.join("\n") : ""),
+  );
   const pending = resources.some((resource) => resource.pending);
-  const environmentId = chooseLoadBalancedEnvironment(
-    resources.map((resource) => ({
-      ...resource,
-      weight: weights[resource.environmentId] ?? 50,
-    })),
-    evaluatedAt,
-  ) as EnvironmentId | null;
+  const environmentId =
+    lone ??
+    (chooseLoadBalancedEnvironment(
+      resources.map((resource) => ({
+        ...resource,
+        weight: weights[resource.environmentId] ?? 50,
+      })),
+      evaluatedAt,
+    ) as EnvironmentId | null);
   return {
     refresh,
     refreshSelection,

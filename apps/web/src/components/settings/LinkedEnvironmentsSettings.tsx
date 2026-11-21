@@ -16,6 +16,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { peerLinkHealth, type PeerLinkHealth } from "@t3tools/client-runtime/state/peerLinks";
+import { clusterName } from "@t3tools/client-runtime/state/cluster";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
@@ -24,6 +25,7 @@ import { T, useGT, useMessages, Var } from "gt-react";
 import { type ReactNode, useId, useRef, useState } from "react";
 
 import { requestConfirmDialog } from "~/confirmDialog";
+import { clusterEnvironment } from "~/state/cluster";
 import { useEnvironment } from "~/state/environments";
 import { mintPairingCodeOn } from "~/state/peerPairingCode";
 import {
@@ -81,8 +83,16 @@ export function LinkedEnvironmentsSettings({
 }) {
   const searchableSetting = useSearchableSetting();
   const gt = useGT();
+  const environment = useEnvironment(environmentId);
+  const clusterStatus = useEnvironmentQuery(
+    environment?.serverConfig?.environment.capabilities.cluster === true
+      ? clusterEnvironment.status({ environmentId, input: {} })
+      : null,
+  );
+  const managedBy =
+    clusterStatus.data === null ? null : clusterName(clusterStatus.data, environment?.label ?? "");
   const links = useEnvironmentQuery(
-    peerLinkEnvironment.list({ environmentId, input: {} }),
+    managedBy === null ? peerLinkEnvironment.list({ environmentId, input: {} }) : null,
     useMessages(),
   );
   // Links made outside this client bump nothing the shared list reads, so showing the panel
@@ -107,7 +117,7 @@ export function LinkedEnvironmentsSettings({
       {...(isSearchTarget ? { id: search.id } : {})}
       title={environmentLabel === null ? search.title : `${search.title} · ${environmentLabel}`}
       headerAction={
-        canLink ? (
+        canLink && managedBy === null ? (
           <div className="flex items-center gap-2">
             {otherMachines > 1 ? (
               <LinkSeveralEnvironmentsAction environmentId={environmentId} />
@@ -117,7 +127,14 @@ export function LinkedEnvironmentsSettings({
         ) : null
       }
     >
-      {links.error ? (
+      {managedBy !== null ? (
+        <SettingsRow
+          title={gt("Managed by cluster {name}", { name: managedBy })}
+          description={gt(
+            "Clustered environments do not link to other environments. Agents here reach the other members through the main host.",
+          )}
+        />
+      ) : links.error ? (
         <SettingsRow title={gt("Could not load linked environments")} description={links.error} />
       ) : !links.data ? (
         <SettingsRow title={gt("Loading linked environments…")} role="status" />

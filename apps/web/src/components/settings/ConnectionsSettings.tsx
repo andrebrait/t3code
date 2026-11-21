@@ -55,6 +55,9 @@ import { addEnvironmentPrefillAtom } from "~/state/linkedThreadView";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { usePeerLinkHosts } from "~/state/peerLinks";
+import { offersCluster } from "@t3tools/client-runtime/state/cluster";
+import { ClusterSettings } from "./ClusterSettings";
+import { useClusterHosts } from "~/state/cluster";
 import { LoadBalancingSettings } from "./LoadBalancingSettings";
 import { PullRequestRoutingSettings } from "./PullRequestRoutingSettings";
 import { Input } from "../ui/input";
@@ -275,6 +278,7 @@ function ConnectionsSettingsContent({
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
   const peerLinkHosts = usePeerLinkHosts();
+  const clusterHosts = useClusterHosts();
   const removeEnvironment = useAtomCommand(environmentCatalog.remove, { reportFailure: false });
   const setEnvironmentEnabled = useAtomCommand(environmentCatalog.setEnabled, {
     reportFailure: false,
@@ -290,7 +294,9 @@ function ConnectionsSettingsContent({
     : null;
   const currentAuthPolicy = desktopBridge ? null : (accessSessionState.data?.auth.policy ?? null);
   const savedEnvironments = environments.filter(
-    (environment) => environment.entry.target._tag !== "PrimaryConnectionTarget",
+    (environment) =>
+      environment.entry.target._tag !== "PrimaryConnectionTarget" &&
+      environment.entry.target._tag !== "ClusterConnectionTarget",
   );
   const listedEnvironments = savedEnvironments.filter(
     (environment) => !isDesktopLocalConnectionTarget(environment.entry.target),
@@ -332,10 +338,20 @@ function ConnectionsSettingsContent({
       ];
     },
   );
-  const loadBalancingEnvironments = [
+  const pullRequestRoutingEnvironments = [
     ...(primaryEnvironment ? [primaryEnvironment] : []),
     ...savedEnvironments.filter((environment) => environment.entry.enabled),
   ].filter((environment) => environment.connection.phase !== "unsupported");
+  // Members run threads like any machine, so each gets its own share of the load.
+  const loadBalancingEnvironments = [
+    ...pullRequestRoutingEnvironments,
+    ...environments.filter(
+      (environment) =>
+        environment.entry.target._tag === "ClusterConnectionTarget" &&
+        environment.entry.enabled &&
+        environment.connection.phase !== "unsupported",
+    ),
+  ];
   const [desktopServerExposureMutationError, setDesktopServerExposureMutationError] = useState<
     string | null
   >(null);
@@ -1396,6 +1412,24 @@ function ConnectionsSettingsContent({
             ) : canManageLocalBackend ? (
               renderDisabledNetworkAccessRow()
             ) : null}
+            {accessServerConfig?.settings.networkPlainHttp === undefined ? null : (
+              <SettingsRow
+                {...searchableSetting("network-plain-http")}
+                description={gt(
+                  "Browsers on your network switch to HTTPS, and apps on your network must use it. This device, Tailscale, and T3 Connect are unaffected.",
+                )}
+                control={
+                  <Switch
+                    checked={accessServerConfig.settings.networkPlainHttp === "redirect"}
+                    disabled={!canWriteAccess}
+                    onCheckedChange={(checked) =>
+                      updateAccessSettings({ networkPlainHttp: checked ? "redirect" : "allow" })
+                    }
+                    aria-label={gt("Redirect network HTTP to HTTPS")}
+                  />
+                }
+              />
+            )}
             {canReadRelay || canManageRelay ? (
               <CloudLinkRow
                 environmentId={accessEnvironmentId}
@@ -1931,18 +1965,30 @@ function ConnectionsSettingsContent({
           }}
         />
       ) : null}
-      {environmentsView === "list"
-        ? peerLinkHosts.map((environment, index) => (
+      {environmentsView === "list" ? (
+        <>
+          {peerLinkHosts.map((environment, index) => (
             <LinkedEnvironmentsSettings
               key={environment.environmentId}
               environmentId={environment.environmentId}
               environmentLabel={peerLinkHosts.length > 1 ? environment.label : null}
               isSearchTarget={index === 0}
             />
-          ))
-        : null}
+          ))}
+          {clusterHosts.map((environment, index) => (
+            <ClusterSettings
+              key={environment.environmentId}
+              environmentId={environment.environmentId}
+              label={environment.label}
+              enabled={offersCluster(environment.serverConfig)}
+              showLabel={clusterHosts.length > 1}
+              isSearchTarget={index === 0}
+            />
+          ))}
+        </>
+      ) : null}
       <LoadBalancingSettings environments={loadBalancingEnvironments} />
-      <PullRequestRoutingSettings environments={loadBalancingEnvironments} />
+      <PullRequestRoutingSettings environments={pullRequestRoutingEnvironments} />
     </SettingsPageContainer>
   );
 }

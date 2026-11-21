@@ -21,6 +21,7 @@ import {
 } from "./ChatView.logic";
 import {
   isThreadEnvironmentLocked,
+  resolveDraftLoadBalancing,
   recallCheckoutIsRepo,
   rememberCheckoutIsRepo,
   resolveThreadErrorBanner,
@@ -149,6 +150,25 @@ describe("deriveComposerSendState", () => {
     expect(state.trimmedPrompt).toBe("yoo  waddup");
     expect(state.expiredTerminalContextCount).toBe(1);
     expect(state.hasSendableContent).toBe(true);
+  });
+});
+
+describe("resolveDraftLoadBalancing", () => {
+  it("offers a cluster's pool while the draft is on a machine outside it", () => {
+    const host = EnvironmentId.make("ai-dev");
+    const pools = [
+      {
+        key: host,
+        cluster: { hostEnvironmentId: host, label: "ai-dev" },
+        environmentIds: [host, EnvironmentId.make("ai-worker-2")],
+        missingEnvironmentIds: [],
+        missingLabels: [],
+      },
+    ];
+    expect(resolveDraftLoadBalancing(pools, null, EnvironmentId.make("laptop"))).toEqual({
+      activePool: null,
+      canAutoBalance: true,
+    });
   });
 });
 

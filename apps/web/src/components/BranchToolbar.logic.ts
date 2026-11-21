@@ -34,6 +34,18 @@ export interface EnvironmentOption {
   label: string;
   isPrimary: boolean;
   machine: EnvironmentMachineKind;
+  /** A cluster machine without the project, which offers to clone it from this remote when picked. */
+  cloneRemoteUrl?: string;
+}
+
+/** An Auto choice: every machine, or one cluster's machines. */
+export interface AutoEnvironmentOption {
+  readonly key: string;
+  readonly label: string;
+  readonly cluster: boolean;
+  /** Machines in the pool without the project, which Auto skips. */
+  readonly missingLabels: ReadonlyArray<string>;
+  readonly active: boolean;
 }
 
 /** "Add to another machine" stays muted until hovered: easy to find, quieter than the machines. */

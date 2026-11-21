@@ -5,6 +5,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { scopedProjectKey } from "@t3tools/client-runtime/environment";
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type {
   EnvironmentId,
   ProjectCloneSnapshot,
@@ -20,6 +21,7 @@ import { suggestAppAccessForRemote } from "../components/sourceControlAppAccessT
 import { environmentProjectClonesAtom, silenceProjectCloneToasts } from "../state/projectClones";
 import { projectEnvironment } from "../state/projects";
 import { sourceControlEnvironment } from "../state/sourceControl";
+import { newProjectId } from "./utils";
 
 /** Matches the server's read cap: a larger file would arrive truncated. */
 export const COPYABLE_FILE_MAX_BYTES = 1024 * 1024;
@@ -213,4 +215,23 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
     );
   })();
   return projectId;
+}
+
+/** Clones a project onto a cluster machine that lacks it, copying no ignored files. */
+export function cloneProjectToClusterMachine(input: {
+  readonly project: Pick<EnvironmentProject, "environmentId" | "workspaceRoot" | "title">;
+  readonly target: { readonly environmentId: EnvironmentId; readonly label: string };
+  readonly remoteUrl: string;
+  readonly destinationPath: string;
+}): Promise<ProjectId> {
+  return addProjectToMachine({
+    source: { environmentId: input.project.environmentId, cwd: input.project.workspaceRoot },
+    subdirectory: "",
+    target: input.target,
+    projectId: newProjectId(),
+    title: input.project.title,
+    remoteUrl: input.remoteUrl,
+    destinationPath: input.destinationPath,
+    files: [],
+  });
 }

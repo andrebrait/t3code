@@ -7,9 +7,9 @@ import { useScratchProject } from "../../hooks/useScratchProject";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import {
   type EnvironmentId,
+  type ProjectId,
   type ProviderDriverKind,
   ProviderInstanceId,
-  resolveProjectProviderInstanceEnabled,
   type ThreadContextRecord,
 } from "@t3tools/contracts";
 import {
@@ -36,10 +36,20 @@ import { useProjects } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { DraftSessionState } from "../../composerDraftStore";
-import { loadBalancingSendWarning } from "./composerSend.logic";
+import { getClientSettings, updateClientSettings } from "../../hooks/useSettings";
+import {
+  type LoadBalancingPool,
+  loadBalancingCandidateIds,
+  loadBalancingConfirmKey,
+  loadBalancingSendWarning,
+} from "@t3tools/client-runtime/load-balancing";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { seedDraftModelSelection } from "../../lib/seedDraftModelSelection";
 import { draftFanoutSelectionsAtom } from "./chatViewSend";
+import { cloneProjectToClusterMachine } from "../../lib/addProjectToMachine";
+import { getSourceCloneDestinationPath } from "@t3tools/client-runtime/operations/projects";
+import { requestConfirmDialog } from "../../confirmDialog";
+import type { EnvironmentOption } from "../BranchToolbar.logic";
 
 interface DraftEnvironmentRoutingInput {
   readonly draftId: DraftId | null;
@@ -52,6 +62,9 @@ interface DraftEnvironmentRoutingInput {
   readonly loadBalancingSettings: {
     readonly loadBalancingWeights: Readonly<Record<string, number>>;
   };
+  /** The pool Auto balances in for this draft, and every pool it could choose. */
+  readonly loadBalancingPool: LoadBalancingPool | null;
+  readonly loadBalancingPools: ReadonlyArray<LoadBalancingPool>;
   readonly referencedThreadContexts: ReadonlyArray<ThreadContextRecord>;
   readonly activeProviderInstanceId: ProviderInstanceId | null;
   readonly selectedProvider: ProviderDriverKind;
@@ -93,6 +106,8 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     environmentById,
     providersByEnvironment,
     loadBalancingSettings,
+    loadBalancingPool,
+    loadBalancingPools,
     referencedThreadContexts,
     activeProviderInstanceId,
     selectedProvider,
@@ -114,43 +129,73 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
   const { openScratchProject } = useScratchProject();
   const needsLoadBalancing = automaticEnvironment && !draftThread?.loadBalancedEnvironmentId;
   const loadBalancingCandidates = automaticEnvironment
-    ? logicalProjectEnvironments
-        .filter((candidate) => {
-          const environment = environmentById.get(candidate.environmentId);
-          return (
-            environment?.connection.phase === "connected" &&
-            (loadBalancingSettings.loadBalancingWeights[candidate.environmentId] ?? 50) > 0 &&
-            referencedThreadContexts.every(
-              (record) => record.environmentId === candidate.environmentId,
-            ) &&
-            providersByEnvironment
-              .get(candidate.environmentId)
-              ?.some(
-                (provider) =>
-                  (activeProviderInstanceId === null ||
-                    provider.instanceId === activeProviderInstanceId) &&
-                  provider.driver === selectedProvider &&
-                  (environment.serverConfig?.settings
-                    ? resolveProjectProviderInstanceEnabled(
-                        environment.serverConfig.settings,
-                        candidate.projectId,
-                        provider.instanceId,
-                      )
-                    : provider.enabled) &&
-                  provider.installed &&
-                  provider.status !== "error" &&
-                  provider.auth.status !== "unauthenticated" &&
-                  provider.availability !== "unavailable",
-              )
-          );
-        })
-        .map((candidate) => candidate.environmentId)
+    ? loadBalancingCandidateIds({
+        candidates: logicalProjectEnvironments.filter((environment) =>
+          loadBalancingPool?.environmentIds.includes(environment.environmentId),
+        ),
+        environmentById,
+        providersByEnvironment,
+        weights: loadBalancingSettings.loadBalancingWeights,
+        referencedThreadContexts,
+        activeProviderInstanceId,
+        selectedProvider,
+      })
     : [];
   const loadBalancing = useLoadBalancedEnvironment(
     needsLoadBalancing ? loadBalancingCandidates : [],
     loadBalancingSettings.loadBalancingWeights,
   );
   const readRouting = useStableCallback(() => ({ input, loadBalancingCandidates }));
+  // Asks, then starts cloning the draft's project onto a cluster machine that lacks it.
+  // Null when declined, or after a toast.
+  const startClusterClone = async (
+    draft: Pick<DraftSessionState, "environmentId" | "projectId">,
+    target: EnvironmentOption & { readonly cloneRemoteUrl: string },
+  ) => {
+    const source = allProjects.find(
+      (project) => project.environmentId === draft.environmentId && project.id === draft.projectId,
+    );
+    if (!source) return null;
+    const destinationPath = getSourceCloneDestinationPath({
+      remoteUrl: target.cloneRemoteUrl,
+      sourceWorkspaceRoot: source.workspaceRoot,
+      sourceHomeDirectory: environmentById.get(source.environmentId)?.serverConfig?.homeDirectory,
+      targetSettings: environmentById.get(target.environmentId)?.serverConfig?.settings,
+    });
+    const question = m(
+      msg(
+        "Clone {repository} onto {machine}?\nIt will be cloned into {path} before the thread starts.",
+        {
+          repository: source.repositoryIdentity?.displayName ?? source.title,
+          machine: target.label,
+          path: destinationPath,
+        },
+      ),
+    );
+    const confirmed =
+      requestConfirmDialog(question, {
+        initialFocus: "confirm",
+        confirmLabel: m(msg("Clone", { $context: "clone a repository" })),
+      }) ?? Promise.resolve(window.confirm(question));
+    if (!(await confirmed)) return null;
+    try {
+      return await cloneProjectToClusterMachine({
+        project: source,
+        target: { environmentId: target.environmentId, label: target.label },
+        remoteUrl: target.cloneRemoteUrl,
+        destinationPath,
+      });
+    } catch (cause) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: m(msg("Could not start the clone.")),
+          description: thrownErrorMessage(cause, m) ?? m(msg("An error occurred.")),
+        }),
+      );
+      return null;
+    }
+  };
   const refreshBeforeSend = () => {
     if (
       !automaticEnvironment ||
@@ -184,11 +229,14 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       if (!target?.projectId) {
         toastManager.add({
           type: "warning",
-          ...loadBalancingSendWarning({
-            pending: false,
-            threadContexts: referencedThreadContexts,
-            candidateEnvironmentIds: loadBalancingCandidates,
-          }),
+          ...loadBalancingSendWarning(
+            {
+              pending: false,
+              threadContexts: referencedThreadContexts,
+              candidateEnvironmentIds: loadBalancingCandidates,
+            },
+            m,
+          ),
         });
         return false;
       }
@@ -230,7 +278,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     getDraftSession,
     setDraftThreadContext,
   ]);
-  const onAutoEnvironment = () => {
+  const onAutoEnvironment = (poolKey: string) => {
     if (envLocked || !draftId || sendInFlightRef.current) return;
     if (composerHasAttachments) {
       toastManager.add({
@@ -249,6 +297,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       logicalProjectEnvironments.map((environment) => environment.environmentId),
     );
     setDraftThreadContext(draftId, {
+      loadBalancingPool: poolKey,
       environmentSelection: "auto",
       loadBalancedEnvironmentId: null,
       branch: null,
@@ -256,15 +305,74 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     });
   };
   const onAutoEnvironmentStable = useStableCallback(onAutoEnvironment);
-  const autoEnvironmentLabel = automaticEnvironment
-    ? draftThread?.loadBalancedEnvironmentId
-      ? gt("Auto balance")
-      : loadBalancing.pending
-        ? gt("Checking machines…")
-        : loadBalancing.failed
-          ? gt("Auto balance unavailable")
-          : gt("Auto balance")
-    : undefined;
+  const poolLabel = (pool: LoadBalancingPool) =>
+    pool.cluster
+      ? gt("{cluster} (load balanced)", { cluster: pool.cluster.label })
+      : gt("Auto balance");
+  // A cluster's choice always names the cluster, never a bare Auto.
+  const autoEnvironmentLabel = !automaticEnvironment
+    ? undefined
+    : loadBalancingPool?.cluster
+      ? poolLabel(loadBalancingPool)
+      : draftThread?.loadBalancedEnvironmentId
+        ? gt("Auto balance")
+        : loadBalancing.pending
+          ? gt("Checking machines…")
+          : loadBalancing.failed
+            ? gt("Auto balance unavailable")
+            : gt("Auto balance");
+  const autoEnvironments = loadBalancingPools.map((pool) => {
+    const active = automaticEnvironment && pool.key === loadBalancingPool?.key;
+    return {
+      key: pool.key,
+      label: active && autoEnvironmentLabel ? autoEnvironmentLabel : poolLabel(pool),
+      cluster: pool.cluster !== null,
+      missingLabels: pool.missingLabels,
+      active,
+    };
+  });
+  // Asks once per draft before Auto leaves out machines that lack the project.
+  const confirmAutoBalance = async () => {
+    const pool = loadBalancingPool;
+    if (!automaticEnvironment || !draftId || !pool || pool.missingEnvironmentIds.length === 0) {
+      return true;
+    }
+    const draft = getDraftSession(draftId);
+    if (draft?.loadBalancingAcknowledgedPool === pool.key) return true;
+    const project = allProjects.find(
+      (candidate) =>
+        candidate.environmentId === draft?.environmentId && candidate.id === draft.projectId,
+    );
+    const projectKey = project ? loadBalancingConfirmKey(project) : null;
+    const skipped = getClientSettings().loadBalancingConfirmSkippedProjects;
+    if (projectKey !== null && skipped.includes(projectKey)) return true;
+    const question = m(
+      msg(
+        "Load balance across fewer machines?\n{machines} don't have this project, so {pool} only picks among the machines that do. To start on one of them, go back and choose it.",
+        { machines: pool.missingLabels.join(", "), pool: poolLabel(pool) },
+      ),
+    );
+    const confirmed = await (requestConfirmDialog(question, {
+      initialFocus: "confirm",
+      confirmLabel: m(msg("Continue", { $context: "load balance across fewer machines" })),
+      ...(projectKey === null
+        ? {}
+        : {
+            checkbox: {
+              label: m(msg("Don't ask again for this project")),
+              onConfirmChecked: () =>
+                void updateClientSettings({
+                  loadBalancingConfirmSkippedProjects: [
+                    ...getClientSettings().loadBalancingConfirmSkippedProjects,
+                    projectKey,
+                  ],
+                }),
+            },
+          }),
+    }) ?? Promise.resolve(window.confirm(question)));
+    if (confirmed) setDraftThreadContext(draftId, { loadBalancingAcknowledgedPool: pool.key });
+    return confirmed;
+  };
 
   // A change in flight belongs to the draft and project it started on.
   const environmentChangeScope = `${draftId ?? ""}:${activeProjectKey ?? ""}`;
@@ -310,8 +418,9 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     const request = { environmentId: target.environmentId, scope: environmentChangeScope };
     environmentChangeRef.current = request;
     setBusyEnvironmentChange(null);
-    // `triagePrompt` is the prompt the target machine prepared for a triage draft.
-    const retarget = (project: (typeof allProjects)[number], triagePrompt?: string) => {
+    // `triagePrompt` is the prompt the target machine prepared for a triage draft. A project
+    // only known by id is a clone still starting, which never belongs to a scratch draft.
+    const retarget = (project: (typeof allProjects)[number] | ProjectId, triagePrompt?: string) => {
       const currentDraft = getDraftSession(draftId);
       if (
         environmentChangeRef.current !== request ||
@@ -330,8 +439,11 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
         if (nextPrompt !== prompt) setPrompt(draftId, nextPrompt);
       }
       carryFanoutSelections(currentDraft, target.environmentId);
-      const projectRef = scopeProjectRef(target.environmentId, project.id);
-      if (activeProjectIsScratch) {
+      const projectRef = scopeProjectRef(
+        target.environmentId,
+        typeof project === "string" ? project : project.id,
+      );
+      if (activeProjectIsScratch && typeof project !== "string") {
         setLogicalProjectDraftThreadId(
           deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings),
           projectRef,
@@ -383,9 +495,12 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     const switchMachine = async () => {
       const triagePrompt = followsTriage ? await prepareTriagePrompt() : undefined;
       if (triagePrompt === null) return;
+      const cloneRemoteUrl = activeProjectIsScratch ? undefined : target.cloneRemoteUrl;
       const project =
         knownProject ??
-        (await openScratchProject(target.environmentId, m(msg("Could not switch machine"))));
+        (cloneRemoteUrl
+          ? await startClusterClone(originalDraft, { ...target, cloneRemoteUrl })
+          : await openScratchProject(target.environmentId, m(msg("Could not switch machine"))));
       if (project) retarget(project, triagePrompt);
     };
     setBusyEnvironmentChange(request);
@@ -399,6 +514,8 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     refreshBeforeSend,
     onAutoEnvironmentStable,
     autoEnvironmentLabel,
+    autoEnvironments,
+    confirmAutoBalance,
     isEnvironmentChanging,
     readPendingEnvironmentChange,
     onEnvironmentChangeStable,

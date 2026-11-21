@@ -15,14 +15,17 @@ export type AddProjectTarget = Pick<EnvironmentOption, "environmentId" | "label"
  */
 export function useAddProjectTargets(
   project: EnvironmentProject | null,
-  projectEnvironments: readonly Pick<EnvironmentOption, "environmentId">[] | undefined,
+  projectEnvironments:
+    | readonly Pick<EnvironmentOption, "environmentId" | "projectId">[]
+    | undefined,
 ): readonly AddProjectTarget[] {
   const { environments } = useEnvironments();
   const canClone = useEnvironmentsWithScope(environments, AuthSourceControlWriteScope);
   if (!project?.repositoryIdentity?.locator.remoteUrl) return [];
   const hasProject = new Set([
     project.environmentId,
-    ...(projectEnvironments ?? []).map((env) => env.environmentId),
+    // A machine the picker offers to clone onto stays here: this dialog chooses the folder and files.
+    ...(projectEnvironments ?? []).flatMap((env) => (env.projectId ? [env.environmentId] : [])),
   ]);
   return environments
     .filter(

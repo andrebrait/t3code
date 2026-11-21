@@ -28,7 +28,9 @@ describe("confirm dialog coordinator", () => {
     const first = requireConfirmation(
       requestConfirmDialog("Delete the project?", { initialFocus: "confirm" }),
     );
-    const second = requireConfirmation(requestConfirmDialog("Delete the worktree too?"));
+    const second = requireConfirmation(
+      requestConfirmDialog("Delete the worktree too?", { confirmLabel: "Delete" }),
+    );
 
     respondToConfirmDialog(false);
     await expect(first).resolves.toBe(false);
@@ -44,12 +46,34 @@ describe("confirm dialog coordinator", () => {
       status: "confirming",
       message: "Delete the worktree too?",
       variant: "default",
+      confirmLabel: "Delete",
     });
 
     respondToConfirmDialog(true);
     await expect(second).resolves.toBe(true);
     completeConfirmDialogClose();
     expect(readConfirmDialogState()).toEqual({ status: "idle" });
+    unregister();
+  });
+
+  it("reports a checked option only when confirmed", async () => {
+    const unregister = mountHost();
+    const checked: string[] = [];
+    const ask = (name: string) =>
+      requireConfirmation(
+        requestConfirmDialog("Continue?", {
+          checkbox: { label: "Don't ask again", onConfirmChecked: () => checked.push(name) },
+        }),
+      );
+    const cancelled = ask("cancelled");
+    respondToConfirmDialog(false, true);
+    await expect(cancelled).resolves.toBe(false);
+    completeConfirmDialogClose();
+    const confirmed = ask("confirmed");
+    expect(readConfirmDialogState()).toMatchObject({ checkboxLabel: "Don't ask again" });
+    respondToConfirmDialog(true, true);
+    await expect(confirmed).resolves.toBe(true);
+    expect(checked).toEqual(["confirmed"]);
     unregister();
   });
 

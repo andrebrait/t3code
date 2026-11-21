@@ -143,6 +143,66 @@ transaction](../../apps/server/src/persistence/AuthSessions.ts); a failed
 replacement must leave the old credential usable. Pairing and browser sessions
 do not follow this replacement rule.
 
+### A cluster member trusts only its main host
+
+A member's one remote client is its main host's `cluster-host` session, minted
+by spending a cluster join code ([ClusterService](../../apps/server/src/cluster/ClusterService.ts)).
+Join codes use the purpose-bound `mcp-approval:` subject prefix, so ordinary token
+exchange, Connections and older servers never spend or list them. Join checks the code before any role check, so a caller without a valid join code
+learns nothing about this environment's role. One transaction holds the spend,
+the session and the membership; a role refusal rolls the spend back. Revoking
+every remote session, ordinary code and peer link runs after the commit, and
+again on member start, because revocation events must publish only once the
+revocation is committed: the code that reacts to them re-reads committed state.
+Afterwards the member mints only
+join codes and its startup link, so exclusivity needs no per-request address check.
+
+The main host forwards each client request with its own `cluster-host` token and
+`x-t3-cluster-scopes` naming the client's scopes. The member intersects its
+session with that header, only for `cluster-host` sessions, and always drops
+`access:write`: a proxied client could otherwise mint join codes, pairing links,
+guest shares or MCP approvals on the member that outlive its revocation on the
+main host, so a member's access is managed only on the member itself. The proxy
+always overwrites a client-sent value, and an unparseable header grants nothing.
+WebSocket tickets from a `cluster-host` session carry the capped scopes in a
+`scp` claim. The proxy refuses `/api/cluster/*`, `/mcp` and `/oauth/mcp/*`, and
+strips hop-by-hop and origin-affecting headers; `/api/cluster/leave` also refuses
+any request carrying the scopes header.
+
+The proxy decides on a canonical path (cut at `;`, decoded, slashes collapsed,
+trailing slash trimmed, lowercased) and forwards that same cut path. The
+member's FindMyWay router normalizes the same way; forwarding the raw path would
+let a request pass the decision as one route and reach another.
+
+The main host opens every connection, including the control link, an SSE
+doorbell that is the member's status. It carries only request ids, so no
+payload waits behind another and a member needs no address or credential for
+the main host. Only the session recorded at join may use it.
+
+### Agents cross the cluster through the main host
+
+[PeerForwarding](../../apps/server/src/peer/PeerForwarding.ts) is the one seam
+that sends an `environmentId` call to a peer link or through the cluster. The
+main host calls a member's `/mcp` with its `cluster-host` token. A member's
+agent calls ride the control link back, and the main host runs each one with its
+own MCP tools as that member's client ([ClusterHostRequests](../../apps/server/src/mcp/ClusterHostRequests.ts)),
+forwarding it on when it names another member. Each call is time-bounded and
+capped in flight per member. Each hop scopes `clientRequestId` to its caller, so
+an agent's retry after "cluster host unreachable" lands once.
+
+Cluster calls are not `linkOrigin`-fenced because the main host treats members
+as full trust. Peer-link callers stay fenced and are refused on clustered
+environments.
+
+Loop guards: the main host sends calls on without `environmentId`, so a call
+from it that names another environment is refused. A member's call that names
+that member (A to main to A) is refused.
+
+A member's agent calls run on the main host as a full-access client. The modes a
+member reports narrow honest callers only, since the member sets them; the main
+host's managed ceiling is the only limit a compromised member cannot choose.
+Treat a member as trusted as the main host.
+
 ### Reusable dev credential
 
 Web development environments can accept one `T3CODE_DEV_AUTH_TOKEN` across

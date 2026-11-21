@@ -165,9 +165,12 @@ came from. A stamp without the access, from before it was recorded, is fenced.
 ## Hosted web is a client
 
 The hosted web app stores its connection catalog in the browser and connects
-directly to each environment. It does not proxy traffic or hold server-side
-pairing state. Hosting the UI over HTTPS therefore cannot make a plain HTTP LAN
-backend accessible from that browser context.
+directly to each environment. It holds no server-side pairing state, and
+environments do not proxy for one another, with one exception: a cluster's main
+host forwards `/cluster/<memberId>/*` to its members
+([ClusterProxy](../../apps/server/src/cluster/ClusterProxy.ts)), so a client
+paired only with the main host can drive them. Hosting the UI over HTTPS
+therefore cannot make a plain HTTP LAN backend accessible from that browser context.
 
 A [hosted pairing URL](../../apps/web/src/hostedPairing.ts) identifies the backend
 in its query and carries the pairing secret in its fragment. Fragments stay out
@@ -216,7 +219,11 @@ lifecycle because it can spawn SSH and handle authentication prompts. The
 renderer uses the forwarded endpoint through the shared connection runtime.
 [SSH cleanup](../../packages/ssh/src/tunnel.ts) stops a remote server only if the
 launcher owns it; a server it discovered already running must survive a client
-disconnect. Reconnection restores the forward before opening the application
+disconnect. A cluster's main host never stops a member's server
+(`keepRemoteServer`), and its links offer its own cluster key with
+`-i <key> -o IdentitiesOnly=yes` ([ClusterSshKey](../../apps/server/src/cluster/ClusterSshKey.ts)),
+so keys loaded in a user's agent do not decide whether a member reconnects. `IdentityFile`
+entries and `ProxyJump` hops from the user's ssh config still apply. Reconnection restores the forward before opening the application
 transport.
 
 Remote servers can outlive several client releases. Clients must use advertised

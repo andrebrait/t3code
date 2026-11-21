@@ -1,6 +1,10 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import { EnvironmentRegistry } from "@t3tools/client-runtime/connection";
+import {
+  ClusterConnectionTarget,
+  EnvironmentRegistry,
+  PrimaryConnectionTarget,
+} from "@t3tools/client-runtime/connection";
 import { createEnvironmentSubscriptionAtomFamily } from "@t3tools/client-runtime/state/runtime";
 import {
   AuthFilesystemReadScope,
@@ -36,6 +40,12 @@ const mocks = vi.hoisted(() => ({
   serverConfig: vi.fn(),
   openScratch: vi.fn(),
   prepareTriage: vi.fn(),
+  environments: vi.fn(),
+  pick: vi.fn(),
+}));
+vi.mock("@t3tools/client-runtime/load-balancing", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@t3tools/client-runtime/load-balancing")>()),
+  pickLoadBalancedEnvironment: mocks.pick,
 }));
 vi.mock("../../state/atom-registry", () => ({
   appAtomRegistry: {
@@ -49,7 +59,18 @@ vi.mock("../../state/entities", () => ({
   useThreadShells: () => [],
   useEnvironmentServerConfig: () => mocks.serverConfig() ?? null,
   useServerConfigs: () => new Map(),
+  waitForProject: vi.fn(),
 }));
+vi.mock("../../state/environments", () => ({
+  useEnvironments: () => ({ environments: mocks.environments(), presentationById: new Map() }),
+}));
+vi.mock("../../state/preferences", async () => {
+  const { AsyncResult, Atom } = await import("effect/reactivity");
+  return { mobilePreferencesAtom: Atom.make(AsyncResult.success({})) };
+});
+vi.mock("../../state/server", () => ({ serverEnvironment: {} }));
+vi.mock("../../state/sourceControl", () => ({ sourceControlEnvironment: {} }));
+vi.mock("../../lib/uuid", () => ({ uuidv4: () => "uuid" }));
 vi.mock("../../state/vcs", () => ({
   vcsEnvironment: { status: mocks.status, listRefs: mocks.refs },
 }));
@@ -59,6 +80,7 @@ vi.mock("../../state/projects", () => ({
 }));
 vi.mock("../../state/session", () => ({
   environmentSession: { sessionStateAtom: mocks.session },
+  useEnvironmentsWithScope: () => new Set(),
 }));
 vi.mock("../../state/presentation", () => ({
   useEnvironmentPresentation: mocks.presentation,
@@ -113,6 +135,7 @@ vi.mock("../../state/shell", () => ({ useEnvironmentShellReadiness: () => ({}) }
 vi.mock("../../lib/clock", () => ({ useNowMinuteMs: () => 0 }));
 
 import { NewTaskFlowProvider, useNewTaskFlow } from "./new-task-flow-provider";
+import { updateNewTaskFlowState } from "./new-task-flow-state";
 
 function project(environment: string, id: string): EnvironmentProject {
   return {
@@ -133,6 +156,7 @@ function setup() {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   vi.useFakeTimers();
   vi.clearAllMocks();
+  mocks.environments.mockReturnValue([]);
   const registry = AtomRegistry.make();
   mocks.registry.mockReturnValue(registry);
   const projects = [project("one", "a"), project("one", "b"), project("two", "b")];
@@ -245,17 +269,26 @@ function setup() {
       holdStatus = true;
     },
     snapshot,
+    write(key: string, patch: Partial<ComposerDraft>) {
+      act(() => write(key, patch));
+    },
     clearWorkspace(key: string) {
       act(() => write(key, { workspaceSelection: undefined }));
     },
     get current() {
       return current;
     },
-    async render(active: boolean, pickOnMount?: EnvironmentProject) {
+    async render(
+      active: boolean,
+      pickOnMount?: EnvironmentProject,
+      route: { readonly flowKey: string; readonly routeDraftId?: string } = {
+        flowKey: "test-flow",
+      },
+    ) {
       await act(async () =>
         root.render(
           <RegistryContext.Provider value={registry}>
-            <NewTaskFlowProvider active={active} flowKey="test-flow">
+            <NewTaskFlowProvider active={active} {...route}>
               <Probe pickOnMount={pickOnMount} />
             </NewTaskFlowProvider>
           </RegistryContext.Provider>,
@@ -386,6 +419,98 @@ it("uses cached repository capability and branch defaults while offline", async 
   await screen.render(true);
   expect(screen.current.draftKey).toBe(draftKey);
   expect(screen.current.selectedBranchName).toBe("main");
+});
+
+/** Machines one and two as a cluster, which balances by default. */
+function clusterMachines() {
+  const one = EnvironmentId.make("one");
+  const connected = { phase: "connected" };
+  return [
+    {
+      environmentId: one,
+      label: "one",
+      entry: {
+        enabled: true,
+        target: new PrimaryConnectionTarget({
+          environmentId: one,
+          label: "one",
+          httpBaseUrl: "https://one.test/",
+          wsBaseUrl: "wss://one.test/",
+        }),
+      },
+      connection: connected,
+    },
+    {
+      environmentId: EnvironmentId.make("two"),
+      label: "two",
+      entry: {
+        enabled: true,
+        target: new ClusterConnectionTarget({
+          environmentId: EnvironmentId.make("two"),
+          label: "two",
+          hostEnvironmentId: one,
+          hostLabel: "one",
+          hostConnectionKey: null,
+          status: "online",
+          statusDetail: null,
+        }),
+      },
+      connection: connected,
+    },
+  ];
+}
+
+it("keeps a saved draft with a chosen branch or worktree on its machine", async () => {
+  using screen = setup();
+  mocks.environments.mockReturnValue(clusterMachines());
+  await screen.render(true);
+  const draftKey = screen.current.draftKey!;
+  expect(screen.current.autoBalance).not.toBeNull();
+
+  screen.write(draftKey, {
+    workspaceSelection: { mode: "local", branch: "feature", worktreePath: "/a-feature" },
+  });
+  expect(screen.current.autoBalance).toBeNull();
+  screen.write(draftKey, {
+    workspaceSelection: { mode: "local", branch: null, worktreePath: "/a" },
+  });
+  expect(screen.current.autoBalance).not.toBeNull();
+  screen.write(draftKey, {
+    workspaceSelection: { mode: "worktree", branch: "feature", worktreePath: null },
+  });
+  expect(screen.current.autoBalance).toBeNull();
+});
+
+it("keeps a reopened draft on the machine chosen for it", async () => {
+  using screen = setup();
+  mocks.environments.mockReturnValue(clusterMachines());
+  await screen.render(true);
+  const draftKey = screen.current.draftKey!;
+  act(() => screen.current.pinEnvironment());
+  expect(screen.current.autoBalance).toBeNull();
+
+  await screen.render(true, undefined, { flowKey: "reopened", routeDraftId: draftKey });
+  expect(screen.current.draftKey).toBe(draftKey);
+  expect(screen.current.autoBalance).toBeNull();
+
+  act(() => screen.current.chooseAutoPool(EnvironmentId.make("one")));
+  expect(screen.current.autoBalance).not.toBeNull();
+});
+
+it("picks again on send after Auto found no machine", async () => {
+  using screen = setup();
+  mocks.environments.mockReturnValue(clusterMachines());
+  await screen.render(true);
+  act(() => updateNewTaskFlowState("test-flow", { autoPick: { environmentId: null } }));
+  expect(screen.current.autoBalance?.status).toBe("failed");
+
+  mocks.pick.mockResolvedValue(null);
+  await act(async () => expect(await screen.current.retryAutoBalance()).toBeNull());
+  expect(screen.current.autoBalance?.status).toBe("failed");
+
+  mocks.pick.mockResolvedValue(EnvironmentId.make("one"));
+  await act(async () => expect(await screen.current.retryAutoBalance()).toBe("one"));
+  expect(screen.current.autoBalance?.status).toBe("resolved");
 });
 
 const playbookPrompt = (machine: string) =>

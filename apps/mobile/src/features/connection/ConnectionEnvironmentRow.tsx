@@ -26,6 +26,7 @@ import { environmentPresentations } from "../../state/presentation";
 import { ConnectionDiagnosisDetails, useConnectionDiagnosis } from "./ConnectionDiagnosisDetails";
 import { ConnectionFormField } from "./ConnectionFormField";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
+import { NetworkPlainHttpRow } from "./NetworkPlainHttpRow";
 import { environmentStatusText } from "./environmentStatusText";
 import type { MessageResolver } from "../../i18n/messages";
 
@@ -230,6 +231,7 @@ export function ConnectionEnvironmentRow(props: {
               diagnosis={diagnosis}
             />
           ) : null}
+          <NetworkPlainHttpRow environmentId={props.environment.environmentId} />
           {props.environment.isRelayManaged ? (
             <Text className="text-sm text-foreground-muted">
               {gt("Managed by {product}. Tunnel details update automatically.", {

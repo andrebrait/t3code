@@ -30,6 +30,8 @@ export interface NewTaskFlowState {
   readonly draftKey: string | null;
   readonly submitting: boolean;
   readonly expandedProvider: string | null;
+  /** Auto's pick for the draft, once made; a null machine means none qualified. */
+  readonly autoPick: { readonly environmentId: EnvironmentId | null } | null;
 }
 
 export const INITIAL_NEW_TASK_FLOW_STATE: NewTaskFlowState = {
@@ -38,6 +40,7 @@ export const INITIAL_NEW_TASK_FLOW_STATE: NewTaskFlowState = {
   draftKey: null,
   submitting: false,
   expandedProvider: null,
+  autoPick: null,
 };
 
 // Every draft route on the stack keeps its flow, not just the one the provider

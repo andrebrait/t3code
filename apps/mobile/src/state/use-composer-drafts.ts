@@ -452,6 +452,17 @@ export interface ComposerDraft {
   readonly freshContext?: boolean;
   readonly workspaceSelection?: ComposerDraftWorkspaceSelection;
   readonly project?: ComposerDraftProject;
+  readonly loadBalancing?: ComposerDraftLoadBalancing;
+}
+
+/** A new-task draft's Auto choices, kept with it so a reopened draft balances where it did. */
+export interface ComposerDraftLoadBalancing {
+  /** The Auto pool picked in the picker; null takes the default one. */
+  readonly pool: string | null;
+  /** The pool whose machines without the project the user accepted leaving out. */
+  readonly acknowledged: string | null;
+  /** The user picked the machine, so Auto no longer chooses one. */
+  readonly manual?: boolean;
 }
 
 export interface ComposerDraftProject {
@@ -494,6 +505,7 @@ export type ComposerDraftSettingsUpdate = Pick<
   | "freshContext"
   | "workspaceSelection"
   | "project"
+  | "loadBalancing"
 >;
 
 const ComposerDraftWorkspaceSelectionSchema = Schema.Struct({
@@ -529,6 +541,13 @@ const ComposerDraftSchema = Schema.Struct({
   freshContext: Schema.optional(Schema.Boolean),
   workspaceSelection: Schema.optional(ComposerDraftWorkspaceSelectionSchema),
   project: Schema.optional(ComposerDraftProjectSchema),
+  loadBalancing: Schema.optional(
+    Schema.Struct({
+      pool: Schema.NullOr(Schema.String),
+      acknowledged: Schema.NullOr(Schema.String),
+      manual: Schema.optional(Schema.Boolean),
+    }),
+  ),
 });
 
 const PersistedComposerDraftsSchema = Schema.Struct({
@@ -1726,6 +1745,7 @@ export function clearComposerDraftContentState(
     modelSelection,
     workspaceSelection,
     project: _project,
+    loadBalancing: _loadBalancing,
     ...retained
   } = existing;
   const draft = {

@@ -1929,6 +1929,7 @@ describe("mobile composer drafts", () => {
               branch: "main",
               worktreePath: null,
             },
+            loadBalancing: { pool: "ai-dev", acknowledged: "ai-dev" },
           },
         },
       }).drafts,
@@ -1952,6 +1953,7 @@ describe("mobile composer drafts", () => {
         branch: "main",
         worktreePath: null,
       },
+      loadBalancing: { pool: "ai-dev", acknowledged: "ai-dev" },
       project: {
         environmentId: "environment-1",
         projectId: "project-1",

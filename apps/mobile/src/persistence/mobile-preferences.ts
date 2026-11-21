@@ -167,6 +167,8 @@ export interface Preferences {
   readonly loadBalancingEnabled?: boolean;
   /** Per-machine weight, keyed by environment id; unset means 50. */
   readonly loadBalancingWeights?: Readonly<Record<string, number>>;
+  /** Projects (by repository) whose "Load balance across fewer machines?" confirm is skipped. */
+  readonly loadBalancingConfirmSkippedProjects?: readonly string[];
   readonly microphones?: ReadonlyArray<MicrophoneEntry>;
   readonly projectGroupingEnabled?: boolean;
   readonly projectGroupingMode?: SidebarProjectGroupingMode;
@@ -260,6 +262,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     language?: string;
     loadBalancingEnabled?: boolean;
     loadBalancingWeights?: Readonly<Record<string, number>>;
+    loadBalancingConfirmSkippedProjects?: readonly string[];
     microphones?: ReadonlyArray<MicrophoneEntry>;
     projectGroupingEnabled?: boolean;
     projectGroupingMode?: SidebarProjectGroupingMode;
@@ -380,6 +383,12 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (isLoadBalancingWeights(parsed.loadBalancingWeights)) {
     preferences.loadBalancingWeights = parsed.loadBalancingWeights;
+  }
+  if (Array.isArray(parsed.loadBalancingConfirmSkippedProjects)) {
+    preferences.loadBalancingConfirmSkippedProjects =
+      parsed.loadBalancingConfirmSkippedProjects.filter(
+        (key): key is string => typeof key === "string",
+      );
   }
   if (Array.isArray(parsed.microphones)) {
     preferences.microphones = parsed.microphones.flatMap((entry): MicrophoneEntry[] => {

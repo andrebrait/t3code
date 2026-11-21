@@ -19,6 +19,7 @@ import { type MessageId, ThreadId } from "@t3tools/contracts";
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
+import { loadBalancingConfirmKey } from "@t3tools/client-runtime/load-balancing";
 import { AsyncResult } from "effect/reactivity";
 import { pickableProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -99,7 +100,7 @@ import { newTaskFlowKey } from "./new-task-flow-state";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ConnectionStatusDot } from "../connection/ConnectionStatusDot";
 import { appAtomRegistry } from "../../state/atom-registry";
-import { mobilePreferencesAtom } from "../../state/preferences";
+import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
 
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 
@@ -153,25 +154,38 @@ function NewTaskWorkspaceIcon(props: {
   );
 }
 
-function confirmFewerMachines(pool: string, machines: ReadonlyArray<string>): Promise<boolean> {
+// Native alerts have no checkbox, so "Don't ask again" is a third button.
+function confirmFewerMachines(
+  pool: string,
+  machines: ReadonlyArray<string>,
+): Promise<"cancel" | "continue" | "always"> {
   return new Promise((resolve) =>
-    Dialog.confirm({
-      title: resolveMessage(msg("Load balance across fewer machines?")),
-      message: resolveMessage(
+    Dialog.alert(
+      resolveMessage(msg("Load balance across fewer machines?")),
+      resolveMessage(
         msg(
           "{machines} don't have this project, so {pool} only picks among the machines that do. To start on one of them, go back and choose it.",
           { machines: machines.join(", "), pool },
         ),
       ),
-      cancelText: resolveMessage(
-        msg("Go back", { $context: "return to the draft without sending" }),
-      ),
-      confirmText: resolveMessage(
-        msg("Continue", { $context: "load balance across fewer machines" }),
-      ),
-      onConfirm: () => resolve(true),
-      onCancel: () => resolve(false),
-    }),
+      [
+        {
+          text: resolveMessage(msg("Go back", { $context: "return to the draft without sending" })),
+          style: "cancel",
+          onPress: () => resolve("cancel"),
+        },
+        {
+          text: resolveMessage(msg("Don't ask again for this project")),
+          onPress: () => resolve("always"),
+        },
+        {
+          text: resolveMessage(msg("Continue", { $context: "load balance across fewer machines" })),
+          onPress: () => resolve("continue"),
+        },
+      ],
+      // Android dismisses on an outside tap without pressing a button.
+      { cancelable: true, onDismiss: () => resolve("cancel") },
+    ),
   );
 }
 
@@ -258,6 +272,7 @@ export function NewTaskDraftScreen(props: {
     }
   };
   const deleteProject = useAtomCommand(projectEnvironment.delete, { reportFailure: false });
+  const savePreferences = useAtomCommand(saveMobilePreferences);
   const removeClonedProject = async () => {
     if (!selectedProject) return;
     const removed = selectedProject;
@@ -759,10 +774,31 @@ export function NewTaskDraftScreen(props: {
       }
       // The draft moved; this render still holds the old machine, so the next send starts it.
       if (picked !== null && picked !== flow.selectedEnvironmentId) return null;
-      if (auto.missingLabels.length > 0 && !auto.acknowledged) {
-        const proceed = await confirmFewerMachines(auto.label, auto.missingLabels);
-        if (!proceed) return null;
+      const preferences = appAtomRegistry.get(mobilePreferencesAtom);
+      const skipped = AsyncResult.isSuccess(preferences)
+        ? (preferences.value.loadBalancingConfirmSkippedProjects ?? [])
+        : [];
+      const projectKey = flow.selectedProject
+        ? loadBalancingConfirmKey(flow.selectedProject)
+        : null;
+      if (
+        auto.missingLabels.length > 0 &&
+        !auto.acknowledged &&
+        (projectKey === null || !skipped.includes(projectKey))
+      ) {
+        const answer = await confirmFewerMachines(auto.label, auto.missingLabels);
+        if (answer === "cancel") return null;
         flow.acknowledgeAutoBalance();
+        if (answer === "always" && projectKey !== null) {
+          void savePreferences({
+            transform: (current) => ({
+              loadBalancingConfirmSkippedProjects: [
+                ...(current.loadBalancingConfirmSkippedProjects ?? []),
+                projectKey,
+              ],
+            }),
+          });
+        }
       }
     }
     return handleStart();

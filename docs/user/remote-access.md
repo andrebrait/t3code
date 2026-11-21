@@ -222,8 +222,10 @@ in its cluster's group, stays editable while the switch is off, and also applies
 
 A balanced choice only picks machines that already have the project; it never clones
 it. When some of its machines lack the project, the picker warns and lists them, and
-the first send asks whether to continue on the machines that have it. To use one that
-lacks it, choose that machine instead.
+the first send asks whether to continue on the machines that have it. **Don't ask again
+for this project** skips the question for that repository on this device; **Reset "Don't
+ask again" choices** in the load-balancing settings brings it back. To use one that lacks
+it, choose that machine instead.
 
 The draft checks eligible machines when it opens or when you choose a balanced option,
 then keeps that choice stable. Choose the option again to check current resources, or

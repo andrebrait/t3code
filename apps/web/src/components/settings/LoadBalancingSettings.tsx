@@ -13,6 +13,7 @@ import {
 import type { MessageResolver } from "~/i18n/messages";
 import type { EnvironmentPresentation } from "~/state/environments";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
 import { ClusterIcon } from "../ClusterIcon";
 import { EnvironmentRow, EnvironmentTransportLabel } from "./EnvironmentRow";
@@ -56,6 +57,7 @@ export function LoadBalancingSettings({
   const settings = useClientSettings((current) => ({
     loadBalancingEnabled: current.loadBalancingEnabled,
     loadBalancingWeights: current.loadBalancingWeights,
+    skippedConfirms: current.loadBalancingConfirmSkippedProjects.length,
   }));
   const settingsHydrated = useClientSettingsHydrated();
   const gt = useGT();
@@ -118,6 +120,27 @@ export function LoadBalancingSettings({
       </Select>
     </EnvironmentRow>
   );
+  // The way back from "Don't ask again" on the fewer-machines confirm.
+  const resetConfirmsRow =
+    settings.skippedConfirms > 0 ? (
+      <SettingsRow
+        title={gt("Asking before balancing across fewer machines")}
+        description={gt(
+          "You chose not to be asked again for {count, plural, one {# project} other {# projects}}.",
+          { count: settings.skippedConfirms },
+        )}
+        control={
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={!settingsHydrated}
+            onClick={() => void updateClientSettings({ loadBalancingConfirmSkippedProjects: [] })}
+          >
+            {gt('Reset "Don\'t ask again" choices')}
+          </Button>
+        }
+      />
+    ) : null;
   const switchSummary = settings.loadBalancingEnabled
     ? summarizeLoadPreferences(environments, settings.loadBalancingWeights, m)
     : gt("Off", { $context: "load balancing is turned off" });
@@ -137,6 +160,7 @@ export function LoadBalancingSettings({
           </T>
         </p>
         {standalone.map((environment) => preferenceRow(environment, settings.loadBalancingEnabled))}
+        {resetConfirmsRow}
       </FoldedSettingsSection>
     );
   }
@@ -179,6 +203,7 @@ export function LoadBalancingSettings({
         />
       ) : null}
       {standalone.map((environment) => preferenceRow(environment, settings.loadBalancingEnabled))}
+      {resetConfirmsRow}
     </FoldedSettingsSection>
   );
 }

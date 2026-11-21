@@ -1,5 +1,5 @@
 import { msg, T, useMessages } from "gt-react";
-import { useSyncExternalStore } from "react";
+import { useState, useSyncExternalStore } from "react";
 
 import {
   completeConfirmDialogClose,
@@ -18,6 +18,7 @@ import {
   AlertDialogTitle,
 } from "./ui/alert-dialog";
 import { Button } from "./ui/button";
+import { Checkbox } from "./ui/checkbox";
 import type { MessageResolver } from "../i18n/messages";
 
 type ConfirmationCopy = {
@@ -68,8 +69,17 @@ export function ConfirmDialogHost() {
   const confirmVariant = state.status === "idle" ? "default" : state.variant;
   const focusConfirm = state.status !== "idle" && state.initialFocus === "confirm";
   const confirmLabel = state.status === "idle" ? undefined : state.confirmLabel;
-  const onCancel = () => respondToConfirmDialog(false);
-  const onConfirm = () => respondToConfirmDialog(true);
+  const checkboxLabel = state.status === "idle" ? undefined : state.checkboxLabel;
+  const [checked, setChecked] = useState(false);
+  // Each answer clears the box, so the next dialog starts unchecked.
+  const onCancel = () => {
+    setChecked(false);
+    respondToConfirmDialog(false);
+  };
+  const onConfirm = () => {
+    setChecked(false);
+    respondToConfirmDialog(true, checked);
+  };
 
   return (
     <AlertDialog
@@ -90,6 +100,12 @@ export function ConfirmDialogHost() {
             </AlertDialogDescription>
           ) : null}
         </AlertDialogHeader>
+        {checkboxLabel ? (
+          <label className="flex items-center gap-2 px-6 text-sm">
+            <Checkbox checked={checked} onCheckedChange={setChecked} />
+            {checkboxLabel}
+          </label>
+        ) : null}
         <AlertDialogFooter>
           <AlertDialogClose render={<Button variant="outline" />}>
             <T>Cancel</T>

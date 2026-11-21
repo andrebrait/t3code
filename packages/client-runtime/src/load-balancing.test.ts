@@ -17,6 +17,7 @@ import { ClusterConnectionTarget, PrimaryConnectionTarget } from "./connection/m
 import {
   groupEnvironmentsByCluster,
   loadBalancingCandidateIds,
+  loadBalancingConfirmKey,
   loadBalancingPools,
   loadBalancingSendWarning,
   pickLoadBalancedEnvironment,
@@ -80,6 +81,42 @@ describe("loadBalancingCandidateIds", () => {
 
   it("leaves out a machine set to Manual only", () => {
     expect(candidateIds({ [other]: 0 })).toEqual([local]);
+  });
+});
+
+describe("loadBalancingConfirmKey", () => {
+  it("keys a project by its repository across machines, else by itself", () => {
+    const identity = (canonicalKey: string) => ({
+      canonicalKey,
+      locator: { source: "git-remote" as const, remoteName: "origin", remoteUrl: canonicalKey },
+    });
+    const fork = {
+      environmentId: local,
+      id: ProjectId.make("p1"),
+      repositoryIdentity: {
+        ...identity("github.com/me/tau"),
+        origin: { canonicalKey: "github.com/t3/tau" },
+      },
+    };
+    const clone = {
+      environmentId: remote,
+      id: ProjectId.make("p2"),
+      repositoryIdentity: identity("github.com/t3/tau"),
+    };
+    expect(loadBalancingConfirmKey(fork)).toBe(loadBalancingConfirmKey(clone));
+    expect(
+      loadBalancingConfirmKey({
+        environmentId: local,
+        id: ProjectId.make("p1"),
+        repositoryIdentity: null,
+      }),
+    ).not.toBe(
+      loadBalancingConfirmKey({
+        environmentId: remote,
+        id: ProjectId.make("p1"),
+        repositoryIdentity: null,
+      }),
+    );
   });
 });
 

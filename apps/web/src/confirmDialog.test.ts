@@ -56,6 +56,27 @@ describe("confirm dialog coordinator", () => {
     unregister();
   });
 
+  it("reports a checked option only when confirmed", async () => {
+    const unregister = mountHost();
+    const checked: string[] = [];
+    const ask = (name: string) =>
+      requireConfirmation(
+        requestConfirmDialog("Continue?", {
+          checkbox: { label: "Don't ask again", onConfirmChecked: () => checked.push(name) },
+        }),
+      );
+    const cancelled = ask("cancelled");
+    respondToConfirmDialog(false, true);
+    await expect(cancelled).resolves.toBe(false);
+    completeConfirmDialogClose();
+    const confirmed = ask("confirmed");
+    expect(readConfirmDialogState()).toMatchObject({ checkboxLabel: "Don't ask again" });
+    respondToConfirmDialog(true, true);
+    await expect(confirmed).resolves.toBe(true);
+    expect(checked).toEqual(["confirmed"]);
+    unregister();
+  });
+
   it("cancels active and queued confirmations if the last host unmounts", async () => {
     const unregister = mountHost();
     const active = requireConfirmation(requestConfirmDialog("Delete the thread?"));

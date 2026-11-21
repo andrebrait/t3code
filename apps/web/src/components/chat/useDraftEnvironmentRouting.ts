@@ -36,9 +36,11 @@ import { useProjects } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { DraftSessionState } from "../../composerDraftStore";
+import { getClientSettings, updateClientSettings } from "../../hooks/useSettings";
 import {
   type LoadBalancingPool,
   loadBalancingCandidateIds,
+  loadBalancingConfirmKey,
   loadBalancingSendWarning,
 } from "@t3tools/client-runtime/load-balancing";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
@@ -335,7 +337,15 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     if (!automaticEnvironment || !draftId || !pool || pool.missingEnvironmentIds.length === 0) {
       return true;
     }
-    if (getDraftSession(draftId)?.loadBalancingAcknowledgedPool === pool.key) return true;
+    const draft = getDraftSession(draftId);
+    if (draft?.loadBalancingAcknowledgedPool === pool.key) return true;
+    const project = allProjects.find(
+      (candidate) =>
+        candidate.environmentId === draft?.environmentId && candidate.id === draft.projectId,
+    );
+    const projectKey = project ? loadBalancingConfirmKey(project) : null;
+    const skipped = getClientSettings().loadBalancingConfirmSkippedProjects;
+    if (projectKey !== null && skipped.includes(projectKey)) return true;
     const question = m(
       msg(
         "Load balance across fewer machines?\n{machines} don't have this project, so {pool} only picks among the machines that do. To start on one of them, go back and choose it.",
@@ -345,6 +355,20 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     const confirmed = await (requestConfirmDialog(question, {
       initialFocus: "confirm",
       confirmLabel: m(msg("Continue", { $context: "load balance across fewer machines" })),
+      ...(projectKey === null
+        ? {}
+        : {
+            checkbox: {
+              label: m(msg("Don't ask again for this project")),
+              onConfirmChecked: () =>
+                void updateClientSettings({
+                  loadBalancingConfirmSkippedProjects: [
+                    ...getClientSettings().loadBalancingConfirmSkippedProjects,
+                    projectKey,
+                  ],
+                }),
+            },
+          }),
     }) ?? Promise.resolve(window.confirm(question)));
     if (confirmed) setDraftThreadContext(draftId, { loadBalancingAcknowledgedPool: pool.key });
     return confirmed;

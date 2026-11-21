@@ -45,6 +45,30 @@ export function LoadBalancingSettings() {
   const enabled = preferences.loadBalancingEnabled ?? false;
   const weights = preferences.loadBalancingWeights ?? {};
   const { clusters, standalone } = groupEnvironmentsByCluster(environments);
+  const skippedConfirms = preferences.loadBalancingConfirmSkippedProjects?.length ?? 0;
+  // The way back from "Don't ask again" on the fewer-machines confirm.
+  const resetConfirmsSection =
+    skippedConfirms > 0 ? (
+      <SettingsSection
+        title={gt("Asking before balancing across fewer machines")}
+        footer={gt(
+          "You chose not to be asked again for {count, plural, one {# project} other {# projects}}.",
+          { count: skippedConfirms },
+        )}
+      >
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ disabled: !ready }}
+          disabled={!ready}
+          className="p-4"
+          onPress={() => void savePreferences({ loadBalancingConfirmSkippedProjects: [] })}
+        >
+          <Text className="text-base text-foreground">
+            {gt('Reset "Don\'t ask again" choices')}
+          </Text>
+        </Pressable>
+      </SettingsSection>
+    ) : null;
   const switchRow = (label: string) => (
     <SettingsSwitchRow
       label={label}
@@ -115,6 +139,7 @@ export function LoadBalancingSettings() {
           {switchRow(gt("Automatically balance load"))}
           {standalone.map((environment) => preferenceRow(environment, enabled))}
         </SettingsSection>
+        {resetConfirmsSection ? <View className="mt-5">{resetConfirmsSection}</View> : null}
       </View>
     );
   }
@@ -147,6 +172,7 @@ export function LoadBalancingSettings() {
           {standalone.map((environment) => preferenceRow(environment, enabled))}
         </SettingsSection>
       ) : null}
+      {resetConfirmsSection}
     </View>
   );
 }

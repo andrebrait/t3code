@@ -5,6 +5,8 @@ import {
   type ProjectId,
   type ProviderDriverKind,
   type ProviderInstanceId,
+  type RepositoryIdentity,
+  repositoryGroupingKeyOf,
   resolveProjectProviderInstanceEnabled,
   type ServerConfig,
   type ServerProvider,
@@ -15,6 +17,7 @@ import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
 
 import type { ConnectionCatalogEntry } from "./connection/catalog.ts";
+import { scopedProjectKey } from "./environment/scoped.ts";
 import { executeAtomQuery } from "./state/runtime.ts";
 
 /** The preferences a machine's load-balancing weight is shown as; 50 is the default. */
@@ -214,6 +217,20 @@ export function groupEnvironmentsByCluster<
     clusters: [...clusters].map(([hostEnvironmentId, group]) => ({ hostEnvironmentId, ...group })),
     standalone,
   };
+}
+
+/**
+ * What a "Don't ask again" for the fewer-machines confirm is stored under: the repository, so
+ * the choice covers the project on every machine; a project without one is keyed by itself.
+ */
+export function loadBalancingConfirmKey(project: {
+  readonly environmentId: EnvironmentId;
+  readonly id: ProjectId;
+  readonly repositoryIdentity?: RepositoryIdentity | null | undefined;
+}): string {
+  return project.repositoryIdentity
+    ? repositoryGroupingKeyOf(project.repositoryIdentity)
+    : scopedProjectKey({ environmentId: project.environmentId, projectId: project.id });
 }
 
 /** The pool a draft balances in: its chosen one while offered, else Auto, else its machine's cluster. */

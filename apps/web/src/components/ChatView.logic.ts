@@ -1665,7 +1665,6 @@ export function deriveAvailableRevertTurnCounts(projection: ThreadStructure | nu
   return available;
 }
 
-/** An imported native session is bound before it has messages or runs, and its cwd is fixed. */
 /**
  * The pool a draft balances in, and whether the picker offers pools. A cluster's pool is
  * offered even while the draft sits on a machine outside it, where no pool is active.
@@ -1681,6 +1680,7 @@ export function resolveDraftLoadBalancing(
   };
 }
 
+/** An imported native session is bound before it has messages or runs, and its cwd is fixed. */
 export function isThreadEnvironmentLocked(input: {
   readonly messageCount: number;
   readonly hasRuntime: boolean;

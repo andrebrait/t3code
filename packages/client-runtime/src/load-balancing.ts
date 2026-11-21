@@ -115,19 +115,6 @@ export function loadBalancingPools(input: {
   return everywhere && !duplicatesCluster ? [everywhere, ...clusterPools] : clusterPools;
 }
 
-/** Machines in a cluster, main hosts included. Their preferences apply even with the switch off. */
-export function clusterEnvironmentIds(
-  environments: ReadonlyArray<{ readonly entry: Pick<ConnectionCatalogEntry, "target"> }>,
-): ReadonlySet<EnvironmentId> {
-  return new Set(
-    environments.flatMap(({ entry: { target } }) =>
-      target._tag === "ClusterConnectionTarget"
-        ? [target.environmentId, target.hostEnvironmentId]
-        : [],
-    ),
-  );
-}
-
 /**
  * Machine picker order, matching the pools': each cluster together (by label, the primary's
  * first), its main host then members by label, and machines that would clone the project
@@ -181,6 +168,52 @@ export function sortEnvironmentOptionsByCluster<
         left.label.localeCompare(right.label),
     )
     .map(({ option }) => option);
+}
+
+/**
+ * Splits machines for the load-balancing settings: one group per cluster, in picker order
+ * (main host first, then members by label), then the standalone machines.
+ */
+export function groupEnvironmentsByCluster<
+  T extends {
+    readonly environmentId: EnvironmentId;
+    readonly label: string;
+    readonly entry: Pick<ConnectionCatalogEntry, "target">;
+  },
+>(environments: ReadonlyArray<T>, primaryEnvironmentId: EnvironmentId | null = null) {
+  const hostIds = new Set(
+    environments.flatMap(({ entry: { target } }) =>
+      target._tag === "ClusterConnectionTarget" ? [target.hostEnvironmentId] : [],
+    ),
+  );
+  const clusters = new Map<EnvironmentId, { label: string; environments: T[] }>();
+  const standalone: T[] = [];
+  for (const environment of sortEnvironmentOptionsByCluster(
+    environments,
+    environments,
+    primaryEnvironmentId,
+  )) {
+    const { target } = environment.entry;
+    const host =
+      target._tag === "ClusterConnectionTarget"
+        ? target.hostEnvironmentId
+        : hostIds.has(environment.environmentId)
+          ? environment.environmentId
+          : null;
+    if (host === null) {
+      standalone.push(environment);
+      continue;
+    }
+    // The main host leads its group, so its own label wins over a member's copy.
+    const label = target._tag === "ClusterConnectionTarget" ? target.hostLabel : environment.label;
+    const group = clusters.get(host) ?? { label, environments: [] };
+    group.environments.push(environment);
+    clusters.set(host, group);
+  }
+  return {
+    clusters: [...clusters].map(([hostEnvironmentId, group]) => ({ hostEnvironmentId, ...group })),
+    standalone,
+  };
 }
 
 /** The pool a draft balances in: its chosen one while offered, else Auto, else its machine's cluster. */

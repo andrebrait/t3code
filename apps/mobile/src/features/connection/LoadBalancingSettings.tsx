@@ -1,7 +1,7 @@
 import { msg, useGT, useMessages } from "gt-react-native";
 import { useAtomValue } from "@effect/atom-react";
 import {
-  clusterEnvironmentIds,
+  groupEnvironmentsByCluster,
   LOAD_BALANCING_PREFERENCES,
   type LoadBalancingPreference,
   loadBalancingPreferenceForWeight,
@@ -13,6 +13,7 @@ import { Pressable, View } from "react-native";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { ListChoiceRow } from "../../components/ui/ListChoiceRow";
+import { CLUSTER_SYMBOL } from "../../lib/clusterSymbol";
 import { useEnvironments } from "../../state/environments";
 import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -43,75 +44,106 @@ export function LoadBalancingSettings() {
   const preferences = AsyncResult.isSuccess(preferencesResult) ? preferencesResult.value : {};
   const enabled = preferences.loadBalancingEnabled ?? false;
   const weights = preferences.loadBalancingWeights ?? {};
-  // Clusters balance with the switch off too, so their machines stay editable.
-  const clusterIds = clusterEnvironmentIds(environments);
+  const { clusters, standalone } = groupEnvironmentsByCluster(environments);
+  const switchRow = (label: string) => (
+    <SettingsSwitchRow
+      label={label}
+      disabled={!ready}
+      value={enabled}
+      onValueChange={(loadBalancingEnabled) => void savePreferences({ loadBalancingEnabled })}
+    />
+  );
+  const preferenceRow = (environment: (typeof environments)[number], canEdit: boolean) => {
+    const environmentId = environment.environmentId;
+    const editable = ready && canEdit;
+    const selected = loadBalancingPreferenceForWeight(weights[environmentId]);
+    return (
+      <View key={environmentId}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={gt("{environment} load preference", {
+            environment: environment.label,
+          })}
+          accessibilityState={{ expanded: expanded === environmentId, disabled: !editable }}
+          disabled={!editable}
+          className="flex-row items-center gap-3 p-4"
+          onPress={() => setExpanded(expanded === environmentId ? null : environmentId)}
+        >
+          <Text className="min-w-0 flex-1 text-base font-t3-bold text-foreground">
+            {environment.label}
+          </Text>
+          <Text className="text-sm text-foreground-muted">{m(preferenceLabels[selected])}</Text>
+          <SymbolView
+            name={expanded === environmentId ? "chevron.up" : "chevron.down"}
+            size={12}
+            tintColorClassName="accent-icon-muted"
+          />
+        </Pressable>
+        {expanded === environmentId
+          ? LOAD_BALANCING_PREFERENCES.map((preference) => (
+              <ListChoiceRow
+                key={preference}
+                label={m(preferenceLabels[preference])}
+                selected={selected === preference}
+                disabled={!editable}
+                onPress={() =>
+                  void savePreferences({
+                    transform: (current) => ({
+                      loadBalancingWeights: {
+                        ...current.loadBalancingWeights,
+                        [environmentId]: preference,
+                      },
+                    }),
+                  })
+                }
+              />
+            ))
+          : null}
+      </View>
+    );
+  };
+
+  if (clusters.length === 0) {
+    return (
+      <View className="mt-5">
+        <SettingsSection
+          title={gt("Load balancing")}
+          footer={gt(
+            "New threads in shared projects start on the machine with the most free CPU and memory, weighted by each machine's preference.",
+          )}
+        >
+          {switchRow(gt("Automatically balance load"))}
+          {standalone.map((environment) => preferenceRow(environment, enabled))}
+        </SettingsSection>
+      </View>
+    );
+  }
 
   return (
-    <View className="mt-5 gap-3">
-      <SettingsSection title={gt("Load balancing")}>
-        <SettingsSwitchRow
-          label={gt("Automatically balance load")}
-          disabled={!ready}
-          value={enabled}
-          onValueChange={(loadBalancingEnabled) => void savePreferences({ loadBalancingEnabled })}
-        />
-        {environments.map((environment) => {
-          const environmentId = environment.environmentId;
-          const editable = ready && (enabled || clusterIds.has(environmentId));
-          const selected = loadBalancingPreferenceForWeight(weights[environmentId]);
-          return (
-            <View key={environmentId}>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={gt("{environment} load preference", {
-                  environment: environment.label,
-                })}
-                accessibilityState={{ expanded: expanded === environmentId, disabled: !editable }}
-                disabled={!editable}
-                className="flex-row items-center gap-3 p-4"
-                onPress={() => setExpanded(expanded === environmentId ? null : environmentId)}
-              >
-                <Text className="min-w-0 flex-1 text-base font-t3-bold text-foreground">
-                  {environment.label}
-                </Text>
-                <Text className="text-sm text-foreground-muted">
-                  {m(preferenceLabels[selected])}
-                </Text>
-                <SymbolView
-                  name={expanded === environmentId ? "chevron.up" : "chevron.down"}
-                  size={12}
-                  tintColorClassName="accent-icon-muted"
-                />
-              </Pressable>
-              {expanded === environmentId
-                ? LOAD_BALANCING_PREFERENCES.map((preference) => (
-                    <ListChoiceRow
-                      key={preference}
-                      label={m(preferenceLabels[preference])}
-                      selected={selected === preference}
-                      disabled={!editable}
-                      onPress={() =>
-                        void savePreferences({
-                          transform: (current) => ({
-                            loadBalancingWeights: {
-                              ...current.loadBalancingWeights,
-                              [environmentId]: preference,
-                            },
-                          }),
-                        })
-                      }
-                    />
-                  ))
-                : null}
-            </View>
-          );
-        })}
-      </SettingsSection>
-      <Text className="px-2 text-sm text-foreground-muted">
-        {gt(
-          "New threads start on the machine with the most free CPU and memory, weighted by each machine's preference. Clusters always balance across their own machines; turn this on to also balance across all your machines.",
+    <View className="mt-5 gap-5">
+      {clusters.map((cluster) => (
+        <SettingsSection
+          key={cluster.hostEnvironmentId}
+          title={`${gt("Load balancing")} · ${gt("{host} cluster", { host: cluster.label })}`}
+          titleIcon={
+            <SymbolView name={CLUSTER_SYMBOL} size={14} tintColorClassName="accent-icon-muted" />
+          }
+          footer={gt(
+            "On this device, new threads started on this cluster always balance across its machines, weighted by each machine's preference.",
+          )}
+        >
+          {cluster.environments.map((environment) => preferenceRow(environment, true))}
+        </SettingsSection>
+      ))}
+      <SettingsSection
+        title={`${gt("Load balancing")} · ${gt("Other machines")}`}
+        footer={gt(
+          "Balance across all machines: when on, new threads in shared projects may also start on any machine, cluster machines included, weighted by the same preferences.",
         )}
-      </Text>
+      >
+        {switchRow(gt("Balance across all machines"))}
+        {standalone.map((environment) => preferenceRow(environment, enabled))}
+      </SettingsSection>
     </View>
   );
 }

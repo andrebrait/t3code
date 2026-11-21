@@ -205,16 +205,19 @@ different permissions.
 
 New threads can start on the machine with the most free CPU and memory. In the
 machine picker of a new thread, each cluster offers **<main host> (load balanced)**,
-which picks among that cluster's machines. Clusters do this by default. Turn on
-**Settings → Environments → Load balancing → Automatically balance load** to also
-get **Auto balance**, which picks among all your machines. The section appears once
-two or more machines are switched on, on web, desktop and mobile.
+which picks among that cluster's machines. Clusters do this by default. To also get
+**Auto balance**, which picks among all your machines, cluster machines included, open
+**Settings → Environments → Load balancing** and turn on **Balance across all
+machines** under **Other machines** (**Automatically balance load** when you have no
+cluster). The section appears once two or more machines are switched on, on web,
+desktop and mobile.
 
 Each machine starts at **Normal**. Choose **Prefer** to favor it when it has CPU and
 memory available, **Less often** to reduce its share, or **Manual only** to exclude
 it from automatic selection. These are preferences, not fixed traffic percentages.
-Preferences are saved separately in each client. Cluster machines stay editable while
-the switch is off, because the cluster's own choice still uses them.
+Preferences are saved separately in each client. A cluster machine's preference is set
+in its cluster's group, stays editable while the switch is off, and also applies to
+**Auto balance**. Other machines' preferences apply only while the switch is on.
 
 A balanced choice only picks machines that already have the project; it never clones
 it. When some of its machines lack the project, the picker warns and lists them, and

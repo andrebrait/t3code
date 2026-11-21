@@ -14,6 +14,7 @@ import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 
 import { ClusterConnectionTarget, PrimaryConnectionTarget } from "./connection/model.ts";
 import {
+  groupEnvironmentsByCluster,
   loadBalancingCandidateIds,
   loadBalancingPools,
   loadBalancingSendWarning,
@@ -218,5 +219,28 @@ describe("sortEnvironmentOptionsByCluster", () => {
       laptop,
       desktop,
     ]);
+  });
+
+  it("splits settings into cluster groups, then standalone machines", () => {
+    const desktop = EnvironmentId.make("desktop");
+    const groups = groupEnvironmentsByCluster(
+      [
+        machine(laptop, "laptop", false),
+        ...cluster.toReversed(),
+        machine(desktop, "desktop", false),
+      ],
+      laptop,
+    );
+    expect({
+      clusters: groups.clusters.map((group) => [
+        group.hostEnvironmentId,
+        group.label,
+        group.environments.map((environment) => environment.environmentId),
+      ]),
+      standalone: groups.standalone.map((environment) => environment.environmentId),
+    }).toEqual({
+      clusters: [[host, "ai-dev", [host, worker2, worker3]]],
+      standalone: [laptop, desktop],
+    });
   });
 });

@@ -99,7 +99,7 @@ import {
 import {
   availableScratchWorkspaceRoot,
   clusterCloneEnvironmentIds,
-  getDefaultCloneDestinationPath,
+  getClusterCloneDestinationPath,
   projectCloneRemoteUrl,
 } from "@t3tools/client-runtime/operations/projects";
 import {
@@ -737,10 +737,12 @@ export function NewTaskFlowProvider(
     remoteUrl: string,
   ): Promise<boolean> => {
     if (!selectedProject) return false;
-    const destinationPath = getDefaultCloneDestinationPath(
+    const destinationPath = getClusterCloneDestinationPath({
       remoteUrl,
-      serverConfigs.get(environmentId)?.settings,
-    );
+      sourceWorkspaceRoot: selectedProject.workspaceRoot,
+      sourceHomeDirectory: serverConfigs.get(selectedProject.environmentId)?.homeDirectory,
+      targetSettings: serverConfigs.get(environmentId)?.settings,
+    });
     const confirmed = await confirmClone({
       repository: selectedProject.repositoryIdentity?.displayName ?? selectedProject.title,
       machine:

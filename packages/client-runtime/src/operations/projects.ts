@@ -294,6 +294,31 @@ export function getDefaultCloneDestinationPath(
 }
 
 /**
+ * Where clone-on-demand puts a project: the path it has on the machine it is cloned from. Under
+ * that machine's home it becomes `~/…`, so it maps onto a machine whose home differs. Without
+ * the source path or home, it falls back to the target's default.
+ */
+export function getClusterCloneDestinationPath(input: {
+  readonly remoteUrl: string;
+  readonly sourceWorkspaceRoot: string | null | undefined;
+  readonly sourceHomeDirectory: string | null | undefined;
+  readonly targetSettings:
+    | Pick<ServerSettings, "addProjectBaseDirectory" | "ghqCloneLayout">
+    | undefined;
+}): string {
+  const root = input.sourceWorkspaceRoot?.trim() ?? "";
+  const home = input.sourceHomeDirectory?.trim().replace(/[\\/]+$/, "") ?? "";
+  if (!root || !home || root === home) {
+    return getDefaultCloneDestinationPath(input.remoteUrl, input.targetSettings);
+  }
+  const separator = root[home.length];
+  if (root.startsWith(home) && (separator === "/" || separator === "\\")) {
+    return `~/${root.slice(home.length + 1).replaceAll("\\", "/")}`;
+  }
+  return root;
+}
+
+/**
  * The remote a clone of the project comes from, or null when it has none. Projects group by
  * their origin remote, so a clone from it groups with the project; an origin without a known
  * URL gives null rather than a clone that would group apart.

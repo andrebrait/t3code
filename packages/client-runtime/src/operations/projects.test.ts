@@ -11,6 +11,7 @@ import {
   getCloneDirectoryName,
   getCloneDirectoryPath,
   getAddProjectInitialQuery,
+  getClusterCloneDestinationPath,
   getDefaultCloneDestinationPath,
   getDefaultCloneUrl,
   githubIncompleteOwnerRepositoryMessage,
@@ -346,5 +347,23 @@ describe("cluster clone targets", () => {
         ghqCloneLayout: true,
       }),
     ).toBe("/srv/github.com/t3tools/t3code");
+  });
+
+  it.each([
+    ["/root/git/tau", "/root", "~/git/tau"],
+    ["/Users/me/git/tau", "/Users/me/", "~/git/tau"],
+    ["C:\\Users\\me\\git\\tau", "C:\\Users\\me", "~/git/tau"],
+    ["/root2/tau", "/root", "/root2/tau"],
+    ["/srv/tau", "/root", "/srv/tau"],
+    ["/root/git/tau", undefined, "~/tau"],
+  ])("clones %s from home %s to %s on another cluster machine", (root, home, expected) => {
+    expect(
+      getClusterCloneDestinationPath({
+        remoteUrl: "git@github.com:me/tau.git",
+        sourceWorkspaceRoot: root,
+        sourceHomeDirectory: home,
+        targetSettings: undefined,
+      }),
+    ).toBe(expected);
   });
 });

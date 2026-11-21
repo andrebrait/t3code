@@ -44,7 +44,7 @@ import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { seedDraftModelSelection } from "../../lib/seedDraftModelSelection";
 import { draftFanoutSelectionsAtom } from "./chatViewSend";
 import { cloneProjectToClusterMachine } from "../../lib/addProjectToMachine";
-import { getDefaultCloneDestinationPath } from "@t3tools/client-runtime/operations/projects";
+import { getClusterCloneDestinationPath } from "@t3tools/client-runtime/operations/projects";
 import { requestConfirmDialog } from "../../confirmDialog";
 import type { EnvironmentOption } from "../BranchToolbar.logic";
 
@@ -146,10 +146,12 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       (project) => project.environmentId === draft.environmentId && project.id === draft.projectId,
     );
     if (!source) return null;
-    const destinationPath = getDefaultCloneDestinationPath(
-      target.cloneRemoteUrl,
-      environmentById.get(target.environmentId)?.serverConfig?.settings,
-    );
+    const destinationPath = getClusterCloneDestinationPath({
+      remoteUrl: target.cloneRemoteUrl,
+      sourceWorkspaceRoot: source.workspaceRoot,
+      sourceHomeDirectory: environmentById.get(source.environmentId)?.serverConfig?.homeDirectory,
+      targetSettings: environmentById.get(target.environmentId)?.serverConfig?.settings,
+    });
     const question = m(
       msg(
         "Clone {repository} onto {machine}?\nIt will be cloned into {path} before the thread starts.",

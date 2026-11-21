@@ -1859,11 +1859,13 @@ export const layerWsRpc = (
             : directEndpoints.resolve(),
         });
 
+        const homeDirectory = (yield* HostProcess.HomeDirectory).trim();
         return {
           environment,
           auth,
           cwd: config.cwd,
           hostname: yield* HostProcess.Hostname,
+          ...(homeDirectory ? { homeDirectory } : {}),
           keybindingsConfigPath: config.keybindingsConfigPath,
           keybindings: keybindingsConfig.keybindings,
           issues: keybindingsConfig.issues,

@@ -706,6 +706,8 @@ export const ServerConfig = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   /** The machine's own name, which file URIs from its shells may carry. Older servers omit it. */
   hostname: Schema.optionalKey(Schema.String),
+  /** The server user's home directory, so clients can map paths under it. Older servers omit it. */
+  homeDirectory: Schema.optionalKey(TrimmedNonEmptyString),
   keybindingsConfigPath: TrimmedNonEmptyString,
   keybindings: ResolvedKeybindingsConfig,
   issues: ServerConfigIssues,

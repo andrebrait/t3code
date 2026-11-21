@@ -11,7 +11,7 @@ import {
   getCloneDirectoryName,
   getCloneDirectoryPath,
   getAddProjectInitialQuery,
-  getClusterCloneDestinationPath,
+  getSourceCloneDestinationPath,
   getDefaultCloneDestinationPath,
   getDefaultCloneUrl,
   githubIncompleteOwnerRepositoryMessage,
@@ -356,9 +356,9 @@ describe("cluster clone targets", () => {
     ["/root2/tau", "/root", "/root2/tau"],
     ["/srv/tau", "/root", "/srv/tau"],
     ["/root/git/tau", undefined, "~/tau"],
-  ])("clones %s from home %s to %s on another cluster machine", (root, home, expected) => {
+  ])("clones %s from home %s to %s on another machine", (root, home, expected) => {
     expect(
-      getClusterCloneDestinationPath({
+      getSourceCloneDestinationPath({
         remoteUrl: "git@github.com:me/tau.git",
         sourceWorkspaceRoot: root,
         sourceHomeDirectory: home,

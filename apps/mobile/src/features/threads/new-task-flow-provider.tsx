@@ -104,7 +104,7 @@ import {
 import {
   availableScratchWorkspaceRoot,
   clusterCloneEnvironmentIds,
-  getClusterCloneDestinationPath,
+  getSourceCloneDestinationPath,
   projectCloneRemoteUrl,
 } from "@t3tools/client-runtime/operations/projects";
 import {
@@ -836,7 +836,7 @@ export function NewTaskFlowProvider(
     remoteUrl: string,
   ): Promise<boolean> => {
     if (!selectedProject) return false;
-    const destinationPath = getClusterCloneDestinationPath({
+    const destinationPath = getSourceCloneDestinationPath({
       remoteUrl,
       sourceWorkspaceRoot: selectedProject.workspaceRoot,
       sourceHomeDirectory: serverConfigs.get(selectedProject.environmentId)?.homeDirectory,

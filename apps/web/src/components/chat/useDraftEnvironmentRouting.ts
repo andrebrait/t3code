@@ -46,7 +46,7 @@ import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { seedDraftModelSelection } from "../../lib/seedDraftModelSelection";
 import { draftFanoutSelectionsAtom } from "./chatViewSend";
 import { cloneProjectToClusterMachine } from "../../lib/addProjectToMachine";
-import { getClusterCloneDestinationPath } from "@t3tools/client-runtime/operations/projects";
+import { getSourceCloneDestinationPath } from "@t3tools/client-runtime/operations/projects";
 import { requestConfirmDialog } from "../../confirmDialog";
 import type { EnvironmentOption } from "../BranchToolbar.logic";
 
@@ -166,7 +166,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       (project) => project.environmentId === draft.environmentId && project.id === draft.projectId,
     );
     if (!source) return null;
-    const destinationPath = getClusterCloneDestinationPath({
+    const destinationPath = getSourceCloneDestinationPath({
       remoteUrl: target.cloneRemoteUrl,
       sourceWorkspaceRoot: source.workspaceRoot,
       sourceHomeDirectory: environmentById.get(source.environmentId)?.serverConfig?.homeDirectory,

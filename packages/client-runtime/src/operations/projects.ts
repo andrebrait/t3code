@@ -294,11 +294,11 @@ export function getDefaultCloneDestinationPath(
 }
 
 /**
- * Where clone-on-demand puts a project: the path it has on the machine it is cloned from. Under
- * that machine's home it becomes `~/…`, so it maps onto a machine whose home differs. Without
- * the source path or home, it falls back to the target's default.
+ * Where a copy of a project goes on another machine: the path it has on the machine it comes
+ * from. Under that machine's home it becomes `~/…`, so it maps onto a machine whose home
+ * differs. Without the source path or home, it falls back to the target's default.
  */
-export function getClusterCloneDestinationPath(input: {
+export function getSourceCloneDestinationPath(input: {
   readonly remoteUrl: string;
   readonly sourceWorkspaceRoot: string | null | undefined;
   readonly sourceHomeDirectory: string | null | undefined;

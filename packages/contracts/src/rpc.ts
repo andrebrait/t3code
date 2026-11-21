@@ -17,6 +17,19 @@ import {
   McpAppUpdateModelContextInput,
 } from "./mcpApps.ts";
 import {
+  ClusterAddMemberInput,
+  ClusterError,
+  ClusterJoinCode,
+  ClusterJoinCodeInput,
+  ClusterLeaveResult,
+  ClusterMember,
+  ClusterMemberRef,
+  ClusterRemoveMemberResult,
+  ClusterRenameMemberInput,
+  ClusterSshKeyFile,
+  ClusterStatus,
+} from "./cluster.ts";
+import {
   PeerLink,
   PeerLinkClientPairingInput,
   PeerLinkLinkPairingInput,
@@ -587,6 +600,14 @@ export const WS_METHODS = {
   peerLinksThreadItem: "peerLinks.threadItem",
   peerLinksPairClient: "peerLinks.pairClient",
   peerLinksPairLink: "peerLinks.pairLink",
+  clusterStatus: "cluster.status",
+  clusterMembers: "cluster.members",
+  clusterCreateJoinCode: "cluster.createJoinCode",
+  clusterAddMember: "cluster.addMember",
+  clusterRemoveMember: "cluster.removeMember",
+  clusterRenameMember: "cluster.renameMember",
+  clusterLeave: "cluster.leave",
+  clusterSshKeys: "cluster.sshKeys",
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
   serverDiscoverSourceControl: "server.discoverSourceControl",
@@ -982,6 +1003,57 @@ const WsPeerLinksPairLinkRpc = Rpc.make(WS_METHODS.peerLinksPairLink, {
 const WsPeerLinksAnswerRequestRpc = Rpc.make(WS_METHODS.peerLinksAnswerRequest, {
   payload: PeerLinkRequestAnswerInput,
   error: Schema.Union([PeerLinkRequestError, EnvironmentAuthorizationError]),
+});
+
+const ClusterRpcError = Schema.Union([ClusterError, EnvironmentAuthorizationError]);
+
+const WsClusterStatusRpc = Rpc.make(WS_METHODS.clusterStatus, {
+  payload: Schema.Struct({}),
+  success: ClusterStatus,
+  error: ClusterRpcError,
+});
+
+const WsClusterMembersRpc = Rpc.make(WS_METHODS.clusterMembers, {
+  payload: Schema.Struct({}),
+  success: Schema.Array(ClusterMember),
+  stream: true,
+  error: ClusterRpcError,
+});
+
+const WsClusterCreateJoinCodeRpc = Rpc.make(WS_METHODS.clusterCreateJoinCode, {
+  payload: ClusterJoinCodeInput,
+  success: ClusterJoinCode,
+  error: ClusterRpcError,
+});
+
+const WsClusterAddMemberRpc = Rpc.make(WS_METHODS.clusterAddMember, {
+  payload: ClusterAddMemberInput,
+  success: ClusterMember,
+  error: ClusterRpcError,
+});
+
+const WsClusterRemoveMemberRpc = Rpc.make(WS_METHODS.clusterRemoveMember, {
+  payload: ClusterMemberRef,
+  success: ClusterRemoveMemberResult,
+  error: ClusterRpcError,
+});
+
+const WsClusterRenameMemberRpc = Rpc.make(WS_METHODS.clusterRenameMember, {
+  payload: ClusterRenameMemberInput,
+  success: ClusterMember,
+  error: ClusterRpcError,
+});
+
+const WsClusterSshKeysRpc = Rpc.make(WS_METHODS.clusterSshKeys, {
+  payload: Schema.Struct({}),
+  success: Schema.Array(ClusterSshKeyFile),
+  error: ClusterRpcError,
+});
+
+const WsClusterLeaveRpc = Rpc.make(WS_METHODS.clusterLeave, {
+  payload: Schema.Struct({}),
+  success: ClusterLeaveResult,
+  error: ClusterRpcError,
 });
 
 // No in-tree caller; installed Swift TestFlight builds still request it.
@@ -2427,6 +2499,14 @@ export const WsRpcGroup = RpcGroup.make(
   WsPeerLinksThreadItemRpc,
   WsPeerLinksPairClientRpc,
   WsPeerLinksPairLinkRpc,
+  WsClusterStatusRpc,
+  WsClusterMembersRpc,
+  WsClusterCreateJoinCodeRpc,
+  WsClusterAddMemberRpc,
+  WsClusterRemoveMemberRpc,
+  WsClusterRenameMemberRpc,
+  WsClusterLeaveRpc,
+  WsClusterSshKeysRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerCheckSecretSourceRpc,
   WsServerSearchAcpRegistryRpc,

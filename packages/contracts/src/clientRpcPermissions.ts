@@ -92,6 +92,14 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.peerLinksAnswerRequest]: AuthAccessWriteScope,
   [WS_METHODS.peerLinksPairClient]: AuthAccessWriteScope,
   [WS_METHODS.peerLinksPairLink]: AuthAccessWriteScope,
+  // Membership hands this environment to another host, or another host's to this one.
+  [WS_METHODS.clusterCreateJoinCode]: AuthAccessWriteScope,
+  [WS_METHODS.clusterAddMember]: AuthAccessWriteScope,
+  [WS_METHODS.clusterRemoveMember]: AuthAccessWriteScope,
+  [WS_METHODS.clusterRenameMember]: AuthAccessWriteScope,
+  [WS_METHODS.clusterLeave]: AuthAccessWriteScope,
+  // Names the main host's private key files, never their contents.
+  [WS_METHODS.clusterSshKeys]: AuthAccessWriteScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 

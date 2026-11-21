@@ -9,6 +9,15 @@ import {
 } from "./preview.ts";
 
 describe("previewPdfAssetUrl", () => {
+  it("loads a cluster member's PDF bytes under its path on the main host", () => {
+    expect(
+      previewPdfAssetUrl(
+        "http://127.0.0.1:14537/api/assets/token/guide.pdf#page=2",
+        "https://studio.example.test/cluster/environment-box",
+      ),
+    ).toBe("https://studio.example.test/cluster/environment-box/api/assets/token/guide.pdf#page=2");
+  });
+
   it.each([
     "http://localhost:6497",
     "https://host.tailnet.test",

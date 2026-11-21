@@ -5,6 +5,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
@@ -251,6 +252,42 @@ describe("ssh command", () => {
       }
     }).pipe(Effect.provide(layerProcess));
   });
+
+  it.effect.each([
+    { expectFailure: undefined, levels: ["Warn"] },
+    { expectFailure: true, levels: [] },
+  ])(
+    "logs a non-zero exit as $levels when expectFailure is $expectFailure",
+    ({ expectFailure, levels }) => {
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.succeed(makeFailedProcess({ stdout: "", stderr: "Permission denied" })),
+      );
+      const entries: Array<Logger.Options<unknown>> = [];
+      return Effect.gen(function* () {
+        yield* Effect.result(
+          runSshCommand(
+            { alias: "devbox", hostname: "devbox", username: null, port: null },
+            expectFailure === undefined ? {} : { expectFailure },
+          ),
+        );
+        assert.deepEqual(
+          entries.map((entry) => entry.logLevel).filter((level) => level === "Warn"),
+          levels,
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            NodeCrypto.layer,
+            Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Logger.layer([Logger.make((entry) => entries.push(entry))], {
+              mergeWithExisting: false,
+            }),
+          ),
+        ),
+      );
+    },
+  );
 
   it.effect("keeps redacted output the command emitted before timing out", () => {
     const spawner = ChildProcessSpawner.make(() =>

@@ -41,9 +41,12 @@ export interface RunSshCommandOptions extends SshAuthOptions {
   readonly timeoutMs?: number;
   /** Keep the end of long failed-command stdout, where the final cause usually is. */
   readonly keepErrorOutputTail?: boolean;
+  /** A probe whose non-zero exit is normal flow: log the failure at Debug, not Warn. */
+  readonly expectFailure?: boolean;
 }
 
-function parseSshConfigOutput(stdout: string): Map<string, string> {
+/** `ssh -G` output as option name to value; the first line for a name wins, as in ssh. */
+export function parseSshConfigOutput(stdout: string): ReadonlyMap<string, string> {
   const values = new Map<string, string>();
   for (const line of stdout.split(/\r?\n/u)) {
     const trimmed = line.trim();
@@ -133,6 +136,12 @@ export function baseSshArgs(
 export function controlMasterArgs(controlPath: string): string[] {
   return ["-F", "none", "-o", `ControlPath=${controlPath}`, "-o", "ProxyCommand=false"];
 }
+
+// A run that signs in with only its own key also trusts only host keys already in known_hosts.
+export const sshIdentityArgs = (identityFile: string | undefined): string[] =>
+  identityFile === undefined
+    ? []
+    : ["-i", identityFile, "-o", "IdentitiesOnly=yes", "-o", "StrictHostKeyChecking=yes"];
 
 export function getLastNonEmptyOutputLine(stdout: string): string | null {
   return (
@@ -273,6 +282,7 @@ const runSshCommandInScope = Effect.fn("ssh/command.runSshCommand.inScope")(func
     "ServerAliveInterval=15",
     "-o",
     "ServerAliveCountMax=3",
+    ...sshIdentityArgs(input.identityFile),
     ...(input.preHostArgs ?? []),
     "--",
     hostSpec,
@@ -339,7 +349,8 @@ const runSshCommandInScope = Effect.fn("ssh/command.runSshCommand.inScope")(func
   const { stdout, stderr } = output;
   if (exitCode !== 0) {
     const diagnosticStdout = redactSshErrorOutput(stdout, input.keepErrorOutputTail);
-    yield* Effect.logWarning("ssh.command.failed", {
+    const logFailure = input.expectFailure ? Effect.logDebug : Effect.logWarning;
+    yield* logFailure("ssh.command.failed", {
       ...sshTargetLogFields(target),
       command: ["ssh", ...args],
       exitCode,

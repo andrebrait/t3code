@@ -78,6 +78,7 @@ export class PeerLinkError extends Schema.TaggedError<PeerLinkError>()("PeerLink
     "unknown_link",
     "storage",
     "disabled",
+    "clustered",
   ]),
   message: Schema.String,
   /** The environment that answered at the addresses of the one the user picked, when one did. */

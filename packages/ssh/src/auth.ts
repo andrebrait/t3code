@@ -31,6 +31,8 @@ export interface SshAskpassHelperDescriptor {
 
 export interface SshAuthOptions {
   readonly authSecret?: string | null;
+  /** Signs in with only this private key, never the agent's or ssh config's other keys. */
+  readonly identityFile?: string;
   readonly batchMode?: "yes" | "no";
   readonly interactiveAuth?: boolean;
 }
